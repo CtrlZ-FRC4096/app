@@ -1,0 +1,19 @@
+# Changes to these paths need approval from the people listed.
+# This only takes effect once the branch rule "Require review from Code
+# Owners" is on. Replace @MBimrose with a mentors team when there is one,
+# for example @CtrlZ-FRC4096/mentors.
+
+# The shared core: sign-in, roles, storage, layout, shared components.
+/src/core/            @MBimrose
+/src/App.tsx          @MBimrose
+/src/main.tsx         @MBimrose
+/src/modules/index.ts @MBimrose
+
+# The database and its permission rules, once they exist.
+/supabase/            @MBimrose
+
+# How the site is checked and published, and the rules Claude follows.
+/.github/             @MBimrose
+/CLAUDE.md            @MBimrose
+/package.json         @MBimrose
+/package-lock.json    @MBimrose
