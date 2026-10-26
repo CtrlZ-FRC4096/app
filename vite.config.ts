@@ -10,5 +10,11 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: 'node',
+    // Tests always run in demo mode, even if .env.local connects your
+    // computer to the team database.
+    env: {
+      VITE_SUPABASE_URL: '',
+      VITE_SUPABASE_PUBLISHABLE_KEY: '',
+    },
   },
 })

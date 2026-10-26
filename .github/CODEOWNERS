@@ -8,8 +8,9 @@
 /src/App.tsx          @MBimrose
 /src/main.tsx         @MBimrose
 /src/modules/index.ts @MBimrose
+/src/modules/members/ @MBimrose
 
-# The database and its permission rules, once they exist.
+# The database, its permission rules and their tests.
 /supabase/            @MBimrose
 
 # How the site is checked and published, and the rules Claude follows.

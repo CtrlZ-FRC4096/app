@@ -1,5 +1,9 @@
 # Publishes the site to GitHub Pages every time something is merged to main.
 # Turn Pages on once: Settings > Pages > Source: GitHub Actions.
+#
+# Once the team database is set up (supabase/README.md), it first applies
+# any new migrations to the database, so a new table exists before the site
+# that uses it goes live, and builds the site to sign in with Slack.
 name: Deploy
 
 on:
@@ -17,7 +21,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  database:
+    runs-on: ubuntu-latest
+    # The database's password is a secret of the "database" environment,
+    # which only main may use (Settings > Environments > database). Branches
+    # and pull requests can't read it.
+    environment: database
+    steps:
+      - uses: actions/checkout@v5
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.122.0
+      - name: Apply new migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::notice::No team database is connected yet, so there are no migrations to apply. See supabase/README.md."
+            exit 0
+          fi
+          supabase db push --db-url "$SUPABASE_DB_URL" --yes
+
   build:
+    needs: database
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -27,6 +53,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      # Without these two settings the site builds in demo mode. Both are
+      # meant to be public: the database's permission rules protect the data.
+      - name: Build the site
+        run: npx vite build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:

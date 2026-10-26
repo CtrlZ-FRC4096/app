@@ -22,8 +22,11 @@
 2. Show the lines in a table with a status for each.
 3. Once Inventory has `data.ts`, look up shelf counts from it, with a test that taking parts in Inventory makes a BOM line short.
 
-Copy the pattern from the [Example module](../example/README.md): data and
-rules in `data.ts`, tests in `data.test.ts`, the page calling `data.ts`.
-Keep each pull request to one step.
+Copy the pattern from the [Example module](../example/README.md): a table
+and rules in `data.ts`, tests in `data.test.ts`, and the page calling
+`data.ts`. Each table also needs a migration in `supabase/migrations/` that
+makes it in the team database, with its permission rules and tests; see
+[Adding a module](../../../docs/adding-a-module.md). Keep each pull request to
+one step.
 
 **Works with:** Inventory (stock levels), Robot status (shows the short-line count).

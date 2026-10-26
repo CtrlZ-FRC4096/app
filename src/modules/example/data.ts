@@ -4,54 +4,76 @@
  * This module exists to be copied. It shows the pattern every module
  * follows:
  *
- *   - Data lives in data.ts. Pages call these functions and never touch
- *     storage directly, so when the team database is ready only this file
- *     changes.
- *   - Rules (like "a note can't be empty") are plain functions that return
- *     an error message, so they are easy to test and the page can show the
- *     message as it is.
+ *   - Data lives in a table from createTable(). In the team database the
+ *     table is made by a migration, supabase/migrations/..._example_notes.sql,
+ *     which also sets who can read, add and delete notes.
+ *   - Pages call the functions in this file and never save anything
+ *     themselves.
+ *   - Rules (like "a note can't be empty") are checked here first, so the
+ *     page can show a clear message. The database checks them again,
+ *     because anyone can send it anything.
+ *   - Functions that can fail return { ok: true, value } or
+ *     { ok: false, error }, with the error written for the person using it.
  *   - Example data is clearly made up.
  */
-import { createStore, useStore } from '../../core/store'
+import { createTable, fail, newestFirst, type Result, type Row } from '../../core/table'
+import { DEMO_PEOPLE } from '../../core/demo'
+import { plural } from '../../core/format'
+import type { Notice } from '../../core/registry'
 
-export interface Note {
-  id: string
+/** One row of the example_notes table. The fields match its columns. */
+export interface Note extends Row {
   text: string
-  author: string
-  /** ISO date and time. */
-  posted: string
+  /** Who posted it. Show their name with useMemberNames(). */
+  created_by: string | null
 }
 
+/** The database allows the same: see the check on the text column. */
 export const MAX_NOTE_LENGTH = 200
 
 const EXAMPLE_NOTES: Note[] = [
-  { id: 'n1', text: 'Shop is open until 9 on Thursday.', author: 'Pat Chen', posted: '2026-10-24T18:00:00' },
-  { id: 'n2', text: 'Safety glasses are back in the bin by the door.', author: 'Jordan Kim', posted: '2026-10-22T19:15:00' },
+  {
+    id: '00000000-0000-4000-8000-0000000e0001',
+    text: 'Shop is open until 9 on Thursday.',
+    created_at: '2026-10-24T23:00:00Z',
+    created_by: DEMO_PEOPLE.pat,
+  },
+  {
+    id: '00000000-0000-4000-8000-0000000e0002',
+    text: 'Safety glasses are back in the bin by the door.',
+    created_at: '2026-10-23T00:15:00Z',
+    created_by: DEMO_PEOPLE.jordan,
+  },
 ]
 
-// Raise the version number (1) if you change what a Note looks like, so old
-// saved copies are ignored instead of breaking the page.
-export const notesStore = createStore('example-notes', 1, () => EXAMPLE_NOTES.map((n) => ({ ...n })))
+export const notesTable = createTable<Note>('example_notes', { demo: EXAMPLE_NOTES, sort: newestFirst })
 
+/** Every note, newest first. */
 export function useNotes(): Note[] {
-  return useStore(notesStore)
+  return notesTable.useRows()
 }
 
-export type AddResult = { ok: true; note: Note } | { ok: false; error: string }
+/** The home page tile's status. */
+export function useNoteSummary(): Notice {
+  const notes = useNotes()
+  return { tone: 'info', text: plural(notes.length, 'note', 'notes') }
+}
 
-export function addNote(text: string, author: string, now: Date = new Date()): AddResult {
+/** Why a note can't be posted, or null if it can. */
+export function checkNote(text: string): string | null {
   const trimmed = text.trim()
-  if (!trimmed) return { ok: false, error: 'Write something first.' }
-  if (trimmed.length > MAX_NOTE_LENGTH) return { ok: false, error: `Keep it under ${MAX_NOTE_LENGTH} characters. This one is ${trimmed.length}.` }
-  const note: Note = { id: `n${now.getTime()}`, text: trimmed, author, posted: now.toISOString() }
-  notesStore.set((notes) => [note, ...notes])
-  return { ok: true, note }
+  if (!trimmed) return 'Write something first.'
+  if (trimmed.length > MAX_NOTE_LENGTH) return `Keep it under ${MAX_NOTE_LENGTH} characters. This one is ${trimmed.length}.`
+  return null
 }
 
-export function removeNote(id: string) {
-  notesStore.set((notes) => notes.filter((n) => n.id !== id))
+export async function addNote(text: string): Promise<Result<Note>> {
+  const problem = checkNote(text)
+  if (problem) return fail(problem)
+  return notesTable.insert({ text: text.trim() })
 }
 
-export function noteCount(): number {
-  return notesStore.get().length
+/** Mentors and admins only. The database refuses anyone else. */
+export async function removeNote(id: string): Promise<Result> {
+  return notesTable.remove(id)
 }

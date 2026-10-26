@@ -6,7 +6,7 @@
  * status page all build themselves from that list.
  */
 import type { ComponentType } from 'react'
-import type { Role } from './session'
+import type { Role } from './roles'
 
 export type Tone = 'ok' | 'warn' | 'crit' | 'info' | 'plain'
 
@@ -26,8 +26,12 @@ export interface ModuleDefinition {
   roles?: Role[]
   /** Loads the page only when someone opens it, so one module can't slow the others down. */
   load: () => Promise<{ default: ComponentType }>
-  /** A short status for the home page tile, such as "3 parts low on stock". */
-  summary?: (role: Role) => Notice
-  /** Anything that needs someone's attention. Shown under "Needs attention" on the home page. */
-  attention?: (role: Role) => Notice[]
+  /**
+   * A short status for the home page tile, such as "3 parts low on stock".
+   * It's a hook, so it can read rows: export it from data.ts, like
+   * useNoteSummary in the Example module.
+   */
+  useSummary?: (role: Role) => Notice
+  /** Anything that needs someone's attention, shown under "Needs attention" on the home page. A hook, like useSummary. */
+  useAttention?: (role: Role) => Notice[]
 }

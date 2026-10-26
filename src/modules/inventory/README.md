@@ -23,8 +23,11 @@
 3. Add `changeStock()` with tests: it should refuse to take more than are on the shelf.
 4. Add the low-stock flag and filter.
 
-Copy the pattern from the [Example module](../example/README.md): data and
-rules in `data.ts`, tests in `data.test.ts`, the page calling `data.ts`.
-Keep each pull request to one step.
+Copy the pattern from the [Example module](../example/README.md): a table
+and rules in `data.ts`, tests in `data.test.ts`, and the page calling
+`data.ts`. Each table also needs a migration in `supabase/migrations/` that
+makes it in the team database, with its permission rules and tests; see
+[Adding a module](../../../docs/adding-a-module.md). Keep each pull request to
+one step.
 
 **Works with:** BOM (reads stock levels), Robot status (shows the low-stock count).

@@ -27,21 +27,33 @@ checks and one shared look.
 
 - **The site** is static files on GitHub Pages, published from `main`
   automatically. There is no server.
-- **The data**, once it's set up, goes in Supabase: a Postgres database with
-  permission rules on every table, and Sign in with Slack limited to the
-  Ctrl-Z workspace. Its free plan covers a team our size. Until then, each
-  module uses example data saved in the browser.
+- **The data** goes in Supabase: a Postgres database with permission rules
+  on every table, and Sign in with Slack limited to the Ctrl-Z workspace.
+  Its free plan covers a team our size. Until the site is connected to it,
+  and always on your computer and in tests, the app runs in demo mode on
+  example data saved in the browser. A module's code is the same either way
+  (`src/core/table.ts`), so students can build without database access.
+- **The workspace check happens in the database.** A trigger on new
+  accounts (in the members migration) turns away anyone Slack says came
+  from another workspace, before an account is made. The browser can't get
+  around it.
 - **Anything with a secret key** (the Onshape BOM sync, The Blue Alliance)
   runs in a Supabase server function, never in the browser.
 
-## Things the database setup must handle
+## Things the database setup handles, and what's left
 
 - **Leaving Slack doesn't sign anyone out by itself.** Slack is only checked
   at sign-in, and on Supabase's free plan a login doesn't expire on its own.
-  A nightly job will ask Slack who is still in the workspace and switch off
-  anyone who has left.
-- **The free plan pauses** a project after a week of low activity, and has
-  no automatic backups. A scheduled keep-awake job and a nightly backup to a
-  private repo cover both. Supabase Pro ($25 a month) removes both limits if
-  the team comes to depend on the app.
-- **Store as little as possible about students:** their Slack name and ID.
+  For now an admin switches off a leaver's access in the Members module,
+  which takes effect straight away. Still to do: a nightly job that asks
+  Slack who is still in the workspace and switches off anyone who has left.
+- **The free plan pauses** a project after a week of low activity. The
+  "Keep the database awake" workflow asks it a small question twice a week.
+- **The free plan has no backups.** Still to do: a nightly backup, or
+  Supabase Pro ($25 a month) once the team depends on the data.
+- **Store as little as possible about students:** their Slack name, ID and
+  picture. Supabase also keeps the email Slack sends, but the app never
+  reads it.
+- **Every table is checked.** `supabase/tests/tables.test.ts` fails a pull
+  request if any table has row level security off, lets signed-out visitors
+  in, or doesn't match the example data its module uses.

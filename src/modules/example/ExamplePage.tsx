@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { isMentor, useSession } from '../../core/session'
+import { useMemberNames } from '../../core/members'
 import { toast } from '../../core/toast'
 import { shortDate } from '../../core/format'
 import { PageHead, Panel } from '../../core/ui'
@@ -8,19 +9,28 @@ import { MAX_NOTE_LENGTH, addNote, removeNote, useNotes } from './data'
 // The page reads data with a hook (useNotes) and changes it with functions
 // from data.ts (addNote, removeNote). It never saves anything itself.
 export default function ExamplePage() {
-  const { name, role } = useSession()
+  const { role } = useSession()
   const notes = useNotes()
+  const nameOf = useMemberNames()
   const [text, setText] = useState('')
+  const [saving, setSaving] = useState(false)
 
-  function post(event: FormEvent) {
+  async function post(event: FormEvent) {
     event.preventDefault()
-    const result = addNote(text, name)
+    setSaving(true)
+    const result = await addNote(text)
+    setSaving(false)
     if (!result.ok) {
       toast(result.error)
       return
     }
     setText('')
     toast('Posted.')
+  }
+
+  async function remove(id: string) {
+    const result = await removeNote(id)
+    toast(result.ok ? 'Removed.' : result.error)
   }
 
   return (
@@ -35,7 +45,7 @@ export default function ExamplePage() {
             <textarea id="note-text" className="input" rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="Something the team should know" />
           </label>
           <div className="toolbar">
-            <button type="submit" className="btn btn-primary">Post</button>
+            <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Posting…' : 'Post'}</button>
           </div>
         </form>
       </Panel>
@@ -46,10 +56,10 @@ export default function ExamplePage() {
           <div className="row-list">
             {notes.map((n) => (
               <div key={n.id}>
-                <span>{n.text}<br /><span className="note">{n.author} · {shortDate(n.posted)}</span></span>
-                {/* Only mentors and admins see Remove. Once there is a database, its rules enforce this too. */}
+                <span>{n.text}<br /><span className="note">{nameOf(n.created_by)} · {shortDate(n.created_at)}</span></span>
+                {/* Only mentors and admins see Remove. The database's rules enforce this too. */}
                 {isMentor(role) && (
-                  <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={() => removeNote(n.id)}>Remove</button>
+                  <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={() => void remove(n.id)}>Remove</button>
                 )}
               </div>
             ))}

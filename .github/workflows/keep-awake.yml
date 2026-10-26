@@ -1,0 +1,28 @@
+# Supabase's free plan pauses a database after a week without use, which
+# would take the app down over a school break. This asks the database one
+# small question twice a week so it stays awake. It does nothing until the
+# database is set up (supabase/README.md).
+name: Keep the database awake
+
+on:
+  schedule:
+    - cron: '17 15 * * 1,4' # Mondays and Thursdays
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    environment: database
+    steps:
+      - name: Ask the database how many members there are
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::notice::No team database is connected yet."
+            exit 0
+          fi
+          psql "$SUPABASE_DB_URL" --no-psqlrc -c 'select count(*) as members from public.members'

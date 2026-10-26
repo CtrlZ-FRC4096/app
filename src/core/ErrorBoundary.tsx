@@ -3,7 +3,7 @@
  * throws while it draws, this shows what went wrong in that module only, and
  * every other module keeps working.
  */
-import { Component, type ReactNode } from 'react'
+import { Component, Suspense, type ReactNode } from 'react'
 
 interface Props {
   moduleName: string
@@ -34,5 +34,22 @@ export class ErrorBoundary extends Component<Props, State> {
         </div>
       </div>
     )
+  }
+}
+
+/**
+ * For small extras like a home page tile's status: while it loads or if it
+ * breaks, it shows nothing, and the rest of the page carries on.
+ */
+export class QuietBoundary extends Component<{ children: ReactNode }, State> {
+  state: State = { error: null }
+
+  static getDerivedStateFromError(error: Error): State {
+    return { error }
+  }
+
+  render() {
+    if (this.state.error) return null
+    return <Suspense fallback={null}>{this.props.children}</Suspense>
   }
 }

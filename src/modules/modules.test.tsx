@@ -2,10 +2,14 @@
  * Checks every module in src/modules/index.ts. You don't need to edit this
  * when you add a module: it picks up new ones by itself.
  */
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import { modules } from '.'
-import { ROLES } from '../core/session'
+import { ROLES, canOpen } from '../core/session'
+import { setDemoRole } from '../core/demo'
+import type { Notice } from '../core/registry'
+
+afterAll(() => setDemoRole('student'))
 
 describe('the module list', () => {
   it('has no two modules with the same id', () => {
@@ -21,15 +25,31 @@ describe('the module list', () => {
 })
 
 describe.each(modules.map((m) => [m.id, m] as const))('module %s', (_id, m) => {
-  it('draws its page without crashing', async () => {
+  it.each(ROLES.filter((role) => canOpen(role, m.roles)))('draws its page for a %s without crashing', async (role) => {
+    setDemoRole(role)
     const { default: Page } = await m.load()
     expect(renderToString(<Page />).length).toBeGreaterThan(0)
   })
 
-  it('gives a summary and attention items for every role without crashing', () => {
-    for (const role of ROLES) {
-      if (m.summary) expect(m.summary(role).text.trim()).not.toBe('')
-      for (const notice of m.attention?.(role) ?? []) expect(notice.text.trim()).not.toBe('')
+  it.each(ROLES)('gives the home page a status and attention items for a %s without crashing', (role) => {
+    setDemoRole(role)
+    let summary: Notice | undefined
+    let attention: Notice[] = []
+    function Summary() {
+      summary = m.useSummary!(role)
+      return null
+    }
+    function Attention() {
+      attention = m.useAttention!(role)
+      return null
+    }
+    if (m.useSummary) {
+      renderToString(<Summary />)
+      expect(summary?.text.trim()).not.toBe('')
+    }
+    if (m.useAttention) {
+      renderToString(<Attention />)
+      for (const notice of attention) expect(notice.text.trim()).not.toBe('')
     }
   })
 })
