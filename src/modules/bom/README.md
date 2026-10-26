@@ -7,13 +7,14 @@
 - The parts each assembly needs, from Onshape
 - For bought parts: how many are on the shelf (from Inventory), and whether we're short
 - For made parts: whether they have been made yet
-- Mentors mark short parts as ordered
-- Costs, visible only to mentors and admins
-
+- Need to be able to add parts to BOM
+- Sort by vendor and item name etc.
+- Add a reorder or copy to copy the details of a prevoius order to save time
+- Look at slack BOM to determine what data is needed
+- 
 ## Rules
 
 - The Onshape keys can open all of the team's CAD. The real Onshape sync must run in a server function, never in the browser. Talk to a mentor before working on it, and use example data until then.
-- Costs are hidden from students.
 - Read stock levels through Inventory's `data.ts`, not by copying its data.
 
 ## Where to start
