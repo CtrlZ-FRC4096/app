@@ -6,9 +6,11 @@ status and training. Each of those is a **module**: a folder in
 
 **Live site:** https://ctrlz-frc4096.github.io/app/ (moving to https://app.team4096.org)
 
-> **Work in progress.** Right now the app is a skeleton. It runs on example
-> data saved in your browser, and sign-in is a demo "View as" switch. The
-> modules are waiting for students to build them.
+> **Work in progress.** The frame is built: Slack sign-in, roles, the team
+> database and a working Example module. The other modules are waiting for
+> students to build them. Until the database is connected, the live site
+> runs in demo mode on example data, with a "View as" switch instead of
+> sign-in. That's also how it always runs on your computer.
 
 ## Run it on your computer
 
@@ -46,9 +48,12 @@ To start a new module, follow **[docs/adding-a-module.md](docs/adding-a-module.m
 | `src/modules/` | One folder per module. **This is where most work happens.** |
 | `src/modules/example/` | A small, complete module to copy |
 | `src/modules/index.ts` | The list of modules. Add yours here. |
-| `src/core/` | Shared pieces: layout, roles, storage, components. Changes need a mentor's approval. |
-| `supabase/` | The database, once it's set up |
+| `src/modules/members/` | Who's on the team and their roles, for mentors and admins |
+| `src/core/` | Shared pieces: sign-in, roles, tables, layout, components. Changes need a mentor's approval. |
+| `supabase/` | The team database: migrations, permission rules, their tests, and [how to set it up](supabase/README.md) |
 | `docs/design.md` | Why the app is built this way |
 
 The site is static files on GitHub Pages, published automatically when a
-pull request is merged into `main`. There is no server to look after.
+pull request is merged into `main`. The data lives in Supabase, whose
+permission rules decide what each person can read and change. There is no
+server of our own to look after.

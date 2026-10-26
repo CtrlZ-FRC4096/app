@@ -19,7 +19,10 @@ ask in Slack, and paste the exact error message.
    npm install
    npm run dev
    ```
-   Open the address it prints, usually http://localhost:5173.
+   Open the address it prints, usually http://localhost:5173. On your
+   computer the app runs in **demo mode**, on made-up example data, with a
+   "View as" switch instead of Slack sign-in. You don't need the team
+   database to build a module.
 
 **On Windows**, if PowerShell says "running scripts is disabled on this
 system", switch the VS Code terminal to **Command Prompt** (the **+** menu in
@@ -42,6 +45,8 @@ the terminal panel), or run this once in PowerShell:
 
 3. **Make the change.** Stay inside your module's folder in `src/modules/`.
    Use the [Example module](src/modules/example/) as the pattern to follow.
+   If your module needs a new table, it also needs a migration and tests in
+   `supabase/`: see [Adding a module](docs/adding-a-module.md).
 
 4. **Check it.** All four of these have to pass before a pull request can
    be merged, so run them yourself first:
@@ -91,7 +96,7 @@ You are responsible for everything in your pull request, whoever wrote it.
 - **Stay in your module folder.** Changes to `src/core/`, `src/App.tsx`, `.github/` or `supabase/` need a mentor's approval.
 - **Don't add npm packages** without asking a mentor first.
 - **Use the shared components** in `src/core/ui.tsx` and the styles in `src/core/styles.css`, so the app looks like one thing.
-- **Hiding a button is not security.** Once there's a database, its permission rules decide who can do what.
+- **Hiding a button is not security.** The database's permission rules (in `supabase/migrations/`) decide who can do what.
 
 ## Adding a whole new module
 

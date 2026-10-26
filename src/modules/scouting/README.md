@@ -23,8 +23,11 @@
 2. Create `data.ts` with an `Entry` type, `saveEntry()` and tests.
 3. Build the form for one robot, drawing its fields from `season.ts`.
 
-Copy the pattern from the [Example module](../example/README.md): data and
-rules in `data.ts`, tests in `data.test.ts`, the page calling `data.ts`.
-Keep each pull request to one step.
+Copy the pattern from the [Example module](../example/README.md): a table
+and rules in `data.ts`, tests in `data.test.ts`, and the page calling
+`data.ts`. Each table also needs a migration in `supabase/migrations/` that
+makes it in the team database, with its permission rules and tests; see
+[Adding a module](../../../docs/adding-a-module.md). Keep each pull request to
+one step.
 
 **Works with:** Robot status (can show entries waiting to sync).

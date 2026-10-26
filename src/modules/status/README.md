@@ -11,7 +11,7 @@
 
 ## Rules
 
-- Build the summary tiles from the module list (`src/modules/index.ts`) using each module's `summary()`, so a new module appears without any change here.
+- Build the summary tiles from the module list (`src/modules/index.ts`) using each module's `useSummary` hook, so a new module appears without any change here.
 
 ## Where to start
 
@@ -19,8 +19,11 @@
 2. Show the grid; tapping a cell moves it to the next stage.
 3. Add the pit checklist.
 
-Copy the pattern from the [Example module](../example/README.md): data and
-rules in `data.ts`, tests in `data.test.ts`, the page calling `data.ts`.
-Keep each pull request to one step.
+Copy the pattern from the [Example module](../example/README.md): a table
+and rules in `data.ts`, tests in `data.test.ts`, and the page calling
+`data.ts`. Each table also needs a migration in `supabase/migrations/` that
+makes it in the team database, with its permission rules and tests; see
+[Adding a module](../../../docs/adding-a-module.md). Keep each pull request to
+one step.
 
-**Works with:** Every module, through their `summary()`.
+**Works with:** Every module, through their `useSummary` hooks.

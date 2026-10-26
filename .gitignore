@@ -26,3 +26,7 @@ dist-ssr
 # Secrets never go in the repo
 .env
 .env.*
+
+# Supabase command-line tool scratch files
+supabase/.temp/
+supabase/.branches/

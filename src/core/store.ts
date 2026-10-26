@@ -1,12 +1,13 @@
 /**
- * Saved state for example data.
+ * State saved in this browser.
  *
- * Until the team database is set up, each module keeps its example data in
- * the browser with createStore(). Changes survive a reload, but only on that
- * device, and "Reset example data" in the banner puts everything back.
+ * Modules don't use this directly: their data goes in a table from
+ * createTable() (src/core/table.ts), which uses these stores for example
+ * data in demo mode. The app also uses them for things that belong to one
+ * browser, like the "View as" switch.
  *
- * When the database arrives, a module's data.ts swaps these stores for
- * database calls. Pages only call data.ts, so they won't need to change.
+ * Saved copies survive a reload, but only on that device, and "Reset example
+ * data" in the banner puts them back.
  */
 import { useSyncExternalStore } from 'react'
 

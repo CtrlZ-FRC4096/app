@@ -181,3 +181,15 @@ a.tile:hover { border-color: var(--blue); }
 .tile.add { border-style: dashed; box-shadow: none; background: transparent; }
 .goal-list { margin: 0; padding: 14px 16px 14px 34px; display: grid; gap: 8px; }
 .goal-list li::marker { color: var(--orange); }
+.attention-list:empty, .attention-empty { display: none; }
+.attention-list:empty + .attention-empty { display: grid; }
+
+/* Sign-in */
+.app-header .header-only { padding-block: 10px; }
+.signin { max-width: 560px; display: grid; gap: 18px; padding-block: 12px; }
+.btn-lg { min-height: 46px; padding: 10px 20px; font-size: 16px; justify-self: start; }
+img.avatar { object-fit: cover; background: var(--surface-2); }
+
+/* Members */
+.member { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.member .avatar { flex: none; }

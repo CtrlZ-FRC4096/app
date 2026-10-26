@@ -21,8 +21,11 @@
 2. Show the lessons with a Mark done button and a progress bar.
 3. Add skills and sign-off requests, with tests for who may sign off.
 
-Copy the pattern from the [Example module](../example/README.md): data and
-rules in `data.ts`, tests in `data.test.ts`, the page calling `data.ts`.
-Keep each pull request to one step.
+Copy the pattern from the [Example module](../example/README.md): a table
+and rules in `data.ts`, tests in `data.test.ts`, and the page calling
+`data.ts`. Each table also needs a migration in `supabase/migrations/` that
+makes it in the team database, with its permission rules and tests; see
+[Adding a module](../../../docs/adding-a-module.md). Keep each pull request to
+one step.
 
 **Works with:** Robot status (can show how many sign-offs are waiting).
