@@ -1,6 +1,8 @@
 # Inventory
 
-**Not built yet.** Parts, where they live, and how many are left, with a record of who took or added stock.
+Parts, where they live, and how many are left, with a record of who took or added stock.
+
+**So far:** the `inventory_items` table with example parts, and a page that lists them.
 
 ## What it needs to do
 
@@ -18,8 +20,8 @@
 
 ## Where to start
 
-1. Create `data.ts` with an `Item` type and example parts. The wiki's Electrical > Components pages list real parts the team uses.
-2. Show the parts in a table on the page.
+1. ~~Create `data.ts` with an `Item` type and example parts.~~ Done.
+2. ~~Show the parts in a table on the page.~~ Done.
 3. Add `changeStock()` with tests: it should refuse to take more than are on the shelf.
 4. Add the low-stock flag and filter.
 
