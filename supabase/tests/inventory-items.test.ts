@@ -26,7 +26,13 @@ describe('inventory items', () => {
     expect(part.created_by).toBe(mentor)
   })
 
-  it("doesn't let a student add a part", async () => {
+  it('lets a student add a part, signed with their own id', async () => {
+    const [part] = await add(student)
+    expect(part.created_by).toBe(student)
+  })
+
+  it("doesn't let someone whose access is off add a part", async () => {
+    await db.switchOff(student)
     await expect(add(student)).rejects.toThrow(PERMISSION_DENIED)
   })
 
@@ -37,6 +43,14 @@ describe('inventory items', () => {
         `insert into public.inventory_items (name, vendor, vendor_part_number, location, created_by)
          values ('CANivore', 'CTR Electronics', '21-678682', 'Bin E2', $1)`,
         [student],
+      ),
+    ).rejects.toThrow(PERMISSION_DENIED)
+    await expect(
+      db.as(
+        student,
+        `insert into public.inventory_items (name, vendor, vendor_part_number, location, created_by)
+         values ('CANivore', 'CTR Electronics', '21-678682', 'Bin E2', $1)`,
+        [mentor],
       ),
     ).rejects.toThrow(PERMISSION_DENIED)
   })
