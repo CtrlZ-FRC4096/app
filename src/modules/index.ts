@@ -12,7 +12,8 @@ import { training } from './training'
 import { bom } from './bom'
 import { scouting } from './scouting'
 import { status } from './status'
+import { attendance } from './attendance'
 import { example } from './example'
 import { members } from './members'
 
-export const modules: ModuleDefinition[] = [inventory, training, bom, scouting, status, example, members]
+export const modules: ModuleDefinition[] = [inventory, training, bom, scouting, status, attendance, example, members]

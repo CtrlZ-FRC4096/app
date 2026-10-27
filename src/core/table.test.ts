@@ -43,6 +43,12 @@ describe('a demo table', () => {
     expect((await things.remove('nope')).ok).toBe(false)
   })
 
+  it('adds many rows at once', async () => {
+    const result = await things.insertMany([{ name: 'One' }, { name: 'Two' }])
+    expect(result.ok && result.value.map((t) => t.name)).toEqual(['One', 'Two'])
+    expect(things.rows()).toHaveLength(4)
+  })
+
   it('puts the example rows back on reset', async () => {
     await things.remove('a')
     things.reset()

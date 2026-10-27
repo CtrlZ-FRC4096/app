@@ -1,0 +1,62 @@
+# Pulls attendance from the Slack attendance channel into the team database
+# once a day, after meetings: Simple Poll answers and Jibble check-ins and check-outs. Points
+# and hours in the app's Attendance tab update from it.
+#
+# Set up once (see src/modules/attendance/README.md): give the Slack app a
+# bot, invite it to the channel, then add SLACK_BOT_TOKEN to the "database"
+# environment's secrets and ATTENDANCE_CHANNEL_ID to the repo's variables.
+# Until then this does nothing.
+name: Pull attendance from Slack
+
+on:
+  schedule:
+    # 4:17 UTC is 11:17 PM Central in summer and 10:17 PM in winter, after
+    # meetings end. Run it by hand from the Actions tab for the latest right away.
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: attendance-sync
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    # Only main can use this environment, so pull requests can't read its secrets.
+    environment: database
+    steps:
+      - name: Check it's set up
+        id: setup
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          ATTENDANCE_CHANNEL_ID: ${{ vars.ATTENDANCE_CHANNEL_ID }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ] || [ -z "$SLACK_BOT_TOKEN" ] || [ -z "$ATTENDANCE_CHANNEL_ID" ]; then
+            echo "::notice::Automatic attendance pulls aren't set up yet. See src/modules/attendance/README.md."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v5
+        if: steps.setup.outputs.ready == 'true'
+      - uses: actions/setup-node@v5
+        if: steps.setup.outputs.ready == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+        if: steps.setup.outputs.ready == 'true'
+      - name: Pull from Slack
+        if: steps.setup.outputs.ready == 'true'
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          ATTENDANCE_CHANNEL_ID: ${{ vars.ATTENDANCE_CHANNEL_ID }}
+          ATTENDANCE_SINCE: ${{ vars.ATTENDANCE_SINCE }}
+        run: |
+          npx vite build --ssr scripts/attendance-sync.ts --outDir .sync --emptyOutDir
+          node .sync/attendance-sync.js

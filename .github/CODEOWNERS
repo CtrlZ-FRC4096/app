@@ -13,6 +13,11 @@
 # The database, its permission rules and their tests.
 /supabase/            @MBimrose
 
+# Code the daily attendance pull runs with the database password and the
+# Slack bot token (.github/workflows/attendance-sync.yml).
+/scripts/                 @MBimrose
+/src/modules/attendance/  @MBimrose
+
 # How the site is checked and published, and the rules Claude follows.
 /.github/             @MBimrose
 /CLAUDE.md            @MBimrose

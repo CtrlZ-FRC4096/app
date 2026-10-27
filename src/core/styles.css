@@ -193,3 +193,19 @@ img.avatar { object-fit: cover; background: var(--surface-2); }
 /* Members */
 .member { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .member .avatar { flex: none; }
+
+/* Attendance */
+.grid-table th:first-child, .grid-table td:first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); box-shadow: 1px 0 0 var(--line); }
+.grid-table tr[aria-selected='true'] td { background: var(--blue-soft); }
+.grid-table th.day { font-size: 11px; }
+.grid-table td.cell { white-space: nowrap; }
+.cell-good { color: var(--ok); font-weight: 600; }
+.cell-bad { color: var(--crit); font-weight: 600; }
+.cell-warn { color: var(--warn); background: var(--warn-bg); }
+.name-btn { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.name-btn:hover { text-decoration-color: currentColor; }
+.checks { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
+.check-ignored { text-decoration: line-through; color: var(--muted); }
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
+.points-rules { max-width: 560px; }
+.callout > * { min-width: 0; }
