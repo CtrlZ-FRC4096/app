@@ -26,20 +26,24 @@ export interface Item extends Row {
 
 // Real parts from the wiki's Electrical > Components page. The quantities
 // and bins are made up.
+//
+// Some are low on purpose, so the low-stock flag has something to show:
+// the main breaker is below its level, and the roboRIO and CANivore are
+// exactly at theirs.
 const EXAMPLE_ITEMS: Item[] = [
-  example(1, 'Power Distribution Hub (PDH)', 'REV', 'REV-11-1850', 'Shelf E1', 2, 1),
-  example(2, 'Mini Power Module (MPM)', 'REV', 'REV-11-1956', 'Bin E3', 3, 2),
-  example(3, 'roboRIO 2.0', 'AndyMark', 'am-3000a', 'Shelf E1', 1, 1),
-  example(4, 'Robot radio (VH-109)', 'AndyMark', 'am-5583a', 'Shelf E1', 2, 1),
-  example(5, 'Battery, 12V 18Ah', 'MK Battery', 'ES17-12', 'Battery cart', 8, 6),
-  example(6, 'CANivore', 'CTR Electronics', '21-678682', 'Bin E2', 1, 1),
-  example(7, 'Main breaker, 120A', 'AndyMark', 'am-0282a', 'Bin E4', 1, 2),
-  example(8, 'Voltage Regulator Module (VRM)', 'AndyMark', 'am-2857', 'Bin E3', 2, 1),
+  example('00000000-0000-4000-8000-00000001a001', 'Power Distribution Hub (PDH)', 'REV', 'REV-11-1850', 'Shelf E1', 2, 1),
+  example('00000000-0000-4000-8000-00000001a002', 'Mini Power Module (MPM)', 'REV', 'REV-11-1956', 'Bin E3', 3, 2),
+  example('00000000-0000-4000-8000-00000001a003', 'roboRIO 2.0', 'AndyMark', 'am-3000a', 'Shelf E1', 1, 1),
+  example('00000000-0000-4000-8000-00000001a004', 'Robot radio (VH-109)', 'AndyMark', 'am-5583a', 'Shelf E1', 2, 1),
+  example('00000000-0000-4000-8000-00000001a005', 'Battery, 12V 18Ah', 'MK Battery', 'ES17-12', 'Battery cart', 8, 6),
+  example('00000000-0000-4000-8000-00000001a006', 'CANivore', 'CTR Electronics', '21-678682', 'Bin E2', 1, 1),
+  example('00000000-0000-4000-8000-00000001a007', 'Main breaker, 120A', 'AndyMark', 'am-0282a', 'Bin E4', 1, 2),
+  example('00000000-0000-4000-8000-00000001a008', 'Voltage Regulator Module (VRM)', 'AndyMark', 'am-2857', 'Bin E3', 2, 1),
 ]
 
-function example(n: number, name: string, vendor: string, vendor_part_number: string, location: string, quantity: number, low_stock_level: number): Item {
+function example(id: string, name: string, vendor: string, vendor_part_number: string, location: string, quantity: number, low_stock_level: number): Item {
   return {
-    id: `00000000-0000-4000-8000-00000001a00${n}`,
+    id,
     name,
     vendor,
     vendor_part_number,
