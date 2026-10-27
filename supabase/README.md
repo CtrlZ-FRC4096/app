@@ -8,7 +8,8 @@ repo. Changes here need a mentor's approval (see `.github/CODEOWNERS`).
 | Where | What |
 |:--|:--|
 | `migrations/` | The SQL that builds the database, one file per change, run in name order |
-| `tests/` | Tests for the permission rules, run by `npm test` on every pull request |
+| `functions/` | Server functions: code that runs on Supabase with secret keys, like The Blue Alliance's |
+| `tests/` | Tests for the permission rules and server functions, run by `npm test` on every pull request |
 
 ## How it fits together
 
@@ -181,6 +182,91 @@ Until this is set, the database turns everyone away.
 
 3. Reload the site. The **Members** module appears: make other mentors
    mentors or admins from there.
+
+## Server functions
+
+Anything that needs a secret key (The Blue Alliance, Onshape, a Slack bot)
+can't run in the browser or live in this public repo. It runs in a
+**server function** instead: a small TypeScript program in
+`supabase/functions/<name>/index.ts` that runs on Supabase's servers
+(Supabase calls them Edge Functions). Keys are Supabase secrets that only
+the functions can read.
+
+| Function | What it does |
+|:--|:--|
+| `hello` | The example to copy. Answers members with their name and which secrets are set |
+| `tba` | The Blue Alliance for scouting: an event's schedule and rankings, and a team's matches and name |
+
+How they fit together:
+
+- **Only team members can call them.** Supabase checks the caller is
+  signed in, then `forMembers()` in `functions/_shared/members.ts` looks
+  them up in `members` with their own sign-in, so the database's rules
+  decide. People whose access is off are turned away.
+- **The app calls them from a module's `data.ts`** with `callFunction()`
+  from `src/core/functions.ts`. In demo mode it returns the example data
+  you give it instead, so students can build without keys.
+- **Merging deploys them.** The Deploy workflow deploys every folder in
+  `functions/` (except `_shared`) after applying migrations.
+- **The Members page checks them.** Mentors click **Check them** under
+  **Server functions** to see if they're deployed and the keys work.
+
+### Setting them up (once, by a mentor)
+
+1. **Let GitHub deploy functions.** Sign in to
+   [supabase.com](https://supabase.com) with the coaches' shared account,
+   open **Account > Access Tokens**, and **Generate new token** named
+   `GitHub deploy`. In the GitHub repo, **Settings > Environments >
+   database > Add environment secret**: name `SUPABASE_ACCESS_TOKEN`, value
+   the token. Don't paste it anywhere else: it can change every project the
+   account owns.
+2. **Add The Blue Alliance's key.** Sign in at
+   [thebluealliance.com/account](https://www.thebluealliance.com/account),
+   and under **Read API Keys** add one described as `Ctrl-Z team app`. In
+   Supabase, open **Edge Functions > Secrets** and add `TBA_KEY` with the
+   key, then **Save**. (Or, with the Supabase CLI:
+   `supabase secrets set TBA_KEY=... --project-ref <ref>`.)
+3. **Deploy:** **Actions > Deploy > Run workflow** on `main`.
+4. **Check:** in the app, **Members > Server functions > Check them**. Both
+   lines should say OK.
+
+A new secret works straight away, with no redeploy. To change one, set it
+again with the same name.
+
+### Writing a new function
+
+1. Copy `functions/hello/` to `functions/<name>/` and change what it does
+   inside `forMembers(...)`. Answer with `reply({ ... })`, and with
+   `reply({ error: 'What to do' }, 400)` when something's wrong: the app
+   shows that `error` to the person.
+2. **Only do what the app needs.** Like `tba`, accept a few named requests
+   and check them, rather than passing on whatever the browser sends, so a
+   key can't be used for anything else.
+3. Put logic that doesn't need Deno (working things out, checking
+   requests) in its own file with no `npm:` imports, and test it in
+   `tests/` like `tests/functions.test.ts`. CI also runs `deno check` on
+   every function.
+4. In the module's `data.ts`, call it with
+   `callFunction('<name>', body, () => exampleAnswer)`.
+5. If it needs a new secret, add the name to `SECRETS` in
+   `functions/hello/index.ts`, so **Check them** shows whether it's set, and
+   write down here how to get the key.
+
+Never log a secret, send one back to the browser, or commit one: keys for
+trying functions on your own computer go in `functions/.env`, which Git
+ignores.
+
+### Running a function on a schedule
+
+Nothing needs this yet; Slack reminders (#22) will be first. Two ways:
+
+- **A scheduled GitHub workflow,** like `.github/workflows/attendance-sync.yml`,
+  which already runs every night with secrets from the `database`
+  environment. Simplest when the work can run in Node.
+- **Supabase's `pg_cron`,** which calls a function from the database on a
+  schedule, with the secret key kept in Supabase Vault. The function then
+  accepts that key instead of a member's sign-in. See Supabase's
+  "Scheduling Edge Functions" guide.
 
 ## Looking after it
 

@@ -14,13 +14,31 @@
 ## Rules
 
 - Test every change at phone size (browser developer tools > device toolbar).
-- Don't put a Blue Alliance key in the browser code. Ask a mentor how to get the schedule.
+- Don't put a Blue Alliance key in the browser code. Use the functions in `data.ts` below instead.
+
+## The Blue Alliance
+
+`data.ts` already gets these from The Blue Alliance, through the `tba`
+server function, which holds the team's key (see "Server functions" in
+`supabase/README.md`):
+
+| Function | Gives you |
+|:--|:--|
+| `getSchedule()` | The event's matches: who's red and blue, and the scores once played |
+| `getRankings()` | The event's rankings, best first |
+| `getTeamMatches(team)` | One team's matches at the event, with their videos |
+| `getTeam(team)` | A team's nickname and home |
+
+Each returns `{ ok: true, value }` or `{ ok: false, error }`. The event is
+`EVENT_KEY` in `season.ts`: change it before each event. In demo mode they
+return made-up example teams and matches, so you can build pages without a
+key.
 - Scouting data is visible to signed-in team members only.
 
 ## Where to start
 
 1. Create `season.ts` with this season's counters and endgame choices.
-2. Create `data.ts` with an `Entry` type, `saveEntry()` and tests.
+2. Add an `Entry` type, `saveEntry()` and tests to `data.ts`.
 3. Build the form for one robot, drawing its fields from `season.ts`.
 
 Copy the pattern from the [Example module](../example/README.md): a table

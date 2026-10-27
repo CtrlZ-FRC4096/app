@@ -8,6 +8,7 @@
  * The database only lets admins change these, and never lets the team end
  * up without an admin. The checks here just explain that before trying.
  */
+import { callFunction } from '../../core/functions'
 import { membersTable, type Member } from '../../core/members'
 import { currentUser } from '../../core/session'
 import { fail, ok, type Result } from '../../core/table'
@@ -47,4 +48,42 @@ export async function setAccess(member: Member, active: boolean): Promise<Result
 export function search(members: Member[], text: string): Member[] {
   const wanted = text.trim().toLowerCase()
   return wanted ? members.filter((m) => m.name.toLowerCase().includes(wanted)) : members
+}
+
+// ---------------------------------------------------------------------------
+// Checking the server functions (supabase/functions/) after setting them up.
+
+export interface FunctionCheck {
+  name: string
+  ok: boolean
+  text: string
+}
+
+interface Hello {
+  message: string
+  role: string
+  /** Which secrets are set. The function never sends the secrets themselves. */
+  secrets: Record<string, boolean>
+}
+
+/**
+ * Are the server functions deployed, and do their keys work? Asks the
+ * example `hello` function, then The Blue Alliance for team 4096.
+ */
+export async function checkServerFunctions(): Promise<FunctionCheck[]> {
+  const hello = await callFunction<Hello>('hello', {}, () => ({ message: 'Hi', role: 'mentor', secrets: { TBA_KEY: true } }))
+  if (!hello.ok) return [{ name: 'Server functions', ok: false, text: hello.error }]
+  const checks: FunctionCheck[] = [{ name: 'Server functions', ok: true, text: `Deployed, and they know you: "${hello.value.message}".` }]
+
+  if (!hello.value.secrets.TBA_KEY) {
+    checks.push({ name: 'The Blue Alliance', ok: false, text: 'No TBA_KEY secret yet. Add it in Supabase: see "Server functions" in supabase/README.md.' })
+    return checks
+  }
+  const team = await callFunction<{ nickname: string }>('tba', { kind: 'team', team: 4096 }, () => ({ nickname: 'Ctrl-Z' }))
+  checks.push(
+    team.ok
+      ? { name: 'The Blue Alliance', ok: true, text: `Working: it says team 4096 is ${team.value.nickname}.` }
+      : { name: 'The Blue Alliance', ok: false, text: team.error },
+  )
+  return checks
 }
