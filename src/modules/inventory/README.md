@@ -15,7 +15,7 @@ Parts, where they live, and how many are left, with a record of who took or adde
 
 ## Rules
 
-- Anyone signed in can take or add stock. Only mentors and admins change low-stock levels or delete parts.
+- Anyone signed in can add parts, and take or add stock. Only mentors and admins change low-stock levels or delete parts.
 - Other modules will read stock levels from this module's `data.ts` (the BOM needs them), so keep its functions simple and tested.
 
 ## Where to start
