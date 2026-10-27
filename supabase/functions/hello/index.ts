@@ -6,7 +6,7 @@
 import { forMembers, reply } from '../_shared/members.ts'
 
 // The secrets the app's functions read. Add yours here when you add one.
-const SECRETS = ['TBA_KEY', 'ONSHAPE_ACCESS_KEY', 'ONSHAPE_SECRET_KEY']
+const SECRETS = ['TBA_KEY', 'ONSHAPE_ACCESS_KEY', 'ONSHAPE_SECRET_KEY', 'SLACK_BOT_TOKEN', 'GOOGLE_SERVICE_ACCOUNT_KEY', 'GOOGLE_CALENDAR_ID']
 
 export default {
   fetch: forMembers(async (_req, member) =>

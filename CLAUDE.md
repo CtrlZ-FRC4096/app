@@ -58,6 +58,11 @@ enough for them to understand and for a mentor to review.
   `supabase/functions/`, called from `data.ts` with `callFunction()`
   (`src/core/functions.ts`) and made-up example data for demo mode. The
   Blue Alliance's is `tba`: use the functions in `src/modules/scouting/data.ts`.
+- The keys for Slack and the team's Google Calendar are already set up, so
+  use these rather than adding new ones: Slack messages with
+  `src/core/slack.ts` (the Example module's "Send me a Slack message" button
+  shows how), reminders that go out on a schedule with
+  `src/core/reminders.ts`, and calendar events with `src/core/calendar.ts`.
 
 ## Every change
 

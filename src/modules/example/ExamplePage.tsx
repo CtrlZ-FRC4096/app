@@ -4,7 +4,7 @@ import { useMemberNames } from '../../core/members'
 import { toast } from '../../core/toast'
 import { shortDate } from '../../core/format'
 import { PageHead, Panel } from '../../core/ui'
-import { MAX_NOTE_LENGTH, addNote, removeNote, useNotes } from './data'
+import { MAX_NOTE_LENGTH, addNote, removeNote, sendMeASlackMessage, useNotes } from './data'
 
 // The page reads data with a hook (useNotes) and changes it with functions
 // from data.ts (addNote, removeNote). It never saves anything itself.
@@ -14,6 +14,7 @@ export default function ExamplePage() {
   const nameOf = useMemberNames()
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
+  const [sending, setSending] = useState(false)
 
   async function post(event: FormEvent) {
     event.preventDefault()
@@ -31,6 +32,13 @@ export default function ExamplePage() {
   async function remove(id: string) {
     const result = await removeNote(id)
     toast(result.ok ? 'Removed.' : result.error)
+  }
+
+  async function slackMe() {
+    setSending(true)
+    const result = await sendMeASlackMessage()
+    setSending(false)
+    toast(result.ok ? result.value : result.error)
   }
 
   return (
@@ -65,6 +73,17 @@ export default function ExamplePage() {
             ))}
           </div>
         )}
+      </Panel>
+      <Panel title="Try Slack">
+        <div className="panel-body">
+          <p className="muted">
+            Press the button and the team's Slack bot sends you a direct message. Any module can send Slack messages the same
+            way: the page calls a function in data.ts, which calls the slack server function, which holds the bot's key.
+          </p>
+          <div className="toolbar">
+            <button type="button" className="btn" disabled={sending} onClick={() => void slackMe()}>{sending ? 'Sending…' : 'Send me a Slack message'}</button>
+          </div>
+        </div>
       </Panel>
     </>
   )
