@@ -35,10 +35,39 @@ export function syncPayload(users: SlackUser[], messages: unknown[]): SyncPayloa
 /**
  * Where the next pull starts: a few days before the newest message already
  * pulled, so votes on recent polls are picked up again. The first pull
- * starts at `firstDay` (ATTENDANCE_SINCE), or 180 days ago.
+ * starts at `firstDay` (ATTENDANCE_SINCE), or 180 days ago. A day typed
+ * when running the workflow by hand overrides this (see pickedDay).
  */
 export function pullFrom(newestPulled: string | null, firstDay: string | null, now: Date = new Date()): Date {
   if (newestPulled) return new Date(Date.parse(newestPulled) - 3 * 86_400_000)
   if (firstDay) return new Date(`${firstDay}T00:00:00Z`)
   return new Date(now.getTime() - 180 * 86_400_000)
+}
+
+const DAY = 86_400_000
+
+/** A day typed into "Run workflow" to pull older history, like "2025-09-01". Throws if it isn't a real day before now. */
+export function pickedDay(value: string, now: Date = new Date()): Date {
+  const day = value.trim()
+  const at = new Date(`${day}T00:00:00Z`)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(at.getTime()) || at.toISOString().slice(0, 10) !== day) {
+    throw new Error(`"${value}" isn't a day. Type it like 2025-09-01.`)
+  }
+  if (at > now) throw new Error(`${day} is in the future. Pick a day to start pulling from.`)
+  return at
+}
+
+/**
+ * A warning for a pull from a picked day when the oldest message Slack sent
+ * back is weeks later. On Slack's free plan the bot can only read the last
+ * 90 days, so older messages need a Slack export and the Import tab.
+ */
+export function shortHistory(asked: Date, oldestMessage: Date | null): string | null {
+  if (oldestMessage && oldestMessage.getTime() - asked.getTime() < 14 * DAY) return null
+  const found = oldestMessage ? `starts on ${oldestMessage.toISOString().slice(0, 10)}` : 'is empty'
+  return (
+    `You asked for messages from ${asked.toISOString().slice(0, 10)}, but what Slack sent back ${found}. ` +
+    "If the channel has older messages, Slack isn't letting the bot read them (on the free plan it can only read the last 90 days): " +
+    'import a Slack export on the Attendance tab for those.'
+  )
 }
