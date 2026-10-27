@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { PageHead, Panel } from '../../core/ui'
 import { advanceStage, STAGES, SUBSYSTEMS, type Stage } from './data'
+import { PitChecklist } from './PitChecklist'
 import './status.css'
 
 export default function StatusPage() {
@@ -15,11 +16,11 @@ export default function StatusPage() {
   return (
     <>
       <PageHead eyebrow="Team 4096" title="Robot status">
-        Track each subsystem from design through testing. Changes reset when you leave or reload this page.
+        Track each subsystem from design through testing, and work through the pit checklist at events.
       </PageHead>
       <Panel title="Subsystem progress" className="status-panel">
         <p className="panel-body" id="status-instructions">
-          Click a cell to cycle: Not started → In progress → Done → Not started.
+          Click a cell to cycle: Not started → In progress → Done → Not started. Changes to the grid reset when you leave or reload this page.
           On a phone, swipe across the grid to see every stage.
         </p>
         <div className="table-wrap status-scroll" role="region" aria-label="Subsystem progress grid" tabIndex={0}>
@@ -53,6 +54,7 @@ export default function StatusPage() {
           </table>
         </div>
       </Panel>
+      <PitChecklist />
     </>
   )
 }
