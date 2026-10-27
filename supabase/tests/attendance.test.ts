@@ -15,9 +15,10 @@ beforeEach(async () => {
   person = row.id
   await db.as(mentor, "insert into public.attendance_checks (person_id, direction, at, source) values ($1, 'in', '2026-01-09T00:05:00Z', 'jibble')", [person])
   await db.as(mentor, "insert into public.attendance_rsvps (person_id, day, coming, source) values ($1, '2026-01-08', true, 'poll')", [person])
+  await db.as(mentor, "insert into public.attendance_periods (name, first_day, last_day) values ('2026 build season', '2026-01-10', '2026-04-18')")
 })
 
-const TABLES = ['attendance_people', 'attendance_checks', 'attendance_rsvps']
+const TABLES = ['attendance_people', 'attendance_checks', 'attendance_rsvps', 'attendance_periods']
 
 describe('attendance', () => {
   it('can be read by mentors', async () => {
@@ -43,6 +44,10 @@ describe('attendance', () => {
     ).rejects.toThrow(PERMISSION_DENIED)
     expect(await db.as(student, "update public.attendance_rsvps set coming = false returning id")).toEqual([])
     expect(await db.as(student, 'delete from public.attendance_people returning id')).toEqual([])
+    await expect(
+      db.as(student, "insert into public.attendance_periods (name, first_day) values ('My season', '2026-01-01')"),
+    ).rejects.toThrow(PERMISSION_DENIED)
+    expect(await db.as(student, "update public.attendance_periods set first_day = '2025-01-01' returning id")).toEqual([])
   })
 
   it('lets mentors fix check-ins and RSVPs', async () => {
@@ -69,5 +74,26 @@ describe('attendance', () => {
     await db.as(mentor, 'delete from public.attendance_people where id = $1', [person])
     expect(await db.sql('select count(*)::int as n from public.attendance_checks')).toEqual([{ n: 0 }])
     expect(await db.sql('select count(*)::int as n from public.attendance_rsvps')).toEqual([{ n: 0 }])
+  })
+
+  it('lets mentors save, change and remove points periods', async () => {
+    await db.as(mentor, "insert into public.attendance_periods (name, first_day) values ('2026 offseason', '2026-05-01')")
+    await db.as(mentor, "update public.attendance_periods set last_day = '2026-12-20' where name = '2026 offseason'")
+    await db.as(mentor, "delete from public.attendance_periods where name = '2026 build season'")
+    expect(await db.sql("select name, first_day::text, last_day::text from public.attendance_periods")).toEqual([
+      { name: '2026 offseason', first_day: '2026-05-01', last_day: '2026-12-20' },
+    ])
+  })
+
+  it('keeps points periods sensible: an end after the start, and one of each name', async () => {
+    await expect(
+      db.as(mentor, "insert into public.attendance_periods (name, first_day, last_day) values ('Backwards', '2026-03-01', '2026-02-01')"),
+    ).rejects.toThrow('violates check constraint')
+    await expect(
+      db.as(mentor, "insert into public.attendance_periods (name, first_day) values ('  2026 Build Season ', '2026-01-03')"),
+    ).rejects.toThrow('duplicate key')
+    await expect(db.as(mentor, "insert into public.attendance_periods (name, first_day) values ('   ', '2026-01-03')")).rejects.toThrow(
+      'violates check constraint',
+    )
   })
 })

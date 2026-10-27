@@ -16,7 +16,7 @@ export into an Excel workbook). It works the same way:
 - **Hours** pair each check-in with the next check-out. A double check-in is
   ignored. Someone who never checks out gets no hours that day until a
   mentor adds the check-out.
-- **Points** per day, plus 3 to start:
+- **Points** per day, plus 3 to start each points period:
 
   | Poll answer | Didn't come | Under 1.5 h | 1.5 h or more |
   |:--|--:|--:|--:|
@@ -33,7 +33,13 @@ Days and times are in Central time, whatever the computer's time zone.
    times and poll votes are saved. Importing again only adds what's new.
 2. **Points, Hours, Check-ins, RSVPs**: the same sheets as the old workbook,
    with a CSV download for each.
-3. **Fixes**: choose a name to add a missed check-out, change an RSVP,
+3. **Periods**: the dates points are counted over, like "2027 build season,
+   Jan 9 to Apr 17" (leave the last day empty while it's still going).
+   Everyone starts a period with 3 points and only its meetings count.
+   Mentors save periods once and all see the same ones; the sheets open on
+   the period that includes today. "Count points over" switches to another
+   period, all time, or any dates, until the app is reloaded.
+4. **Fixes**: choose a name to add a missed check-out, change an RSVP,
    ignore a wrong check-in, or hide someone (mentors, parents) from the
    tables. Manual RSVPs are never overwritten by importing again.
 

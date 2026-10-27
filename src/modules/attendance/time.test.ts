@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ago, dayLabel, teamClock, teamDay, teamInstant } from './time'
+import { ago, dateLabel, dayLabel, teamClock, teamDay, teamInstant } from './time'
 
 describe('team time (Central)', () => {
   it('puts an evening check-in on that evening, even though it is already the next day in UTC', () => {
@@ -20,6 +20,7 @@ describe('team time (Central)', () => {
 
   it('labels days for people', () => {
     expect(dayLabel('2026-01-09')).toBe('Fri, Jan 9')
+    expect(dateLabel('2026-01-09')).toBe('Jan 9, 2026')
   })
 
   it('says how long ago something happened', () => {

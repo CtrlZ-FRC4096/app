@@ -10,12 +10,14 @@
  * wrong check-in. Hours and points are worked out in points.ts.
  */
 import { useMemo, useState } from 'react'
-import { createTable, fail, ok, type Result, type Row } from '../../core/table'
+import { createTable, fail, ok, type Fields, type Result, type Row } from '../../core/table'
+import { createStore, useStore } from '../../core/store'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { isLive } from '../../core/supabase'
 import type { Notice } from '../../core/registry'
 import { buildReport, type DayRecord, type Report } from './points'
-import { ago, dayLabel, teamClock, teamDay, teamInstant } from './time'
+import { countRange, type CountRange, type Counting, type Period } from './periods'
+import { ago, dayLabel, teamClock, teamDay, teamInstant, today } from './time'
 import { nameKey, resolve, slackKey, type ParsedDay, type SlackUser } from './slack-export'
 
 export interface AttendancePerson extends Row {
@@ -43,6 +45,11 @@ export interface AttendanceRsvp extends Row {
   day: string
   coming: boolean
   source: 'poll' | 'manual'
+  created_by: string | null
+}
+
+/** The dates points are counted over, like "2027 build season" (see periods.ts). */
+export interface AttendancePeriod extends Row, Period {
   created_by: string | null
 }
 
@@ -97,6 +104,13 @@ DEMO_PATTERN.forEach(([name, slack, hidden, days], p) => {
 export const peopleTable = createTable<AttendancePerson>('attendance_people', { demo: DEMO_PEOPLE_ROWS, sort: (a, b) => a.name.localeCompare(b.name) })
 export const checksTable = createTable<AttendanceCheck>('attendance_checks', { demo: DEMO_CHECKS, sort: (a, b) => Date.parse(a.at) - Date.parse(b.at) })
 export const rsvpsTable = createTable<AttendanceRsvp>('attendance_rsvps', { demo: DEMO_RSVPS, sort: (a, b) => a.day.localeCompare(b.day) })
+export const periodsTable = createTable<AttendancePeriod>('attendance_periods', {
+  demo: [
+    { id: demoId(0xa5, 1), name: '2026 preseason', first_day: '2026-01-01', last_day: '2026-01-09', created_at: DEMO_CREATED, created_by: DEMO_PEOPLE.pat },
+    { id: demoId(0xa5, 2), name: '2026 build season', first_day: '2026-01-10', last_day: null, created_at: DEMO_CREATED, created_by: DEMO_PEOPLE.pat },
+  ],
+  sort: (a, b) => b.first_day.localeCompare(a.first_day) || a.name.localeCompare(b.name),
+})
 export const syncsTable = createTable<AttendanceSync>('attendance_syncs', {
   demo: [{ id: demoId(0xa4, 1), created_at: '2026-01-16T03:07:00Z', newest_message_at: '2026-01-16T02:52:00Z', people_added: 0, checks_added: 9, rsvps_changed: 1 }],
 })
@@ -125,6 +139,18 @@ export function useReport(range: { from?: string; to?: string }, showHidden = fa
     () => buildReport(showHidden ? people : people.filter((p) => !p.hidden), checks, rsvps, { from, to }),
     [people, checks, rsvps, from, to, showHidden],
   )
+}
+
+// What the tab counts points over. It lasts while the app is open, so going
+// to another tab and back keeps it; reloading goes back to today's period.
+const countingStore = createStore<Counting>('attendance-counting', 1, () => null, { persist: false })
+
+/** The dates the tab counts points over, and a way to change them. */
+export function useCountRange(): CountRange<AttendancePeriod> & { set: (next: Counting) => void } {
+  const periods = periodsTable.useRows()
+  const counting = useStore(countingStore)
+  const [day] = useState(today)
+  return { ...countRange(counting, periods, day), set: countingStore.set }
 }
 
 /** The home page tile: how many came to the last meeting. */
@@ -157,9 +183,10 @@ export function useAttendanceAttention(): Notice[] {
 // Fixing things by hand.
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/
+const DAY = /^\d{4}-\d{2}-\d{2}$/
 
 export async function addCheck(personId: string, day: string, clock: string, direction: 'in' | 'out'): Promise<Result<AttendanceCheck>> {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return fail('Pick a day.')
+  if (!DAY.test(day)) return fail('Pick a day.')
   if (!CLOCK.test(clock)) return fail('Enter a time like 18:30.')
   const at = teamInstant(day, clock)
   const same = checksTable.rows().some((c) => c.person_id === personId && c.direction === direction && Date.parse(c.at) === Date.parse(at))
@@ -193,6 +220,26 @@ export async function setRsvp(personId: string, day: string, answer: 'yes' | 'no
 export async function setHidden(person: AttendancePerson, hidden: boolean): Promise<Result> {
   const result = await peopleTable.update(person.id, { hidden })
   return result.ok ? ok(null) : result
+}
+
+/** Add a points period, or change one when given its id. */
+export async function savePeriod(fields: Fields<AttendancePeriod>, id?: string): Promise<Result<AttendancePeriod>> {
+  const name = fields.name.trim()
+  const last_day = fields.last_day || null
+  if (!name) return fail('Give the period a name, like "2027 build season".')
+  if (name.length > 80) return fail('Keep the name to 80 characters.')
+  if (!DAY.test(fields.first_day)) return fail('Pick its first day.')
+  if (last_day && !DAY.test(last_day)) return fail('Pick its last day, or leave it empty if the period is still going.')
+  if (last_day && last_day < fields.first_day) return fail('The last day is before the first day.')
+  const same = periodsTable.rows().find((p) => p.id !== id && p.name.trim().toLowerCase() === name.toLowerCase())
+  if (same) return fail(`There's already a period called "${same.name}".`)
+  const period = { name, first_day: fields.first_day, last_day }
+  return id ? periodsTable.update(id, period) : periodsTable.insert(period)
+}
+
+/** Remove a points period. The meetings in it stay. */
+export function removePeriod(id: string): Promise<Result> {
+  return periodsTable.remove(id)
 }
 
 /** A person's check-ins and check-outs on one day, including ignored ones, in time order. */

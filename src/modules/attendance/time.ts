@@ -59,6 +59,11 @@ export function dayLabel(day: string): string {
   return new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' })
 }
 
+/** "Jan 9, 2026" for a day like "2026-01-09". */
+export function dateLabel(day: string): string {
+  return new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 /** Today's team-time day. */
 export function today(now: Date = new Date()): string {
   return teamDay(now)

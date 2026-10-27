@@ -6,15 +6,19 @@ import {
   applyImport,
   checksTable,
   peopleTable,
+  periodsTable,
   planImport,
   removeCheck,
+  removePeriod,
   restoreCheck,
   rsvpsTable,
+  savePeriod,
   setRsvp,
   sheetRows,
   toCsv,
 } from './data'
 import { buildReport } from './points'
+import { countRange } from './periods'
 import { teamInstant } from './time'
 import type { ParsedDay, SlackUser } from './slack-export'
 
@@ -22,6 +26,7 @@ beforeEach(() => {
   peopleTable.reset()
   checksTable.reset()
   rsvpsTable.reset()
+  periodsTable.reset()
 })
 
 const existing = () => ({ people: peopleTable.rows(), checks: checksTable.rows(), rsvps: rsvpsTable.rows() })
@@ -136,5 +141,47 @@ describe('downloads', () => {
 
   it('writes CSV that spreadsheets open safely', () => {
     expect(toCsv([['Name', 'Note'], ['=cmd()', 'a, "b"'], ['Ann', '-1']])).toBe('Name,Note\r\n\'=cmd(),"a, ""b"""\r\nAnn,-1\r\n')
+  })
+})
+
+describe('points periods', () => {
+  const period = (name: string) => periodsTable.rows().find((p) => p.name === name)!
+
+  it('counts only the meetings in a period, starting everyone again from the base points', () => {
+    const build = period('2026 build season')
+    const { from, to } = countRange({ kind: 'period', id: build.id }, periodsTable.rows(), '2026-02-01')
+    const season = buildReport(peopleTable.rows(), checksTable.rows(), rsvpsTable.rows(), { from, to })
+    expect(season.days).toEqual(['2026-01-10', '2026-01-13', '2026-01-15'])
+    // Alex: +1 on Jan 10 (said no, didn't come), +3, then −1 on Jan 15 (never checked out), + base 3. Jan 6 and 8 don't count.
+    expect(season.rows.find((r) => r.person.name === 'Alex Rivera')?.points).toBe(6)
+  })
+
+  it('opens on the period that includes today', () => {
+    expect(countRange(null, periodsTable.rows(), '2026-01-08').period?.name).toBe('2026 preseason')
+    expect(countRange(null, periodsTable.rows(), '2026-10-27').period?.name).toBe('2026 build season')
+  })
+
+  it('saves, changes and removes a period', async () => {
+    const added = await savePeriod({ name: '  2026 offseason ', first_day: '2026-05-01', last_day: null })
+    expect(added.ok && added.value).toMatchObject({ name: '2026 offseason', first_day: '2026-05-01', last_day: null })
+    const id = period('2026 offseason').id
+    expect((await savePeriod({ name: '2026 offseason', first_day: '2026-05-01', last_day: '2026-12-20' }, id)).ok).toBe(true)
+    expect(period('2026 offseason').last_day).toBe('2026-12-20')
+    expect((await removePeriod(id)).ok).toBe(true)
+    expect(periodsTable.rows().map((p) => p.name)).toEqual(['2026 build season', '2026 preseason'])
+  })
+
+  it('refuses a period without a name or first day, ending before it starts, or named like another', async () => {
+    const error = async (fields: { name: string; first_day: string; last_day: string | null }, id?: string) => {
+      const result = await savePeriod(fields, id)
+      return result.ok ? null : result.error
+    }
+    expect(await error({ name: ' ', first_day: '2026-05-01', last_day: null })).toMatch(/name/)
+    expect(await error({ name: 'Fall', first_day: '', last_day: null })).toMatch(/first day/)
+    expect(await error({ name: 'Fall', first_day: '2026-09-01', last_day: '2026-08-01' })).toMatch(/before the first day/)
+    expect(await error({ name: '2026 BUILD SEASON', first_day: '2026-09-01', last_day: null })).toMatch(/already a period/)
+    // Keeping its own name while changing its dates is fine.
+    const build = period('2026 build season')
+    expect(await error({ name: '2026 build season', first_day: '2026-01-10', last_day: '2026-04-18' }, build.id)).toBeNull()
   })
 })
