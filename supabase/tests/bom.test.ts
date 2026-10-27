@@ -1,6 +1,6 @@
-// Permission rules for the BOM module's tables: members can read robots,
-// systems and parts, and add parts. Only mentors can change and delete
-// parts, and add, change and delete robots and systems.
+// Permission rules for the BOM module's tables: members can read and add
+// robots, systems and parts, change them, and delete parts. Only mentors
+// can delete robots and systems, because that deletes every part in them.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
@@ -46,11 +46,15 @@ describe('BOM robots, systems and parts', () => {
     expect(part.created_by).toBe(student)
   })
 
-  it("doesn't let a student add robots or systems", async () => {
-    await expect(db.as(student, "insert into public.bom_robots (name) values ('Sneaky robot')")).rejects.toThrow(PERMISSION_DENIED)
-    await expect(
-      db.as(student, "insert into public.bom_systems (robot_id, name, code) values ($1, 'Shooter', 'SHO')", [robotId]),
-    ).rejects.toThrow(PERMISSION_DENIED)
+  it('lets a student add robots and systems, signed with their own id', async () => {
+    const [robot] = await db.as<{ created_by: string }>(student, "insert into public.bom_robots (name) values ('2027 robot') returning created_by")
+    const [system] = await db.as<{ created_by: string }>(
+      student,
+      "insert into public.bom_systems (robot_id, name, code) values ($1, 'Shooter', 'SHO') returning created_by",
+      [robotId],
+    )
+    expect(robot.created_by).toBe(student)
+    expect(system.created_by).toBe(student)
   })
 
   it("doesn't let anyone add something as someone else", async () => {
@@ -71,22 +75,37 @@ describe('BOM robots, systems and parts', () => {
     await expect(addMadePart(student)).rejects.toThrow(PERMISSION_DENIED)
   })
 
-  it('can be changed by a mentor but not by a student', async () => {
+  it('can be changed by anyone on the team', async () => {
     const [part] = await addMadePart(mentor)
-    const change = (person: string) =>
-      db.as(person, 'update public.bom_parts set quantity = 4 where id = $1 returning id', [part.id])
-    expect(await change(student)).toEqual([])
-    expect(await db.as(student, "update public.bom_systems set name = 'Changed' returning id")).toEqual([])
-    expect(await db.as(student, "update public.bom_robots set name = 'Changed' returning id")).toEqual([])
-    expect(await change(mentor)).toEqual([{ id: part.id }])
+    expect(await db.as(student, 'update public.bom_parts set quantity = 4 where id = $1 returning id', [part.id])).toEqual([{ id: part.id }])
+    expect(await db.as(student, "update public.bom_systems set name = 'Changed', code = 'CHG' returning id")).toEqual([{ id: systemId }])
+    expect(await db.as(student, "update public.bom_robots set name = 'Changed' returning id")).toEqual([{ id: robotId }])
+    expect(await db.as(mentor, 'update public.bom_parts set quantity = 5 where id = $1 returning id', [part.id])).toEqual([{ id: part.id }])
   })
 
-  it('can be deleted by a mentor but not by a student', async () => {
-    const [part] = await addMadePart(mentor)
+  it("doesn't let anyone change who made something, or move it to another robot or system", async () => {
+    const [part] = await addMadePart(student)
+    for (const person of [student, mentor]) {
+      await expect(db.as(person, 'update public.bom_parts set created_by = $1 where id = $2', [mentor, part.id])).rejects.toThrow(PERMISSION_DENIED)
+      await expect(db.as(person, 'update public.bom_systems set robot_id = robot_id')).rejects.toThrow(PERMISSION_DENIED)
+      await expect(db.as(person, 'update public.bom_robots set created_at = now()')).rejects.toThrow(PERMISSION_DENIED)
+    }
+  })
+
+  it("doesn't let someone whose access is off change or delete a part", async () => {
+    const [part] = await addMadePart(student)
+    await db.switchOff(student)
+    expect(await db.as(student, 'update public.bom_parts set quantity = 9 where id = $1 returning id', [part.id])).toEqual([])
     expect(await db.as(student, 'delete from public.bom_parts where id = $1 returning id', [part.id])).toEqual([])
+  })
+
+  it('lets a student delete parts, but only mentors delete robots and systems', async () => {
+    const [part] = await addMadePart(mentor)
+    expect(await db.as(student, 'delete from public.bom_parts where id = $1 returning id', [part.id])).toEqual([{ id: part.id }])
     expect(await db.as(student, 'delete from public.bom_systems returning id')).toEqual([])
     expect(await db.as(student, 'delete from public.bom_robots returning id')).toEqual([])
-    expect(await db.as(mentor, 'delete from public.bom_parts where id = $1 returning id', [part.id])).toEqual([{ id: part.id }])
+    expect(await db.as(mentor, 'delete from public.bom_systems returning id')).toEqual([{ id: systemId }])
+    expect(await db.as(mentor, 'delete from public.bom_robots returning id')).toEqual([{ id: robotId }])
   })
 
   it("can't be read or added by someone who isn't signed in", async () => {
