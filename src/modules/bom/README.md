@@ -1,10 +1,23 @@
 # BOM
 
-**Not built yet.** The bill of materials for each Onshape assembly, checked against Inventory, so the team can see what to make and what to order.
+The bill of materials for each robot, checked against Inventory, so the team can see what to make and what to order.
 
-## What it needs to do
+**Built so far:** a robot is made of systems (Intake, Drivetrain, …), and each system has a list of parts. The page shows one system's parts with an All / Made / COTS filter, and anyone on the team can add parts with the **Add a part** button, whose form fills in the next free part number. The data starts as made-up example rows; importing from Onshape comes next (#19).
 
-- The parts each assembly needs, from Onshape
+| File | What it does |
+|:--|:--|
+| `index.ts` | Tells the app about the module, and puts "2 systems · 12 parts" on the home page tile. |
+| `data.ts` | The three tables (`bom_robots`, `bom_systems`, `bom_parts`), their example rows, and the filter and count functions. |
+| `data.test.ts` | Tests for `data.ts`. |
+| `BomPage.tsx` | Pick a system, then see its parts in a table. |
+
+The tables are made by `supabase/migrations/20261027000200_bom.sql`, and their permission rules are tested in `supabase/tests/bom.test.ts`. Members can read everything and add parts. Only mentors can change or delete parts, or add, change and delete robots and systems.
+
+**Part numbers.** Every part gets a team number like `4096-26-INT-001`: team, year, system code, then a number. Made parts also have a material, such as "6061 aluminum, 1/4 in plate". COTS (bought) parts have a vendor and the vendor's part number.
+
+## Still to do
+
+- The parts each system needs, from Onshape (#19)
 - For bought parts: how many are on the shelf (from Inventory), and whether we're short
 - For made parts: whether they have been made yet
 - Mentors mark short parts as ordered
@@ -16,17 +29,6 @@
 - Costs are hidden from students.
 - Read stock levels through Inventory's `data.ts`, not by copying its data.
 
-## Where to start
-
-1. Create `data.ts` with an example assembly: a few made parts and a few bought parts.
-2. Show the lines in a table with a status for each.
-3. Once Inventory has `data.ts`, look up shelf counts from it, with a test that taking parts in Inventory makes a BOM line short.
-
-Copy the pattern from the [Example module](../example/README.md): a table
-and rules in `data.ts`, tests in `data.test.ts`, and the page calling
-`data.ts`. Each table also needs a migration in `supabase/migrations/` that
-makes it in the team database, with its permission rules and tests; see
-[Adding a module](../../../docs/adding-a-module.md). Keep each pull request to
-one step.
+Copy the pattern from the [Example module](../example/README.md). Keep each pull request to one step.
 
 **Works with:** Inventory (stock levels), Robot status (shows the short-line count).
