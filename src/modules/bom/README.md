@@ -11,7 +11,7 @@ The bill of materials for each robot, checked against Inventory, so the team can
 | `data.test.ts` | Tests for `data.ts`. |
 | `BomPage.tsx` | Pick a system, then see its parts in a table. |
 
-The tables are made by `supabase/migrations/20261027000200_bom.sql`, and their permission rules are tested in `supabase/tests/bom.test.ts`. Members can read everything and add parts. Only mentors can change or delete parts, or add, change and delete robots and systems.
+The tables are made by `supabase/migrations/20261027150000_bom.sql`, and their permission rules are tested in `supabase/tests/bom.test.ts`. Members can read everything and add parts. Only mentors can change or delete parts, or add, change and delete robots and systems.
 
 **Part numbers.** Every part gets a team number like `4096-26-INT-001`: team, year, system code, then a number. Made parts also have a material, such as "6061 aluminum, 1/4 in plate". COTS (bought) parts have a vendor and the vendor's part number.
 
