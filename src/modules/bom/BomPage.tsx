@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { plural, shortDate } from '../../core/format'
 import { isMentor } from '../../core/roles'
 import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
 import {
-  PART_FILTERS, addPart, addRobot, addSystem, changePart, changeSystem, filterParts, kindLabel, nextPartNumber, partCountText,
-  removePart, removeSystem, renameRobot, useParts, useRobots, useSystems,
+  PART_FILTERS, addPart, addRobot, addSystem, applyOnshapeImport, changePart, changeSystem, filterParts, getOnshapeBom, kindLabel,
+  nextPartNumber, partCountText, removePart, removeSystem, renameRobot, useParts, useRobots, useSystems,
   type BomSystem, type Part, type PartFilter, type PartKind, type Robot,
 } from './data'
+import { planImport, type OnshapeImportPlan } from './onshape'
 
 // The form open at the top of the page, if any. A null robot, system or
 // part means adding a new one; otherwise it's the one being changed.
@@ -35,6 +37,21 @@ export default function BomPage() {
   const shown = filterParts(parts, filter)
   const [editing, setEditing] = useState<Editing | null>(null)
   const close = () => setEditing(null)
+  // An import from Onshape waiting to be confirmed, and whether Onshape is being read.
+  const [importing, setImporting] = useState<{ system: BomSystem; plan: OnshapeImportPlan } | null>(null)
+  const [reading, setReading] = useState(false)
+
+  async function readOnshape(s: BomSystem) {
+    setReading(true)
+    const answer = await getOnshapeBom(s)
+    setReading(false)
+    if (!answer.ok) {
+      toast(answer.error)
+      return
+    }
+    close()
+    setImporting({ system: s, plan: planImport(s, answer.value) })
+  }
 
   if (!robot) {
     return (
@@ -96,6 +113,9 @@ export default function BomPage() {
       {editing?.form === 'part' && system && (
         <PartForm key={editing.part?.id ?? `new-${system.id}`} system={system} parts={parts} part={editing.part} onDone={close} />
       )}
+      {importing && importing.system.id === system?.id && (
+        <ImportPreview system={importing.system} plan={importing.plan} onDone={() => setImporting(null)} />
+      )}
 
       {!system ? (
         <Panel>
@@ -116,13 +136,25 @@ export default function BomPage() {
             <div className="toolbar">
               <Pick label="Show" options={[...PART_FILTERS]} value={filter} onChange={setFilter} />
               <button type="button" className="btn btn-sm" onClick={() => setEditing({ form: 'system', system })}>Change system</button>
+              {system.onshape_url && (
+                <button type="button" className="btn btn-sm" disabled={reading} onClick={() => void readOnshape(system)}>
+                  {reading ? 'Reading Onshape…' : 'Import from Onshape'}
+                </button>
+              )}
               {/* The database only accepts https:// links here, so it's safe to open. */}
               {system.onshape_url && <a href={system.onshape_url} target="_blank" rel="noopener noreferrer">Open in Onshape</a>}
               {!(editing?.form === 'part' && !editing.part) && (
                 <button type="button" className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setEditing({ form: 'part', part: null })}>Add a part</button>
               )}
             </div>
-            {shown.length > 0 && <p className="note">Choose a part's name to change or delete it.</p>}
+            <p className="note">
+              {system.onshape_url
+                ? system.onshape_imported_at
+                  ? `Last imported from Onshape ${shortDate(system.onshape_imported_at)}. `
+                  : 'Not imported from Onshape yet. '
+                : "To import this system's parts from Onshape, add its assembly's link with Change system. "}
+              {shown.length > 0 && "Choose a part's name to change or delete it."}
+            </p>
           </div>
           {shown.length === 0 ? (
             <p className="panel-body muted">
@@ -152,8 +184,13 @@ export default function BomPage() {
                       </td>
                       <td>
                         <button type="button" className="name-btn" onClick={() => setEditing({ form: 'part', part: p })}>{p.name}</button>
+                        {p.removed_in_onshape && <> <Pill tone="warn">Removed in Onshape</Pill></>}
                         <br />
-                        <span className="note">{p.kind === 'made' ? p.material : [p.vendor, p.vendor_part_number].filter(Boolean).join(' · ')}</span>
+                        <span className="note">
+                          {p.kind === 'made' ? p.material : [p.vendor, p.vendor_part_number].filter(Boolean).join(' · ')}
+                          {/* The database only accepts https:// links here, so it's safe to open. */}
+                          {p.onshape_url && <>{(p.material || p.vendor || p.vendor_part_number) && ' · '}<a href={p.onshape_url} target="_blank" rel="noopener noreferrer">CAD</a></>}
+                        </span>
                       </td>
                       <td className="num">{p.quantity}</td>
                     </tr>
@@ -165,6 +202,62 @@ export default function BomPage() {
         </Panel>
       )}
     </>
+  )
+}
+
+/** What an import from Onshape will change, to check before anything is saved. */
+function ImportPreview(props: { system: BomSystem; plan: OnshapeImportPlan; onDone: () => void }) {
+  const { system, plan } = props
+  const [saving, setSaving] = useState(false)
+  const changed = plan.change.filter((c) => c.what.length > 0)
+  const nothing = plan.add.length === 0 && plan.change.length === 0 && plan.removed.length === 0
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => ref.current?.scrollIntoView({ block: 'nearest' }), [])
+
+  async function apply() {
+    setSaving(true)
+    const result = await applyOnshapeImport(system, plan)
+    setSaving(false)
+    toast(result.ok ? result.value : result.error)
+    if (result.ok) props.onDone()
+  }
+
+  return (
+    <div ref={ref}>
+      <Panel title={`Import ${system.name} from Onshape`} aside={<span className="note">From {plan.source}</span>}>
+        {nothing ? (
+          <p className="panel-body muted">Everything already matches Onshape. There's nothing to import.</p>
+        ) : (
+          <ul className="goal-list">
+            {plan.add.length > 0 && (
+              <li>
+                Add {plural(plan.add.length, 'part', 'parts')}: {plan.add.map((p) => `${p.name} (${p.quantity})`).join(', ')}
+              </li>
+            )}
+            {changed.map((c) => (
+              <li key={c.part.id}>
+                Change {c.part.name}: {c.what.join(', ')}
+              </li>
+            ))}
+            {plan.removed.length > 0 && (
+              <li>
+                Mark {plural(plan.removed.length, 'part', 'parts')} as removed in Onshape (they stay in the list):{' '}
+                {plan.removed.map((p) => p.name).join(', ')}
+              </li>
+            )}
+            {plan.unchanged > 0 && <li>{plural(plan.unchanged, 'part already matches', 'parts already match')}</li>}
+          </ul>
+        )}
+        <div className="panel-body toolbar">
+          {!nothing && (
+            <button type="button" className="btn btn-primary" disabled={saving} onClick={() => void apply()}>
+              {saving ? 'Importing…' : 'Import'}
+            </button>
+          )}
+          <button type="button" className="btn" onClick={props.onDone}>{nothing ? 'Close' : 'Cancel'}</button>
+        </div>
+      </Panel>
+    </div>
   )
 }
 
@@ -337,6 +430,9 @@ function PartForm(props: { system: BomSystem; parts: Part[]; part: Part | null; 
   return (
     <Panel title={part ? `Change ${part.part_number}` : `Add a part to ${system.name}`}>
       <form ref={form} className="panel-body" onSubmit={save}>
+        {part?.onshape_id && (
+          <p className="note">From Onshape: importing again sets its name, number, quantity and material back to what Onshape has. Change them in CAD to keep them.</p>
+        )}
         <Pick label="Made or COTS" options={Object.keys(KINDS)} value={kindLabel(kind)} onChange={(label) => setKind(KINDS[label])} />
         <label className="field" htmlFor="part-number">
           Part number

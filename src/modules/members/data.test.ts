@@ -67,10 +67,19 @@ describe('checkServerFunctions', () => {
     ])
   })
 
-  it('says when the Blue Alliance key is missing, without calling it', async () => {
-    const checks = await withAnswers({ hello: { ok: true, value: { message: 'Hi Pat', role: 'admin', secrets: { TBA_KEY: false } } } })
-    expect(checks.map((c) => [c.name, c.ok])).toEqual([['Server functions', true], ['The Blue Alliance', false]])
+  it('says which keys are missing, without calling those functions', async () => {
+    const checks = await withAnswers({ hello: { ok: true, value: { message: 'Hi Pat', role: 'admin', secrets: { TBA_KEY: false, ONSHAPE_ACCESS_KEY: true } } } })
+    expect(checks.map((c) => [c.name, c.ok])).toEqual([['Server functions', true], ['The Blue Alliance', false], ['Onshape', false]])
     expect(checks[1].text).toMatch(/TBA_KEY/)
+    expect(checks[2].text).toBe('No ONSHAPE_SECRET_KEY secret yet. Add it in Supabase: see "Server functions" in supabase/README.md.')
+  })
+
+  it('asks Onshape whether the keys work when both are set', async () => {
+    const hello = { ok: true as const, value: { message: 'Hi Pat', role: 'admin', secrets: { TBA_KEY: true, ONSHAPE_ACCESS_KEY: true, ONSHAPE_SECRET_KEY: true } } }
+    const working = await withAnswers({ hello, tba: { ok: true, value: { nickname: 'Ctrl-Z' } }, onshape: { ok: true, value: { ok: true } } })
+    expect(working[2]).toEqual({ name: 'Onshape', ok: true, text: 'Working: Onshape accepted the keys. Import a system from the BOM page.' })
+    const turnedDown = await withAnswers({ hello, tba: { ok: true, value: { nickname: 'Ctrl-Z' } }, onshape: { ok: false, error: 'Onshape turned down the keys.' } })
+    expect(turnedDown[2]).toEqual({ name: 'Onshape', ok: false, text: 'Onshape turned down the keys.' })
   })
 
   it('asks The Blue Alliance for team 4096 when the key is set', async () => {

@@ -154,4 +154,37 @@ describe('BOM robots, systems and parts', () => {
     await db.as(mentor, 'delete from public.bom_systems where id = $1', [systemId])
     expect(await db.sql('select id from public.bom_parts')).toEqual([])
   })
+
+  describe('importing from Onshape', () => {
+    const ONSHAPE_ID = 'abcdef0123456789abcdef01/abcdef0123456789abcdef02/JHD'
+    const addImported = (person: string, onshapeId = ONSHAPE_ID, partNumber = '4096-26-INT-050') =>
+      db.as<{ id: string }>(
+        person,
+        "insert into public.bom_parts (system_id, part_number, name, kind, quantity, onshape_id) values ($1, $2, 'Roller', 'made', 2, $3) returning id",
+        [systemId, partNumber, onshapeId],
+      )
+
+    it('lets a student add parts from Onshape with no material or vendor yet', async () => {
+      await addImported(student)
+      await db.as(student, "insert into public.bom_parts (system_id, part_number, name, kind, quantity, onshape_id) values ($1, '4096-26-INT-051', 'Bolt', 'cots', 4, 'x/y/z')", [systemId])
+      expect(await db.sql('select count(*)::int as n from public.bom_parts')).toEqual([{ n: 2 }])
+    })
+
+    it('still needs a material or vendor for parts typed in by hand', async () => {
+      await expect(
+        db.as(student, "insert into public.bom_parts (system_id, part_number, name, kind, quantity) values ($1, '4096-26-INT-052', 'Plate', 'made', 1)", [systemId]),
+      ).rejects.toThrow('check constraint')
+    })
+
+    it('keeps one row per Onshape part in a system', async () => {
+      await addImported(student)
+      await expect(addImported(student, ONSHAPE_ID, '4096-26-INT-053')).rejects.toThrow('duplicate key')
+    })
+
+    it('lets a student mark a part removed in Onshape, link a part, and record the import', async () => {
+      const [part] = await addMadePart(student)
+      expect(await db.as(student, "update public.bom_parts set onshape_id = 'a/b/c', removed_in_onshape = true where id = $1 returning id", [part.id])).toEqual([{ id: part.id }])
+      expect(await db.as(student, 'update public.bom_systems set onshape_imported_at = now() returning id')).toEqual([{ id: systemId }])
+    })
+  })
 })
