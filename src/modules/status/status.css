@@ -1,0 +1,35 @@
+.status-panel {
+  min-width: 0;
+}
+
+.status-scroll {
+  max-width: 100%;
+}
+
+.status-grid {
+  min-width: 860px;
+}
+
+.status-grid tbody th {
+  font-family: var(--body);
+  font-size: 14px;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--ink);
+}
+
+.status-cell {
+  width: 100%;
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.status-cell[data-state='In progress'] {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.status-cell[data-state='Done'] {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
