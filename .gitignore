@@ -30,3 +30,6 @@ dist-ssr
 # Supabase command-line tool scratch files
 supabase/.temp/
 supabase/.branches/
+
+# Built attendance pull script (scripts/attendance-sync.ts)
+.sync/

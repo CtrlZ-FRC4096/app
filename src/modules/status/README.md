@@ -1,5 +1,8 @@
 # Robot status
 
+Robot status shows the subsystem progress grid, with the pit checklist under it
+(`PitChecklist.tsx`).
+
 The pit checklist is available as a **local preview**. Open Robot status to check
 and uncheck items, add new items, and see how many are complete. Items and checks
 survive a reload in the same browser when storage is available. They are not shared
@@ -37,7 +40,7 @@ checks, not database security; shared use requires database permission rules.
 
 This preview intentionally uses a browser store in `data.ts` rather than a team
 table. Shared storage needs mentor approval for a new migration and permission
-tests in `supabase/`. The subsystem grid, summary tiles and TV view are not built yet.
+tests in `supabase/`. The summary tiles and TV view are not built yet.
 
 ## What it needs to do
 
