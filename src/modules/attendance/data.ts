@@ -9,13 +9,14 @@
  * instead of in code: add a missed check-out, change an RSVP, ignore a
  * wrong check-in. Hours and points are worked out in points.ts.
  */
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { createTable, fail, ok, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
+import { isLive } from '../../core/supabase'
 import type { Notice } from '../../core/registry'
 import { buildReport, type DayRecord, type Report } from './points'
-import { dayLabel, teamClock, teamDay, teamInstant } from './time'
-import { matchName, type ParsedDay, type SlackUser } from './slack-export'
+import { ago, dayLabel, teamClock, teamDay, teamInstant } from './time'
+import { nameKey, resolve, slackKey, type ParsedDay, type SlackUser } from './slack-export'
 
 export interface AttendancePerson extends Row {
   slack_user_id: string | null
@@ -43,6 +44,14 @@ export interface AttendanceRsvp extends Row {
   coming: boolean
   source: 'poll' | 'manual'
   created_by: string | null
+}
+
+/** One automatic pull from the Slack channel (see sync.ts). */
+export interface AttendanceSync extends Row {
+  newest_message_at: string | null
+  people_added: number
+  checks_added: number
+  rsvps_changed: number
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +97,18 @@ DEMO_PATTERN.forEach(([name, slack, hidden, days], p) => {
 export const peopleTable = createTable<AttendancePerson>('attendance_people', { demo: DEMO_PEOPLE_ROWS, sort: (a, b) => a.name.localeCompare(b.name) })
 export const checksTable = createTable<AttendanceCheck>('attendance_checks', { demo: DEMO_CHECKS, sort: (a, b) => Date.parse(a.at) - Date.parse(b.at) })
 export const rsvpsTable = createTable<AttendanceRsvp>('attendance_rsvps', { demo: DEMO_RSVPS, sort: (a, b) => a.day.localeCompare(b.day) })
+export const syncsTable = createTable<AttendanceSync>('attendance_syncs', {
+  demo: [{ id: demoId(0xa4, 1), created_at: '2026-01-16T03:07:00Z', newest_message_at: '2026-01-16T02:52:00Z', people_added: 0, checks_added: 9, rsvps_changed: 1 }],
+})
+
+/** The latest automatic pull from Slack, or null if it has never run. */
+export function useLastPull(): AttendanceSync | null {
+  const syncs = syncsTable.useRows()
+  return syncs[syncs.length - 1] ?? null
+}
+
+/** Pulls run nightly. Longer than this without one means something stopped. */
+const PULL_OVERDUE_HOURS = 36
 
 // ---------------------------------------------------------------------------
 // Reading.
@@ -118,10 +139,18 @@ export function useAttendanceSummary(): Notice {
 /** "Needs attention" on the home page: people who never checked out at the last meeting. */
 export function useAttendanceAttention(): Notice[] {
   const report = useReport({})
+  const lastPull = useLastPull()
+  const [openedAt] = useState(() => Date.now())
+  const notices: Notice[] = []
   const last = report.days[report.days.length - 1]
   const stillIn = last ? report.rows.filter((row) => row.days.get(last)?.stillIn).length : 0
-  if (!stillIn) return []
-  return [{ tone: 'warn', text: `${stillIn} ${stillIn === 1 ? "person didn't" : "people didn't"} check out on ${dayLabel(last)}. Add their check-out so their hours count.` }]
+  if (stillIn) {
+    notices.push({ tone: 'warn', text: `${stillIn} ${stillIn === 1 ? "person didn't" : "people didn't"} check out on ${dayLabel(last)}. Add their check-out so their hours count.` })
+  }
+  if (isLive && lastPull && openedAt - Date.parse(lastPull.created_at) > PULL_OVERDUE_HOURS * 3_600_000) {
+    notices.push({ tone: 'crit', text: `Attendance was last pulled from Slack ${ago(lastPull.created_at, new Date(openedAt))}. Check the "Pull attendance from Slack" workflow in GitHub Actions.` })
+  }
+  return notices
 }
 
 // ---------------------------------------------------------------------------
@@ -190,8 +219,6 @@ export interface ImportPlan {
   unmatched: string[]
 }
 
-const slackKey = (id: string) => `slack:${id}`
-const nameKey = (name: string) => `name:${name.toLowerCase().replace(/\s+/g, ' ').trim()}`
 const checkKey = (personKey: string, direction: string, at: string) => `${personKey}|${direction}|${Date.parse(at)}`
 
 /** Work out what importing would add or change, without changing anything. */
@@ -200,73 +227,27 @@ export function planImport(
   days: ParsedDay[],
   existing: { people: AttendancePerson[]; checks: AttendanceCheck[]; rsvps: AttendanceRsvp[] },
 ): ImportPlan {
-  const userById = new Map(users.map((u) => [u.id, u]))
-  const keyOfPerson = new Map<string, string>()
-  const personByKey = new Map<string, AttendancePerson>()
-  for (const person of existing.people) {
-    const key = person.slack_user_id ? slackKey(person.slack_user_id) : nameKey(person.name)
-    keyOfPerson.set(person.id, key)
-    personByKey.set(key, person)
-  }
+  const found = resolve(users, days)
+  const keyOfPerson = new Map(existing.people.map((p) => [p.id, p.slack_user_id ? slackKey(p.slack_user_id) : nameKey(p.name)]))
+  const known = new Set(keyOfPerson.values())
 
-  const wanted = new Map<string, { slack_user_id: string | null; name: string }>()
-  const similar = new Map<string, string>()
-  const unmatched = new Set<string>()
-  const want = (key: string, slack_user_id: string | null, name: string) => {
-    if (!wanted.has(key)) wanted.set(key, { slack_user_id, name })
-    return key
-  }
-  const forSlackId = (id: string) => want(slackKey(id), id, userById.get(id)?.name ?? id)
-
-  // Check-ins and check-outs.
   const seen = new Set(existing.checks.map((c) => checkKey(keyOfPerson.get(c.person_id) ?? c.person_id, c.direction, c.at)))
   const newChecks: ImportPlan['newChecks'] = []
   let alreadyThere = 0
-  const meetingDays = new Set<string>()
-  for (const day of days) {
-    for (const check of day.checks) {
-      meetingDays.add(teamDay(check.at))
-      let key: string
-      if (check.slackUserId && userById.has(check.slackUserId)) key = forSlackId(check.slackUserId)
-      else {
-        const match = matchName(check.name, users)
-        if (match) {
-          key = forSlackId(match.user.id)
-          if (match.how === 'similar') similar.set(check.name, match.user.name)
-        } else {
-          key = want(nameKey(check.name), null, check.name)
-          unmatched.add(check.name)
-        }
-      }
-      const id = checkKey(key, check.direction, check.at)
-      if (seen.has(id)) {
-        alreadyThere += 1
-        continue
-      }
+  for (const check of found.checks) {
+    const id = checkKey(check.key, check.direction, check.at)
+    if (seen.has(id)) alreadyThere += 1
+    else {
       seen.add(id)
-      newChecks.push({ key, direction: check.direction, at: check.at })
+      newChecks.push(check)
     }
   }
 
-  // Poll answers: the last poll posted each day counts, like the notebook.
-  const lastPoll = new Map<string, ParsedDay['polls'][number]>()
-  for (const poll of days.flatMap((d) => d.polls)) {
-    const day = teamDay(poll.at)
-    const current = lastPoll.get(day)
-    if (!current || poll.at >= current.at) lastPoll.set(day, poll)
-  }
-  const answers = new Map<string, { key: string; day: string; coming: boolean }>()
-  for (const [day, poll] of lastPoll) {
-    meetingDays.add(day)
-    for (const id of poll.yes) answers.set(`${id}|${day}`, { key: forSlackId(id), day, coming: true })
-    // A "no" vote wins over a "yes" from the same person, as in the notebook.
-    for (const id of poll.no) answers.set(`${id}|${day}`, { key: forSlackId(id), day, coming: false })
-  }
   const rsvpByKey = new Map(existing.rsvps.map((r) => [`${keyOfPerson.get(r.person_id) ?? r.person_id}|${r.day}`, r]))
   const newRsvps: ImportPlan['newRsvps'] = []
   const changedRsvps: ImportPlan['changedRsvps'] = []
   let keptManual = 0
-  for (const answer of answers.values()) {
+  for (const answer of found.rsvps) {
     const current = rsvpByKey.get(`${answer.key}|${answer.day}`)
     if (!current) newRsvps.push(answer)
     else if (current.coming !== answer.coming) {
@@ -275,17 +256,16 @@ export function planImport(
     }
   }
 
-  const newPeople = [...wanted].filter(([key]) => !personByKey.has(key)).map(([key, p]) => ({ key, ...p }))
   return {
-    days: meetingDays.size,
-    newPeople,
+    days: found.days.size,
+    newPeople: [...found.people].filter(([key]) => !known.has(key)).map(([key, p]) => ({ key, ...p })),
     newChecks,
     newRsvps,
     changedRsvps,
     alreadyThere,
     keptManual,
-    similar: [...similar].map(([jibble, slack]) => ({ jibble, slack })),
-    unmatched: [...unmatched].sort(),
+    similar: found.similar,
+    unmatched: found.unmatched,
   }
 }
 

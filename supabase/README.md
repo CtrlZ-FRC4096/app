@@ -185,6 +185,9 @@ Until this is set, the database turns everyone away.
   small question twice a week. GitHub stops scheduled workflows in a repo
   with no activity for 60 days; if that happens, run it once by hand from
   the Actions tab.
+- **Attendance from Slack:** the "Pull attendance from Slack" workflow
+  reads the attendance channel every night once it has a Slack bot token. See
+  [the Attendance README](../src/modules/attendance/README.md#pulling-from-slack-automatically).
 - **Backups:** the free plan has none. Before the team relies on the data,
   either upgrade to Pro ($25 a month, daily backups) or set up a scheduled
   backup.

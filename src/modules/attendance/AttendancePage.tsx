@@ -5,8 +5,10 @@ import { AttendanceGrid } from './AttendanceGrid'
 import { ImportPanel } from './ImportPanel'
 import { PersonPanel } from './PersonPanel'
 import { BASE_POINTS, FULL_SESSION_HOURS, POINTS } from './points'
-import { sheetRows, toCsv, useReport, type Sheet } from './data'
-import { dayLabel } from './time'
+import { sheetRows, toCsv, useLastPull, useReport, type Sheet } from './data'
+import { ago, dayLabel } from './time'
+
+const SETUP = 'https://github.com/CtrlZ-FRC4096/app/blob/main/src/modules/attendance/README.md#pulling-from-slack-automatically'
 
 const TABS = ['Points', 'Hours', 'Check-ins', 'RSVPs', 'Import'] as const
 type Tab = (typeof TABS)[number]
@@ -22,6 +24,7 @@ export default function AttendancePage() {
   const [selected, setSelected] = useState<string | null>(null)
 
   const report = useReport({ from: from || undefined, to: to || undefined }, showHidden)
+  const lastPull = useLastPull()
   const wanted = search.trim().toLowerCase()
   const rows = report.rows.filter((row) => row.person.name.toLowerCase().includes(wanted))
   const person = report.rows.find((row) => row.person.id === selected)
@@ -48,6 +51,12 @@ export default function AttendancePage() {
       <p className="note">
         {plural(report.rows.length, 'person', 'people')} · {plural(report.days.length, 'meeting', 'meetings')}
         {last && ` · ${cameLast} at the last one (${dayLabel(last)})`}
+        {' · '}
+        {lastPull ? (
+          <>Pulled from Slack automatically, last {ago(lastPull.created_at)}</>
+        ) : (
+          <>Not pulling from Slack automatically yet: import an export, or <a href={SETUP} target="_blank" rel="noopener">set up the daily pull</a></>
+        )}
       </p>
 
       <Pick label="View" options={[...TABS]} value={tab} onChange={setTab} />

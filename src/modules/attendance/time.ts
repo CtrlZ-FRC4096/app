@@ -63,3 +63,13 @@ export function dayLabel(day: string): string {
 export function today(now: Date = new Date()): string {
   return teamDay(now)
 }
+
+/** "12 minutes ago", "3 hours ago", "2 days ago". */
+export function ago(at: string, now: Date = new Date()): string {
+  const minutes = Math.max(0, Math.round((now.getTime() - Date.parse(at)) / 60_000))
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 48) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`
+  return `${Math.round(hours / 24)} days ago`
+}

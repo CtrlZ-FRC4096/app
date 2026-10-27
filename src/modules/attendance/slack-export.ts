@@ -13,6 +13,7 @@
  * in the export (emails, phone numbers, other channels) is left alone and
  * never leaves the browser.
  */
+import { teamDay } from './time'
 
 export interface SlackUser {
   id: string
@@ -200,4 +201,84 @@ export function parseExport(files: ExportFile[]): ParsedExport {
     }
   }
   return { users, channels: [...daysByChannel.keys()].sort(), daysByChannel, unreadable }
+}
+
+// ---------------------------------------------------------------------------
+// Turning parsed days into people, check-ins and answers. Used by both the
+// Import tab and the automatic daily pull (sync.ts).
+
+/** A stable key for a person: their Slack ID, or their name if Jibble's name matched nobody. */
+export const slackKey = (id: string) => `slack:${id}`
+export const nameKey = (name: string) => `name:${normalize(name)}`
+
+export interface ResolvedPerson {
+  slack_user_id: string | null
+  name: string
+}
+
+export interface Resolved {
+  people: Map<string, ResolvedPerson>
+  checks: { key: string; direction: 'in' | 'out'; at: string }[]
+  /** One answer per person per day: the last poll posted that day counts. */
+  rsvps: { key: string; day: string; coming: boolean }[]
+  /** Meeting days: any day with a check-in or a poll. */
+  days: Set<string>
+  /** Jibble names matched to someone by a similar name, to double-check. */
+  similar: { jibble: string; slack: string }[]
+  /** Jibble names that matched nobody, kept by name. */
+  unmatched: string[]
+}
+
+export function resolve(users: SlackUser[], days: ParsedDay[]): Resolved {
+  const userById = new Map(users.map((u) => [u.id, u]))
+  const people = new Map<string, ResolvedPerson>()
+  const similar = new Map<string, string>()
+  const unmatched = new Set<string>()
+  const meetingDays = new Set<string>()
+  const add = (key: string, person: ResolvedPerson) => {
+    if (!people.has(key)) people.set(key, person)
+    return key
+  }
+  const forSlackId = (id: string) => add(slackKey(id), { slack_user_id: id, name: userById.get(id)?.name ?? id })
+
+  const checks: Resolved['checks'] = []
+  for (const check of days.flatMap((d) => d.checks)) {
+    meetingDays.add(teamDay(check.at))
+    let key: string
+    if (check.slackUserId && userById.has(check.slackUserId)) key = forSlackId(check.slackUserId)
+    else {
+      const match = matchName(check.name, users)
+      if (match) {
+        key = forSlackId(match.user.id)
+        if (match.how === 'similar') similar.set(check.name, match.user.name)
+      } else {
+        key = add(nameKey(check.name), { slack_user_id: null, name: check.name })
+        unmatched.add(check.name)
+      }
+    }
+    checks.push({ key, direction: check.direction, at: check.at })
+  }
+
+  const lastPoll = new Map<string, PollVotes>()
+  for (const poll of days.flatMap((d) => d.polls)) {
+    const day = teamDay(poll.at)
+    const current = lastPoll.get(day)
+    if (!current || poll.at >= current.at) lastPoll.set(day, poll)
+  }
+  const answers = new Map<string, Resolved['rsvps'][number]>()
+  for (const [day, poll] of lastPoll) {
+    meetingDays.add(day)
+    for (const id of poll.yes) answers.set(`${id}|${day}`, { key: forSlackId(id), day, coming: true })
+    // A "no" vote wins over a "yes" from the same person, as in the notebook.
+    for (const id of poll.no) answers.set(`${id}|${day}`, { key: forSlackId(id), day, coming: false })
+  }
+
+  return {
+    people,
+    checks,
+    rsvps: [...answers.values()],
+    days: meetingDays,
+    similar: [...similar].map(([jibble, slack]) => ({ jibble, slack })),
+    unmatched: [...unmatched].sort(),
+  }
 }
