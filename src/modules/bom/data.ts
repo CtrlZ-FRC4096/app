@@ -2,23 +2,25 @@
  * BOM module data: robots, the systems they're made of, and the parts in
  * each system.
  *
- * For now the rows are made-up examples. Importing them from Onshape comes
- * later, through a server function a mentor sets up, because the Onshape
- * keys must never be in the browser.
+ * Parts are typed in, or imported from the system's Onshape assembly or
+ * Part Studio through the `onshape` server function, which holds the team's
+ * Onshape keys (see onshape.ts for how an import is worked out).
  *
  * The tables are made in the team database by
  * supabase/migrations/..._bom.sql. Anyone on the team can add and change
- * robots, systems and parts, and delete parts. Only mentors can delete a
- * system, because that deletes every part in it too
+ * robots, systems and parts, delete parts, and import from Onshape. Only
+ * mentors can delete a system, because that deletes every part in it too
  * (..._bom_members_edit.sql).
  */
-import { createTable, fail, type Result, type Row } from '../../core/table'
+import { callFunction } from '../../core/functions'
+import { createTable, fail, ok, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { isMentor } from '../../core/roles'
 import { currentUser } from '../../core/session'
 import { isLive } from '../../core/supabase'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
+import type { OnshapeBom, OnshapeImportPlan } from './onshape'
 
 /** One row of bom_robots. */
 export interface Robot extends Row {
@@ -32,7 +34,10 @@ export interface BomSystem extends Row {
   name: string
   /** The short code used in part numbers, such as INT. */
   code: string
+  /** A link to the system's assembly or Part Studio in Onshape, to import its parts from. */
   onshape_url: string | null
+  /** When its parts were last imported from Onshape. */
+  onshape_imported_at: string | null
   created_by: string | null
 }
 
@@ -54,6 +59,10 @@ export interface Part extends Row {
   vendor: string | null
   vendor_part_number: string | null
   onshape_url: string | null
+  /** Which Onshape part this is, for parts imported from Onshape. Null for parts typed in. */
+  onshape_id: string | null
+  /** No longer in the system's Onshape assembly. Kept, not deleted, so its history stays. */
+  removed_in_onshape: boolean
   created_by: string | null
 }
 
@@ -65,9 +74,12 @@ const CREATED = { created_at: '2026-10-20T18:00:00Z', created_by: DEMO_PEOPLE.pa
 
 const EXAMPLE_ROBOTS: Robot[] = [{ id: ROBOT, name: '2026 competition robot', ...CREATED }]
 
+// A made-up Onshape document, so the example Intake can show importing.
+const EXAMPLE_DOC = 'https://cad.onshape.com/documents/0000000000000000000000a1/w/0000000000000000000000b1'
+
 const EXAMPLE_SYSTEMS: BomSystem[] = [
-  { id: INTAKE, robot_id: ROBOT, name: 'Intake', code: 'INT', onshape_url: null, ...CREATED },
-  { id: DRIVETRAIN, robot_id: ROBOT, name: 'Drivetrain', code: 'DRV', onshape_url: null, ...CREATED, created_at: '2026-10-20T18:01:00Z' },
+  { id: INTAKE, robot_id: ROBOT, name: 'Intake', code: 'INT', onshape_url: `${EXAMPLE_DOC}/e/0000000000000000000000c1`, onshape_imported_at: '2026-10-20T18:05:00Z', ...CREATED },
+  { id: DRIVETRAIN, robot_id: ROBOT, name: 'Drivetrain', code: 'DRV', onshape_url: null, onshape_imported_at: null, ...CREATED, created_at: '2026-10-20T18:01:00Z' },
 ]
 
 let partCount = 0
@@ -76,7 +88,7 @@ function made(system_id: string, part_number: string, name: string, revision: st
   return {
     id: `00000000-0000-4000-8000-0000000b1${String(partCount).padStart(3, '0')}`,
     system_id, part_number, name, revision, kind: 'made', material, quantity,
-    vendor: null, vendor_part_number: null, onshape_url: null, ...CREATED,
+    vendor: null, vendor_part_number: null, onshape_url: null, onshape_id: null, removed_in_onshape: false, ...CREATED,
   }
 }
 function cots(system_id: string, part_number: string, name: string, vendor: string, vendor_part_number: string, quantity: number): Part {
@@ -84,7 +96,7 @@ function cots(system_id: string, part_number: string, name: string, vendor: stri
   return {
     id: `00000000-0000-4000-8000-0000000b1${String(partCount).padStart(3, '0')}`,
     system_id, part_number, name, revision: null, kind: 'cots', material: null, quantity,
-    vendor, vendor_part_number, onshape_url: null, ...CREATED,
+    vendor, vendor_part_number, onshape_url: null, onshape_id: null, removed_in_onshape: false, ...CREATED,
   }
 }
 
@@ -103,10 +115,21 @@ const EXAMPLE_PARTS: Part[] = [
   cots(DRIVETRAIN, '4096-26-DRV-006', 'Rivet, 3/16 in', 'McMaster-Carr', 'EXAMPLE-RIV-316', 120),
 ]
 
+// The example Intake was imported from the made-up Onshape assembly: each
+// of its parts says which Onshape part it is. (The Drivetrain was typed in.)
+const EXAMPLE_PART_STUDIO = `${EXAMPLE_DOC}/e/0000000000000000000000c2`
+const exampleOnshapeId = (n: number) => `0000000000000000000000a1/0000000000000000000000c2/J${n}D`
+EXAMPLE_PARTS.filter((p) => p.system_id === INTAKE).forEach((part, i) => {
+  part.onshape_id = exampleOnshapeId(i + 1)
+  part.onshape_url = EXAMPLE_PART_STUDIO
+})
+
 export const robotsTable = createTable<Robot>('bom_robots', { demo: EXAMPLE_ROBOTS })
-export const systemsTable = createTable<BomSystem>('bom_systems', { demo: EXAMPLE_SYSTEMS })
+// Version 2: systems and parts gained their Onshape import columns.
+export const systemsTable = createTable<BomSystem>('bom_systems', { demo: EXAMPLE_SYSTEMS, version: 2 })
 export const partsTable = createTable<Part>('bom_parts', {
   demo: EXAMPLE_PARTS,
+  version: 2,
   sort: (a, b) => a.part_number.localeCompare(b.part_number),
 })
 
@@ -141,10 +164,14 @@ export function filterParts(parts: Part[], filter: PartFilter): Part[] {
   return parts
 }
 
-/** How many parts are made and how many are COTS. Each part counts once, whatever its quantity. */
+/**
+ * How many parts are made and how many are COTS. Each part counts once,
+ * whatever its quantity. Parts removed in Onshape don't count.
+ */
 export function countParts(parts: Part[]): { made: number; cots: number } {
-  const made = parts.filter((p) => p.kind === 'made').length
-  return { made, cots: parts.length - made }
+  const current = parts.filter((p) => !p.removed_in_onshape)
+  const made = current.filter((p) => p.kind === 'made').length
+  return { made, cots: current.length - made }
 }
 
 /** Like "12 made, 31 COTS". */
@@ -213,8 +240,15 @@ export function checkSystem(system: NewSystem, others: BomSystem[]): string | nu
   if (others.some((s) => s.name.toLowerCase() === name.toLowerCase())) return `There's already a system called ${name}.`
   if (others.some((s) => s.code === code)) return `${code} is already another system's code. Pick another.`
   const link = system.onshape_url.trim()
-  if (link && !link.startsWith('https://')) return 'The Onshape link starts with https://. Copy it from the address bar.'
+  if (link && !isOnshapeLink(link)) {
+    return "That isn't a link to an Onshape tab. Open the system's assembly (or Part Studio) in Onshape and copy the address: https://cad.onshape.com/documents/…/w/…/e/…"
+  }
   return null
+}
+
+/** Is this a link to a tab (an assembly or Part Studio) on cad.onshape.com? The onshape server function checks the same. */
+export function isOnshapeLink(url: string): boolean {
+  return /^https:\/\/cad\.onshape\.com\/documents\/[0-9a-f]{24}\/[wvm]\/[0-9a-f]{24}\/e\/[0-9a-f]{24}\/?(?:[?#].*)?$/.test(url.trim())
 }
 
 const systemFields = (system: NewSystem) => ({
@@ -226,7 +260,7 @@ const systemFields = (system: NewSystem) => ({
 export async function addSystem(robotId: string, system: NewSystem): Promise<Result<BomSystem>> {
   const problem = checkSystem(system, systemsTable.rows().filter((s) => s.robot_id === robotId))
   if (problem) return fail(problem)
-  return systemsTable.insert({ robot_id: robotId, ...systemFields(system) })
+  return systemsTable.insert({ robot_id: robotId, ...systemFields(system), onshape_imported_at: null })
 }
 
 /** Change a system's name, code or Onshape link. Its parts keep their part numbers. */
@@ -270,15 +304,16 @@ const LIMITS = { part_number: 40, name: 100, revision: 10, material: 100, vendor
 
 /**
  * Why a part can't be saved, or null if it can. `parts` is every part, to
- * check the number isn't taken; `id` is the part being changed, if it is one.
+ * check the number isn't taken; `id` is the part being changed, if it is
+ * one. Parts imported from Onshape can have no material or vendor yet.
  */
-export function checkPart(part: NewPart, parts: Part[], id?: string): string | null {
+export function checkPart(part: NewPart, parts: Part[], id?: string, imported = false): string | null {
   const partNumber = part.part_number.trim()
   if (!partNumber) return 'Add a part number, like 4096-26-INT-001.'
   if (parts.some((p) => p.part_number === partNumber && p.id !== id)) return `${partNumber} is already used. Pick another number.`
   if (!part.name.trim()) return 'Add a name for the part.'
-  if (part.kind === 'made' && !part.material.trim()) return 'Add the material, like "6061 aluminum, 1/4 in plate".'
-  if (part.kind === 'cots' && !part.vendor.trim()) return 'Add the vendor you buy it from, like WCP or REV Robotics.'
+  if (!imported && part.kind === 'made' && !part.material.trim()) return 'Add the material, like "6061 aluminum, 1/4 in plate".'
+  if (!imported && part.kind === 'cots' && !part.vendor.trim()) return 'Add the vendor you buy it from, like WCP or REV Robotics.'
   if (!Number.isInteger(part.quantity) || part.quantity < 1) return 'The quantity needs to be a whole number, 1 or more.'
   const names = { part_number: 'part number', name: 'name', revision: 'revision', material: 'material', vendor: 'vendor', vendor_part_number: 'vendor part number' }
   for (const [field, limit] of Object.entries(LIMITS) as [keyof typeof LIMITS, number][]) {
@@ -308,12 +343,12 @@ function partFields(part: NewPart) {
 export async function addPart(part: NewPart): Promise<Result<Part>> {
   const problem = checkPart(part, partsTable.rows())
   if (problem) return fail(problem)
-  return partsTable.insert({ system_id: part.system_id, ...partFields(part), onshape_url: null })
+  return partsTable.insert({ system_id: part.system_id, ...partFields(part), onshape_url: null, onshape_id: null, removed_in_onshape: false })
 }
 
-/** Change a part. It stays in its system. */
+/** Change a part. It stays in its system. The next import from Onshape updates what Onshape has. */
 export async function changePart(part: Part, changes: NewPart): Promise<Result<Part>> {
-  const problem = checkPart(changes, partsTable.rows(), part.id)
+  const problem = checkPart(changes, partsTable.rows(), part.id, Boolean(part.onshape_id))
   if (problem) return fail(problem)
   return partsTable.update(part.id, partFields(changes))
 }
@@ -322,10 +357,69 @@ export async function removePart(part: Part): Promise<Result> {
   return partsTable.remove(part.id)
 }
 
-/** The home page tile's status, like "2 systems · 43 parts". */
+// ---------------------------------------------------------------------------
+// Importing from Onshape. planOnshapeImport() in onshape.ts works out what changes.
+
+/**
+ * Read a system's parts from Onshape, through the onshape server function.
+ * Each call costs two of the team's yearly Onshape API calls, so only call
+ * it when someone asks to import. In demo mode it answers with example parts.
+ */
+export function getOnshapeBom(system: BomSystem): Promise<Result<OnshapeBom>> {
+  if (!system.onshape_url) {
+    return Promise.resolve(fail(`Add ${system.name}'s Onshape link first: Change system, then paste the assembly's address.`))
+  }
+  return callFunction<OnshapeBom>('onshape', { kind: 'bom', url: system.onshape_url }, () => exampleOnshapeBom(system))
+}
+
+/** Make the changes an import plan lists, and note when the system was imported. */
+export async function applyOnshapeImport(system: BomSystem, plan: OnshapeImportPlan): Promise<Result<string>> {
+  const added = await partsTable.insertMany(plan.add)
+  if (!added.ok) return added
+  for (const { part, changes } of plan.change) {
+    const result = await partsTable.update(part.id, changes)
+    if (!result.ok) return result
+  }
+  for (const part of plan.removed) {
+    const result = await partsTable.update(part.id, { removed_in_onshape: true })
+    if (!result.ok) return result
+  }
+  const result = await systemsTable.update(system.id, { onshape_imported_at: new Date().toISOString() })
+  if (!result.ok) return result
+  const changed = plan.change.filter((c) => c.what.length > 0).length
+  return ok(`Imported ${system.name}: ${plan.add.length} added, ${changed} changed, ${plan.removed.length} marked removed in Onshape.`)
+}
+
+/**
+ * What the example Intake's made-up Onshape assembly has now: the side
+ * plate's quantity changed, the pivot spacer is gone, and a roller and
+ * standard screws were added.
+ */
+function exampleOnshapeBom(system: BomSystem): OnshapeBom {
+  if (system.id !== INTAKE) return { name: `${system.name} assembly`, kind: 'assembly', lines: [] }
+  const line = (n: number, name: string, quantity: number, more: Partial<OnshapeBom['lines'][number]> = {}) => ({
+    onshape_id: exampleOnshapeId(n), name, part_number: null, revision: null, quantity, material: null, vendor: null, standard: false, url: EXAMPLE_PART_STUDIO, ...more,
+  })
+  return {
+    name: 'Intake assembly',
+    kind: 'assembly',
+    lines: [
+      line(1, 'Intake side plate', 3, { part_number: '4096-26-INT-001', revision: 'B', material: '6061 aluminum, 1/4 in plate' }),
+      line(2, 'Roller shaft', 3, { part_number: '4096-26-INT-002', revision: 'A', material: '1/2 in hex aluminum bar' }),
+      line(4, 'Brushless motor', 2, { vendor: 'REV Robotics', part_number: 'EXAMPLE-NEO-01' }),
+      line(5, 'Compliant wheel, 2 in', 8, { vendor: 'AndyMark', part_number: 'EXAMPLE-CW-2' }),
+      line(6, 'Flanged bearing, 1/2 in hex', 6, { vendor: 'WCP', part_number: 'EXAMPLE-BRG-12' }),
+      line(7, 'Intake roller', 2, { material: 'Polycarbonate tube, 1.5 in' }),
+      line(8, 'Socket head cap screw #10-32 x 0.5', 24, { standard: true, part_number: 'EXAMPLE-SHCS-1032' }),
+    ],
+  }
+}
+
+/** The home page tile's status, like "2 systems · 43 parts". Parts removed in Onshape don't count. */
 export function bomSummary(systems: BomSystem[], parts: Part[]): Notice {
   if (systems.length === 0) return { tone: 'plain', text: 'No systems yet' }
-  return { tone: 'info', text: `${plural(systems.length, 'system', 'systems')} · ${plural(parts.length, 'part', 'parts')}` }
+  const current = parts.filter((p) => !p.removed_in_onshape)
+  return { tone: 'info', text: `${plural(systems.length, 'system', 'systems')} · ${plural(current.length, 'part', 'parts')}` }
 }
 
 export function useBomSummary(): Notice {

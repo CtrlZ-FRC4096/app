@@ -68,22 +68,39 @@ interface Hello {
 
 /**
  * Are the server functions deployed, and do their keys work? Asks the
- * example `hello` function, then The Blue Alliance for team 4096.
+ * example `hello` function, then The Blue Alliance for team 4096, then
+ * Onshape whether the keys open anything (one Onshape API call).
  */
 export async function checkServerFunctions(): Promise<FunctionCheck[]> {
-  const hello = await callFunction<Hello>('hello', {}, () => ({ message: 'Hi', role: 'mentor', secrets: { TBA_KEY: true } }))
+  const demoSecrets = { TBA_KEY: true, ONSHAPE_ACCESS_KEY: true, ONSHAPE_SECRET_KEY: true }
+  const hello = await callFunction<Hello>('hello', {}, () => ({ message: 'Hi', role: 'mentor', secrets: demoSecrets }))
   if (!hello.ok) return [{ name: 'Server functions', ok: false, text: hello.error }]
+  const { secrets } = hello.value
   const checks: FunctionCheck[] = [{ name: 'Server functions', ok: true, text: `Deployed, and they know you: "${hello.value.message}".` }]
+  const setUp = 'see "Server functions" in supabase/README.md.'
 
-  if (!hello.value.secrets.TBA_KEY) {
-    checks.push({ name: 'The Blue Alliance', ok: false, text: 'No TBA_KEY secret yet. Add it in Supabase: see "Server functions" in supabase/README.md.' })
-    return checks
+  if (!secrets.TBA_KEY) {
+    checks.push({ name: 'The Blue Alliance', ok: false, text: `No TBA_KEY secret yet. Add it in Supabase: ${setUp}` })
+  } else {
+    const team = await callFunction<{ nickname: string }>('tba', { kind: 'team', team: 4096 }, () => ({ nickname: 'Ctrl-Z' }))
+    checks.push(
+      team.ok
+        ? { name: 'The Blue Alliance', ok: true, text: `Working: it says team 4096 is ${team.value.nickname}.` }
+        : { name: 'The Blue Alliance', ok: false, text: team.error },
+    )
   }
-  const team = await callFunction<{ nickname: string }>('tba', { kind: 'team', team: 4096 }, () => ({ nickname: 'Ctrl-Z' }))
-  checks.push(
-    team.ok
-      ? { name: 'The Blue Alliance', ok: true, text: `Working: it says team 4096 is ${team.value.nickname}.` }
-      : { name: 'The Blue Alliance', ok: false, text: team.error },
-  )
+
+  if (!secrets.ONSHAPE_ACCESS_KEY || !secrets.ONSHAPE_SECRET_KEY) {
+    const missing = ['ONSHAPE_ACCESS_KEY', 'ONSHAPE_SECRET_KEY'].filter((name) => !secrets[name]).join(' and ')
+    const both = missing.includes(' and ')
+    checks.push({ name: 'Onshape', ok: false, text: `No ${missing} secret${both ? 's' : ''} yet. Add ${both ? 'them' : 'it'} in Supabase: ${setUp}` })
+  } else {
+    const onshape = await callFunction<{ ok: true }>('onshape', { kind: 'check' }, () => ({ ok: true }))
+    checks.push(
+      onshape.ok
+        ? { name: 'Onshape', ok: true, text: 'Working: Onshape accepted the keys. Import a system from the BOM page.' }
+        : { name: 'Onshape', ok: false, text: onshape.error },
+    )
+  }
   return checks
 }

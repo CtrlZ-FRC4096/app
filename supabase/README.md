@@ -196,6 +196,7 @@ the functions can read.
 |:--|:--|
 | `hello` | The example to copy. Answers members with their name and which secrets are set |
 | `tba` | The Blue Alliance for scouting: an event's schedule and rankings, and a team's matches and name |
+| `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio |
 
 How they fit together:
 
@@ -226,9 +227,27 @@ How they fit together:
    Supabase, open **Edge Functions > Secrets** and add `TBA_KEY` with the
    key, then **Save**. (Or, with the Supabase CLI:
    `supabase secrets set TBA_KEY=... --project-ref <ref>`.)
-3. **Deploy:** **Actions > Deploy > Run workflow** on `main`.
-4. **Check:** in the app, **Members > Server functions > Check them**. Both
-   lines should say OK.
+3. **Add Onshape's keys.** The keys act as the Onshape user who makes
+   them, with that user's access, so use a team or mentor account that the
+   robot documents are shared with, not a student's.
+   - Sign in at [cad.onshape.com](https://cad.onshape.com) with that
+     account, and open the [Developer Portal's API keys](https://dev-portal.onshape.com/keys)
+     (or **My Account > Developer > API keys**). Individual accounts can
+     have 2 keys.
+   - **Create new API key** with only **Read your documents** ticked.
+     Writing part numbers into Onshape (#21) will need a key that can also
+     write.
+   - Copy both the **access key** and the **secret key** before closing:
+     Onshape never shows the secret again. Keep both in Bitwarden.
+   - In Supabase's **Edge Functions > Secrets**, add `ONSHAPE_ACCESS_KEY`
+     and `ONSHAPE_SECRET_KEY`.
+
+   Onshape limits API calls per year, counted against that account. The
+   app only calls Onshape when someone clicks **Import from Onshape** (two
+   calls each time) or **Check them** (one).
+4. **Deploy:** **Actions > Deploy > Run workflow** on `main`.
+5. **Check:** in the app, **Members > Server functions > Check them**. Every
+   line should say OK.
 
 A new secret works straight away, with no redeploy. To change one, set it
 again with the same name.

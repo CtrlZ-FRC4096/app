@@ -223,8 +223,8 @@ describe('robots and systems', () => {
 
   it('changes a system, keeping its own name and code allowed', async () => {
     const intake = systemsTable.rows().find((s) => s.code === 'INT')!
-    const result = await changeSystem(intake, { name: 'Intake', code: 'INT', onshape_url: 'https://cad.onshape.com/documents/1' })
-    expect(result.ok && result.value.onshape_url).toBe('https://cad.onshape.com/documents/1')
+    const result = await changeSystem(intake, { name: 'Intake', code: 'INT', onshape_url: 'https://cad.onshape.com/documents/0123456789abcdef01234567/w/0123456789abcdef01234567/e/0123456789abcdef01234567' })
+    expect(result.ok && result.value.onshape_url).toBe('https://cad.onshape.com/documents/0123456789abcdef01234567/w/0123456789abcdef01234567/e/0123456789abcdef01234567')
   })
 
   it('only lets a mentor delete a system, which deletes its parts too', async () => {
