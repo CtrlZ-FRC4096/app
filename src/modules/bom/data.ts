@@ -7,11 +7,16 @@
  * keys must never be in the browser.
  *
  * The tables are made in the team database by
- * supabase/migrations/..._bom.sql. Members can read them and add parts;
- * everything else is for mentors.
+ * supabase/migrations/..._bom.sql. Anyone on the team can add and change
+ * robots, systems and parts, and delete parts. Only mentors can delete a
+ * system, because that deletes every part in it too
+ * (..._bom_members_edit.sql).
  */
 import { createTable, fail, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
+import { isMentor } from '../../core/roles'
+import { currentUser } from '../../core/session'
+import { isLive } from '../../core/supabase'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 
@@ -165,7 +170,89 @@ export function nextPartNumber(system: BomSystem, parts: Part[]): string {
   return start + String(next).padStart(3, '0')
 }
 
-/** What a mentor types in to add a part. Text can be left empty where it isn't needed. */
+// ---------------------------------------------------------------------------
+// Robots and systems.
+
+/** Why a robot name won't do, or null if it will. */
+export function checkRobotName(name: string): string | null {
+  const trimmed = name.trim()
+  if (!trimmed) return 'Name the robot, like "2027 competition robot".'
+  if (trimmed.length > 100) return `Keep the robot's name under 100 characters. This one is ${trimmed.length}.`
+  return null
+}
+
+export async function addRobot(name: string): Promise<Result<Robot>> {
+  const problem = checkRobotName(name)
+  if (problem) return fail(problem)
+  return robotsTable.insert({ name: name.trim() })
+}
+
+export async function renameRobot(robot: Robot, name: string): Promise<Result<Robot>> {
+  const problem = checkRobotName(name)
+  if (problem) return fail(problem)
+  return robotsTable.update(robot.id, { name: name.trim() })
+}
+
+/** What someone types in to add or change a system. The Onshape link can be left empty. */
+export interface NewSystem {
+  name: string
+  code: string
+  onshape_url: string
+}
+
+/**
+ * Why a system can't be saved, or null if it can. `others` are the other
+ * systems in the same robot: names and codes can't repeat within a robot.
+ */
+export function checkSystem(system: NewSystem, others: BomSystem[]): string | null {
+  const name = system.name.trim()
+  const code = system.code.trim().toUpperCase()
+  if (!name) return 'Name the system, like Intake.'
+  if (name.length > 100) return `Keep the system's name under 100 characters. This one is ${name.length}.`
+  if (!/^[A-Z]{2,4}$/.test(code)) return 'The code is 2 to 4 letters, like INT. It goes in part numbers.'
+  if (others.some((s) => s.name.toLowerCase() === name.toLowerCase())) return `There's already a system called ${name}.`
+  if (others.some((s) => s.code === code)) return `${code} is already another system's code. Pick another.`
+  const link = system.onshape_url.trim()
+  if (link && !link.startsWith('https://')) return 'The Onshape link starts with https://. Copy it from the address bar.'
+  return null
+}
+
+const systemFields = (system: NewSystem) => ({
+  name: system.name.trim(),
+  code: system.code.trim().toUpperCase(),
+  onshape_url: system.onshape_url.trim() || null,
+})
+
+export async function addSystem(robotId: string, system: NewSystem): Promise<Result<BomSystem>> {
+  const problem = checkSystem(system, systemsTable.rows().filter((s) => s.robot_id === robotId))
+  if (problem) return fail(problem)
+  return systemsTable.insert({ robot_id: robotId, ...systemFields(system) })
+}
+
+/** Change a system's name, code or Onshape link. Its parts keep their part numbers. */
+export async function changeSystem(system: BomSystem, changes: NewSystem): Promise<Result<BomSystem>> {
+  const others = systemsTable.rows().filter((s) => s.robot_id === system.robot_id && s.id !== system.id)
+  const problem = checkSystem(changes, others)
+  if (problem) return fail(problem)
+  return systemsTable.update(system.id, systemFields(changes))
+}
+
+/** Delete a system and every part in it. Mentors only: the database enforces this too. */
+export async function removeSystem(system: BomSystem): Promise<Result> {
+  const user = currentUser()
+  if (!user || !isMentor(user.role)) return fail('Only a mentor can delete a system, because it deletes every part in it.')
+  const result = await systemsTable.remove(system.id)
+  // The database deletes the parts with the system. Example data has to do it here.
+  if (result.ok && !isLive) {
+    for (const part of partsTable.rows().filter((p) => p.system_id === system.id)) await partsTable.remove(part.id)
+  }
+  return result
+}
+
+// ---------------------------------------------------------------------------
+// Parts.
+
+/** What someone types in to add or change a part. Text can be left empty where it isn't needed. */
 export interface NewPart {
   system_id: string
   part_number: string
@@ -181,11 +268,14 @@ export interface NewPart {
 // The database has the same limits: see the checks in the bom migration.
 const LIMITS = { part_number: 40, name: 100, revision: 10, material: 100, vendor: 100, vendor_part_number: 100 }
 
-/** Why a part can't be added, or null if it can. `parts` is every part, to check the number isn't taken. */
-export function checkPart(part: NewPart, parts: Part[]): string | null {
+/**
+ * Why a part can't be saved, or null if it can. `parts` is every part, to
+ * check the number isn't taken; `id` is the part being changed, if it is one.
+ */
+export function checkPart(part: NewPart, parts: Part[], id?: string): string | null {
   const partNumber = part.part_number.trim()
   if (!partNumber) return 'Add a part number, like 4096-26-INT-001.'
-  if (parts.some((p) => p.part_number === partNumber)) return `${partNumber} is already used. Pick another number.`
+  if (parts.some((p) => p.part_number === partNumber && p.id !== id)) return `${partNumber} is already used. Pick another number.`
   if (!part.name.trim()) return 'Add a name for the part.'
   if (part.kind === 'made' && !part.material.trim()) return 'Add the material, like "6061 aluminum, 1/4 in plate".'
   if (part.kind === 'cots' && !part.vendor.trim()) return 'Add the vendor you buy it from, like WCP or REV Robotics.'
@@ -198,18 +288,11 @@ export function checkPart(part: NewPart, parts: Part[]): string | null {
   return null
 }
 
-/**
- * Add a part. Made parts keep only the material; COTS parts keep only the
- * vendor and vendor part number. Anyone on the team can add a part; only
- * mentors and admins can change or delete one.
- */
-export async function addPart(part: NewPart): Promise<Result<Part>> {
-  const problem = checkPart(part, partsTable.rows())
-  if (problem) return fail(problem)
+/** The columns saved for a part. Made parts keep only the material; COTS parts keep only the vendor details. */
+function partFields(part: NewPart) {
   const text = (value: string) => value.trim() || null
   const made = part.kind === 'made'
-  return partsTable.insert({
-    system_id: part.system_id,
+  return {
     part_number: part.part_number.trim(),
     name: part.name.trim(),
     revision: text(part.revision),
@@ -218,8 +301,25 @@ export async function addPart(part: NewPart): Promise<Result<Part>> {
     quantity: part.quantity,
     vendor: made ? null : text(part.vendor),
     vendor_part_number: made ? null : text(part.vendor_part_number),
-    onshape_url: null,
-  })
+  }
+}
+
+/** Add a part. Anyone on the team can add, change and delete parts. */
+export async function addPart(part: NewPart): Promise<Result<Part>> {
+  const problem = checkPart(part, partsTable.rows())
+  if (problem) return fail(problem)
+  return partsTable.insert({ system_id: part.system_id, ...partFields(part), onshape_url: null })
+}
+
+/** Change a part. It stays in its system. */
+export async function changePart(part: Part, changes: NewPart): Promise<Result<Part>> {
+  const problem = checkPart(changes, partsTable.rows(), part.id)
+  if (problem) return fail(problem)
+  return partsTable.update(part.id, partFields(changes))
+}
+
+export async function removePart(part: Part): Promise<Result> {
+  return partsTable.remove(part.id)
 }
 
 /** The home page tile's status, like "2 systems · 43 parts". */

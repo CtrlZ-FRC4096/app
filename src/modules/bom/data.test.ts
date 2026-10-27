@@ -2,14 +2,18 @@
 // Who is allowed to do what is the database's job: that's tested in
 // supabase/tests/bom.test.ts.
 import { beforeEach, describe, expect, it } from 'vitest'
+import { setDemoRole } from '../../core/demo'
 import {
-  addPart, bomSummary, checkPart, countParts, filterParts, kindLabel, nextPartNumber, partCountText, partsTable, systemsTable,
+  addPart, addRobot, addSystem, bomSummary, changePart, changeSystem, checkPart, checkSystem, countParts, filterParts, kindLabel,
+  nextPartNumber, partCountText, partsTable, removePart, removeSystem, renameRobot, robotsTable, systemsTable,
   type NewPart, type Part,
 } from './data'
 
 beforeEach(() => {
+  setDemoRole('student')
   partsTable.reset()
   systemsTable.reset()
+  robotsTable.reset()
 })
 
 const parts = () => partsTable.rows()
@@ -160,5 +164,76 @@ describe('addPart', () => {
   it("doesn't add a part that breaks the rules, and says why", async () => {
     expect(await addPart(newMadePart({ material: '' }))).toEqual({ ok: false, error: 'Add the material, like "6061 aluminum, 1/4 in plate".' })
     expect(parts()).toHaveLength(12)
+  })
+})
+
+describe('changePart and removePart', () => {
+  const plate = () => parts().find((p) => p.part_number === '4096-26-INT-001')!
+
+  it('changes a part, keeping its own part number allowed', async () => {
+    const result = await changePart(plate(), newMadePart({ part_number: '4096-26-INT-001', name: 'Intake side plate', revision: 'C', quantity: 4 }))
+    expect(result.ok).toBe(true)
+    expect(plate()).toMatchObject({ revision: 'C', quantity: 4, material: '6061 aluminum, 1/8 in plate' })
+  })
+
+  it('clears the material when a part is changed to COTS', async () => {
+    await changePart(plate(), newMadePart({ part_number: '4096-26-INT-001', kind: 'cots', vendor: 'WCP' }))
+    expect(plate()).toMatchObject({ kind: 'cots', material: null, vendor: 'WCP' })
+  })
+
+  it("won't take another part's number", async () => {
+    expect(await changePart(plate(), newMadePart({ part_number: '4096-26-INT-002' }))).toEqual({
+      ok: false, error: '4096-26-INT-002 is already used. Pick another number.',
+    })
+  })
+
+  it('deletes a part', async () => {
+    expect((await removePart(plate())).ok).toBe(true)
+    expect(parts().some((p) => p.part_number === '4096-26-INT-001')).toBe(false)
+  })
+})
+
+describe('robots and systems', () => {
+  const system = { name: 'Shooter', code: ' sho ', onshape_url: '' }
+
+  it('adds and renames a robot', async () => {
+    const added = await addRobot('  2027 competition robot ')
+    if (!added.ok) throw new Error(added.error)
+    expect(added.value.name).toBe('2027 competition robot')
+    expect((await renameRobot(added.value, '2027 robot')).ok).toBe(true)
+    expect(robotsTable.rows().map((r) => r.name)).toContain('2027 robot')
+    expect(await addRobot(' ')).toEqual({ ok: false, error: 'Name the robot, like "2027 competition robot".' })
+  })
+
+  it('adds a system, with its code in capitals', async () => {
+    const robot = robotsTable.rows()[0]
+    const added = await addSystem(robot.id, system)
+    expect(added.ok && added.value).toMatchObject({ robot_id: robot.id, name: 'Shooter', code: 'SHO', onshape_url: null })
+  })
+
+  it("won't repeat a name or code in the same robot, and needs a 2 to 4 letter code and an https link", () => {
+    const others = systemsTable.rows()
+    expect(checkSystem({ ...system, name: 'intake' }, others)).toBe("There's already a system called intake.")
+    expect(checkSystem({ ...system, code: 'INT' }, others)).toBe('INT is already another system\'s code. Pick another.')
+    expect(checkSystem({ ...system, code: 'S' }, others)).toMatch(/2 to 4 letters/)
+    expect(checkSystem({ ...system, code: 'SH0' }, others)).toMatch(/2 to 4 letters/)
+    expect(checkSystem({ ...system, onshape_url: 'cad.onshape.com/documents/1' }, others)).toMatch(/https:/)
+    expect(checkSystem(system, others)).toBeNull()
+  })
+
+  it('changes a system, keeping its own name and code allowed', async () => {
+    const intake = systemsTable.rows().find((s) => s.code === 'INT')!
+    const result = await changeSystem(intake, { name: 'Intake', code: 'INT', onshape_url: 'https://cad.onshape.com/documents/1' })
+    expect(result.ok && result.value.onshape_url).toBe('https://cad.onshape.com/documents/1')
+  })
+
+  it('only lets a mentor delete a system, which deletes its parts too', async () => {
+    const intake = systemsTable.rows().find((s) => s.code === 'INT')!
+    expect((await removeSystem(intake)).ok).toBe(false)
+    setDemoRole('mentor')
+    expect((await removeSystem(intake)).ok).toBe(true)
+    expect(systemsTable.rows().some((s) => s.id === intake.id)).toBe(false)
+    expect(parts().some((p) => p.system_id === intake.id)).toBe(false)
+    expect(parts()).toHaveLength(6)
   })
 })
