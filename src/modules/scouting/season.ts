@@ -22,3 +22,11 @@ export const COUNTERS: Counter[] = [
 
 /** How the robot finished the match. The first is the starting choice. */
 export const ENDGAME: string[] = ['None', 'Level 1', 'Level 2', 'Level 3']
+
+/**
+ * The event we're at, the way The Blue Alliance names it: the year and a
+ * short code, like 2026ilch. It's the end of the event page's address on
+ * thebluealliance.com. Change it before each event: the schedule and
+ * rankings come from it (see data.ts).
+ */
+export const EVENT_KEY = '2026ilch'

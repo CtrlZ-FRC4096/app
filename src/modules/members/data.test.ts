@@ -1,6 +1,6 @@
 // Tests for data.ts. The database rules behind these are tested in
 // supabase/tests/members.test.ts.
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { membersTable } from '../../core/members'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import { changeRole, search, setAccess } from './data'
@@ -45,5 +45,39 @@ describe('search', () => {
   it('finds people by any part of their name, ignoring capitals', () => {
     expect(search(membersTable.rows(), 'CHEN').map((m) => m.name)).toEqual(['Pat Chen'])
     expect(search(membersTable.rows(), '  ')).toHaveLength(membersTable.rows().length)
+  })
+})
+
+describe('checkServerFunctions', () => {
+  type Answers = Record<string, { ok: true; value: unknown } | { ok: false; error: string }>
+  async function withAnswers(answers: Answers) {
+    vi.resetModules()
+    vi.doMock('../../core/functions', () => ({ callFunction: vi.fn(async (name: string) => answers[name]) }))
+    const { checkServerFunctions } = await import('./data')
+    return checkServerFunctions()
+  }
+  afterEach(() => {
+    vi.doUnmock('../../core/functions')
+    vi.resetModules()
+  })
+
+  it('says when the functions aren\'t deployed', async () => {
+    expect(await withAnswers({ hello: { ok: false, error: "The hello server function isn't set up yet." } })).toEqual([
+      { name: 'Server functions', ok: false, text: "The hello server function isn't set up yet." },
+    ])
+  })
+
+  it('says when the Blue Alliance key is missing, without calling it', async () => {
+    const checks = await withAnswers({ hello: { ok: true, value: { message: 'Hi Pat', role: 'admin', secrets: { TBA_KEY: false } } } })
+    expect(checks.map((c) => [c.name, c.ok])).toEqual([['Server functions', true], ['The Blue Alliance', false]])
+    expect(checks[1].text).toMatch(/TBA_KEY/)
+  })
+
+  it('asks The Blue Alliance for team 4096 when the key is set', async () => {
+    const checks = await withAnswers({
+      hello: { ok: true, value: { message: 'Hi Pat', role: 'admin', secrets: { TBA_KEY: true } } },
+      tba: { ok: true, value: { nickname: 'Ctrl-Z' } },
+    })
+    expect(checks[1]).toEqual({ name: 'The Blue Alliance', ok: true, text: 'Working: it says team 4096 is Ctrl-Z.' })
   })
 })

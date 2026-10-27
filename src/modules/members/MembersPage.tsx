@@ -5,7 +5,7 @@ import { isLive } from '../../core/supabase'
 import { toast } from '../../core/toast'
 import { shortDate } from '../../core/format'
 import { Callout, PageHead, Panel, Pill } from '../../core/ui'
-import { changeRole, search, setAccess } from './data'
+import { changeRole, checkServerFunctions, search, setAccess, type FunctionCheck } from './data'
 
 export default function MembersPage() {
   const { id: myId, role: myRole } = useSession()
@@ -86,7 +86,43 @@ export default function MembersPage() {
           </div>
         </Panel>
       )}
+      {isLive && <ServerFunctions />}
     </>
+  )
+}
+
+/** For mentors setting up keys: are the server functions deployed, and do the keys work? */
+function ServerFunctions() {
+  const [checks, setChecks] = useState<FunctionCheck[] | null>(null)
+  const [checking, setChecking] = useState(false)
+
+  async function check() {
+    setChecking(true)
+    setChecks(await checkServerFunctions())
+    setChecking(false)
+  }
+
+  return (
+    <Panel
+      title="Server functions"
+      aside={<button type="button" className="btn btn-sm" disabled={checking} onClick={() => void check()}>{checking ? 'Checking…' : 'Check them'}</button>}
+    >
+      {checks ? (
+        <div className="row-list">
+          {checks.map((c) => (
+            <div key={c.name}>
+              <Pill tone={c.ok ? 'ok' : 'warn'}>{c.ok ? 'OK' : 'Not yet'}</Pill>
+              <span><strong>{c.name}.</strong> {c.text}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="panel-body muted">
+          Keys for other services, like The Blue Alliance, live in server functions on Supabase. After setting one up, check it
+          works here.
+        </p>
+      )}
+    </Panel>
   )
 }
 

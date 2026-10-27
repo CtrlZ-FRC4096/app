@@ -33,3 +33,5 @@ supabase/.branches/
 
 # Built attendance pull script (scripts/attendance-sync.ts)
 .sync/
+# Keys for trying server functions on your computer. Never commit them.
+supabase/functions/.env

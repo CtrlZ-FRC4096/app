@@ -54,6 +54,10 @@ enough for them to understand and for a mentor to review.
   every rule that matters must be in the migration's policies.
 - `useMemberNames()` (`src/core/members.ts`) turns a `created_by` id into a
   name.
+- Anything needing a secret key goes through a server function in
+  `supabase/functions/`, called from `data.ts` with `callFunction()`
+  (`src/core/functions.ts`) and made-up example data for demo mode. The
+  Blue Alliance's is `tba`: use the functions in `src/modules/scouting/data.ts`.
 
 ## Every change
 
