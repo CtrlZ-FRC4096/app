@@ -10,7 +10,8 @@
  *   SUPABASE_DB_URL        the database connection string (secret)
  *   SLACK_BOT_TOKEN        the Slack bot token, xoxb-... (secret)
  *   ATTENDANCE_CHANNEL_ID  the channel's ID, C... (variable)
- *   ATTENDANCE_SINCE       optional: the first day to pull, like 2026-01-01
+ *   ATTENDANCE_SINCE       optional: the first day the first pull reads, like 2026-01-01
+ *   ATTENDANCE_FROM        optional: a day typed into "Run workflow", to pull older history once
  *
  * Build and run: npx vite build --ssr scripts/attendance-sync.ts --outDir .sync && node .sync/attendance-sync.js
  */
@@ -19,13 +20,14 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseUsers } from '../src/modules/attendance/slack-export'
-import { pullFrom, syncPayload } from '../src/modules/attendance/sync'
+import { pickedDay, pullFrom, shortHistory, syncPayload } from '../src/modules/attendance/sync'
 
 const env = (name: string) => process.env[name]?.trim() ?? ''
 const token = env('SLACK_BOT_TOKEN')
 const channel = env('ATTENDANCE_CHANNEL_ID')
 const dbUrl = env('SUPABASE_DB_URL')
 const since = env('ATTENDANCE_SINCE') || null
+const picked = env('ATTENDANCE_FROM')
 // Only for testing against a fake Slack.
 const slackApi = env('SLACK_API_URL') || 'https://slack.com/api'
 
@@ -84,14 +86,22 @@ async function main() {
     return
   }
 
+  // A day picked by hand reads everything from then on. Anything already
+  // pulled is skipped, so this is safe to run over dates pulled before.
+  const asked = picked ? pickedDay(picked) : null
   const newest = psql('select max(newest_message_at) from public.attendance_syncs;') || null
-  const oldest = pullFrom(newest, since)
-  console.log(`Reading the channel from ${oldest.toISOString()}`)
+  const oldest = asked ?? pullFrom(newest, since)
+  console.log(`Reading the channel from ${oldest.toISOString()}${asked ? ' (the day picked when running it)' : ''}`)
 
   const users = parseUsers(await everyPage('users.list', {}, 'members'))
   const messages = await everyPage('conversations.history', { channel, oldest: String(oldest.getTime() / 1000), inclusive: 'true' }, 'messages')
   const payload = syncPayload(users, messages)
   console.log(`${messages.length} messages: ${payload.checks.length} check-ins and check-outs, ${payload.rsvps.length} poll answers`)
+  const times = messages.map((m) => Number((m as { ts?: unknown }).ts)).filter((t) => Number.isFinite(t))
+  const oldestMessage = times.length ? new Date(times.reduce((a, b) => Math.min(a, b)) * 1000) : null
+  if (oldestMessage) console.log(`The oldest message Slack sent back is from ${oldestMessage.toISOString().slice(0, 10)}.`)
+  const warning = asked && shortHistory(asked, oldestMessage)
+  if (warning) console.log(`::warning::${warning}`)
 
   // psql reads the payload from a file, so its size doesn't matter, and quotes it safely with :'payload'.
   const dir = mkdtempSync(join(tmpdir(), 'attendance-'))

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pullFrom, syncPayload } from './sync'
+import { pickedDay, pullFrom, shortHistory, syncPayload } from './sync'
 import type { SlackUser } from './slack-export'
 
 const users: SlackUser[] = [
@@ -58,5 +58,26 @@ describe('pullFrom', () => {
   it('starts the first pull on ATTENDANCE_SINCE, or 180 days ago', () => {
     expect(pullFrom(null, '2026-01-01').toISOString()).toBe('2026-01-01T00:00:00.000Z')
     expect(pullFrom(null, null, new Date('2026-07-01T00:00:00Z')).toISOString()).toBe('2026-01-02T00:00:00.000Z')
+  })
+})
+
+describe('pulling from a picked day', () => {
+  const now = new Date('2026-10-27T04:00:00Z')
+
+  it('starts at the beginning of the day typed', () => {
+    expect(pickedDay(' 2025-09-01 ', now).toISOString()).toBe('2025-09-01T00:00:00.000Z')
+  })
+
+  it("refuses something that isn't a real day, or is in the future", () => {
+    expect(() => pickedDay('9/1/2025', now)).toThrow('Type it like 2025-09-01')
+    expect(() => pickedDay('2025-02-30', now)).toThrow("isn't a day")
+    expect(() => pickedDay('2026-11-01', now)).toThrow('in the future')
+  })
+
+  it("warns when Slack's oldest message is weeks after the day asked for", () => {
+    const asked = new Date('2025-09-01T00:00:00Z')
+    expect(shortHistory(asked, new Date('2025-09-04T23:00:00Z'))).toBeNull()
+    expect(shortHistory(asked, new Date('2026-07-29T12:00:00Z'))).toMatch(/starts on 2026-07-29.*90 days.*Slack export/)
+    expect(shortHistory(asked, null)).toMatch(/is empty/)
   })
 })

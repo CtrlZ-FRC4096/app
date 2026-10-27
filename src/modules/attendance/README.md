@@ -71,6 +71,15 @@ Set up once (needs a Slack workspace admin and a GitHub repo admin):
    - Optional, same place: `ATTENDANCE_SINCE`, the first day to pull, such as `2026-01-01`. Without it, the first pull goes back 180 days.
 5. **Run it once:** Actions → **Pull attendance from Slack** → **Run workflow**. After that it runs every night. Run it by hand any time you want the latest straight away.
 
+**Pulling older history.** Each pull only reads from the last one onward
+(the first goes back 180 days, or to `ATTENDANCE_SINCE`). To bring in
+older messages, use **Run workflow** and type a day in **Pull from this
+day**, like `2025-09-01`. It reads the channel from that day to now;
+anything already pulled is skipped, and answers a mentor set by hand stay.
+The log says which day the oldest message Slack sent back is from. On
+Slack's free plan the bot can only read the last 90 days, so for anything
+older, import a Slack export on the Import tab.
+
 The bot token can only read the channels the app is invited to, and the
 member list. It lives only in the `database` environment, which only `main`
 can use, so pull requests can't read it. Never put it in the code.
