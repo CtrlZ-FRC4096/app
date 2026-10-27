@@ -83,13 +83,15 @@ can use, so pull requests can't read it. Never put it in the code.
 | `sync.ts` | Builds what the daily pull sends to the database |
 | `../../../scripts/attendance-sync.ts` | The daily pull itself: reads Slack, writes to the database |
 | `points.ts` | Sessions, hours and points (the rules above) |
+| `periods.ts` | Points periods: which one includes today, and what dates to count |
 | `time.ts` | Central-time days and times |
-| `data.ts` | The three tables, importing, fixes and CSV |
-| `AttendancePage.tsx`, `AttendanceGrid.tsx`, `PersonPanel.tsx`, `ImportPanel.tsx` | The tab |
+| `data.ts` | The tables, importing, fixes, periods and CSV |
+| `AttendancePage.tsx`, `AttendanceGrid.tsx`, `PersonPanel.tsx`, `PeriodsPanel.tsx`, `ImportPanel.tsx` | The tab |
 
 Tables: `attendance_people`, `attendance_checks`, `attendance_rsvps`
 (`supabase/migrations/..._attendance.sql`), and `attendance_syncs` with the
-function the pull calls (`..._attendance_slack_pull.sql`). Permission tests:
+function the pull calls (`..._attendance_slack_pull.sql`), and
+`attendance_periods` (`..._attendance_periods.sql`). Permission tests:
 `supabase/tests/attendance.test.ts` and `attendance-pull.test.ts`.
 
 Changes to this folder and `scripts/` need a mentor's approval, because the
