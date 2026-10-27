@@ -1,0 +1,73 @@
+# Sends the team's Slack reminders (src/modules/reminders.ts) every
+# afternoon. Each reminder says which days it goes out; see
+# src/core/reminders.ts for how they work.
+#
+# Set up once (see "Slack" in supabase/README.md): the Slack app's bot needs
+# the chat:write permission, and its token is the SLACK_BOT_TOKEN secret of
+# the "database" environment, the same one the attendance pull uses. Until
+# then this does nothing.
+name: Send Slack reminders
+
+on:
+  schedule:
+    # 21:07 UTC is 3:07 PM Central in winter (build season) and 4:07 PM in
+    # summer. GitHub sometimes starts scheduled runs late, up to an hour at
+    # busy times.
+    - cron: '7 21 * * *'
+  workflow_dispatch:
+    inputs:
+      send:
+        description: "Really send today's reminders. Leave off to only count them."
+        type: boolean
+        default: false
+      test_to:
+        description: 'Or: send one test message to this Slack user ID (U…) or channel ID (C…), and nothing else.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slack-reminders
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    # Only main can use this environment, so pull requests can't read its secrets.
+    environment: database
+    steps:
+      - name: Check it's set up
+        id: setup
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ] || [ -z "$SLACK_BOT_TOKEN" ]; then
+            echo "::notice::Slack reminders aren't set up yet. See supabase/README.md."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v5
+        if: steps.setup.outputs.ready == 'true'
+      - uses: actions/setup-node@v5
+        if: steps.setup.outputs.ready == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+        if: steps.setup.outputs.ready == 'true'
+      - name: Send reminders
+        if: steps.setup.outputs.ready == 'true'
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          # Scheduled runs send. Runs started by hand only count, unless "send" is ticked.
+          REMINDERS_SEND: ${{ github.event_name == 'schedule' || inputs.send }}
+          # Passed as a variable, never pasted into the script.
+          SLACK_TEST_TO: ${{ inputs.test_to }}
+        run: |
+          npx vite build --ssr scripts/slack-reminders.ts --outDir .reminders --emptyOutDir
+          node .reminders/slack-reminders.js

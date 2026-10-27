@@ -15,10 +15,15 @@
  *   - Functions that can fail return { ok: true, value } or
  *     { ok: false, error }, with the error written for the person using it.
  *   - Example data is clearly made up.
+ *   - Anything that needs a secret key, like sending a Slack message, goes
+ *     through a server function: see sendMeASlackMessage() at the bottom.
  */
-import { createTable, fail, newestFirst, type Result, type Row } from '../../core/table'
+import { createTable, fail, newestFirst, ok, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { plural } from '../../core/format'
+import { currentUser } from '../../core/session'
+import { appLink, sendSlackToMe, slackEscape } from '../../core/slack'
+import { isLive } from '../../core/supabase'
 import type { Notice } from '../../core/registry'
 
 /** One row of the example_notes table. The fields match its columns. */
@@ -76,4 +81,36 @@ export async function addNote(text: string): Promise<Result<Note>> {
 /** Mentors and admins only. The database refuses anyone else. */
 export async function removeNote(id: string): Promise<Result> {
   return notesTable.remove(id)
+}
+
+// ---------------------------------------------------------------------------
+// Slack: the "Send me a Slack message" button.
+//
+// How it works, step by step:
+//   1. The page's button calls sendMeASlackMessage() below.
+//   2. That builds the message with slackHello(), a plain function with
+//      tests, and calls sendSlackToMe() from src/core/slack.ts.
+//   3. sendSlackToMe() calls the `slack` server function on Supabase
+//      (supabase/functions/slack/). The browser never sees the bot's key:
+//      only the server function has it.
+//   4. The server function checks you're on the team, and the team's Slack
+//      bot sends the message to you.
+// In demo mode there are no server functions, so nothing is sent.
+
+/** The message the button sends you. */
+export function slackHello(name: string, noteCount: number): string {
+  return (
+    `Hi ${slackEscape(name)}! You pressed "Send me a Slack message" on the Example page, ` +
+    `so the team's Slack bot sent you this. There are ${plural(noteCount, 'note', 'notes')} posted. ` +
+    appLink('example', 'Open the Example page')
+  )
+}
+
+/** Send yourself a Slack message. The answer is what to tell the person. */
+export async function sendMeASlackMessage(): Promise<Result<string>> {
+  const me = currentUser()
+  if (!me) return fail('Sign in first.')
+  const sent = await sendSlackToMe(slackHello(me.name, notesTable.rows().length))
+  if (!sent.ok) return sent
+  return ok(isLive ? 'Sent. Look in Slack for a direct message from the team app.' : 'Demo mode: nothing was sent. On the live site, the Slack bot messages you.')
 }

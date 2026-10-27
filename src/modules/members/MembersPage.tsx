@@ -118,8 +118,8 @@ function ServerFunctions() {
         </div>
       ) : (
         <p className="panel-body muted">
-          Keys for other services, like The Blue Alliance, live in server functions on Supabase. After setting one up, check it
-          works here.
+          Keys for other services, like The Blue Alliance, Slack and Google Calendar, live in server functions on Supabase. After
+          setting one up, check it works here. Checking sends you a test message in Slack.
         </p>
       )}
     </Panel>

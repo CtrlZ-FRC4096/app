@@ -197,6 +197,11 @@ the functions can read.
 | `hello` | The example to copy. Answers members with their name and which secrets are set |
 | `tba` | The Blue Alliance for scouting: an event's schedule and rankings, and a team's matches and name |
 | `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio |
+| `slack` | Slack messages from the team's bot: to yourself (anyone), or to people and a channel (mentors). Used through `src/core/slack.ts` |
+| `calendar` | The team's Google Calendar: everyone sees its events; mentors add events, and change or remove the ones the app added. Used through `src/core/calendar.ts` |
+
+Slack reminders that go out by themselves on a schedule don't use a server
+function: see [Slack reminders on a schedule](#slack-reminders-on-a-schedule).
 
 How they fit together:
 
@@ -213,6 +218,19 @@ How they fit together:
   **Server functions** to see if they're deployed and the keys work.
 
 ### Setting them up (once, by a mentor)
+
+Every key, and where it goes. Supabase's are under **Edge Functions >
+Secrets**; GitHub's under **Settings > Environments > database**. Never
+paste a key anywhere else, including chat.
+
+| Key | Name | Where |
+|:--|:--|:--|
+| Supabase access token | `SUPABASE_ACCESS_TOKEN` | GitHub |
+| The Blue Alliance read key | `TBA_KEY` | Supabase |
+| Onshape access key and secret key | `ONSHAPE_ACCESS_KEY`, `ONSHAPE_SECRET_KEY` | Supabase |
+| Slack bot token (`xoxb-...`) | `SLACK_BOT_TOKEN` | Supabase **and** GitHub (the attendance pull and reminders use GitHub's) |
+| Google service account key (a JSON file) | `GOOGLE_SERVICE_ACCOUNT_KEY` | Supabase |
+| The team calendar's ID | `GOOGLE_CALENDAR_ID` | Supabase |
 
 1. **Let GitHub deploy functions.** Sign in to
    [supabase.com](https://supabase.com) with the coaches' shared account,
@@ -234,9 +252,10 @@ How they fit together:
      account, and open the [Developer Portal's API keys](https://dev-portal.onshape.com/keys)
      (or **My Account > Developer > API keys**). Individual accounts can
      have 2 keys.
-   - **Create new API key** with only **Read your documents** ticked.
-     Writing part numbers into Onshape (#21) will need a key that can also
-     write.
+   - **Create new API key** with **Read your documents** and **Write to
+     your documents** ticked. Importing only reads; writing part numbers
+     into Onshape (#21) needs write. The app never deletes or shares, so
+     leave those off.
    - Copy both the **access key** and the **secret key** before closing:
      Onshape never shows the secret again. Keep both in Bitwarden.
    - In Supabase's **Edge Functions > Secrets**, add `ONSHAPE_ACCESS_KEY`
@@ -245,9 +264,50 @@ How they fit together:
    Onshape limits API calls per year, counted against that account. The
    app only calls Onshape when someone clicks **Import from Onshape** (two
    calls each time) or **Check them** (one).
-4. **Deploy:** **Actions > Deploy > Run workflow** on `main`.
-5. **Check:** in the app, **Members > Server functions > Check them**. Every
-   line should say OK.
+4. **Let the Slack bot send messages.** This is the same Slack app people
+   sign in with, and the same bot the attendance pull uses.
+   - At [api.slack.com/apps](https://api.slack.com/apps), open **Ctrl-Z
+     Team App > OAuth & Permissions > Bot Token Scopes** and make sure it
+     has `chat:write` (sending messages), plus `channels:history` and
+     `users:read` for the attendance pull. Add any that are missing, then
+     click **Reinstall to Workspace** in the banner and approve.
+   - **App Home > Show Tabs:** turn on **Messages Tab**, and untick
+     **Allow users to send Slash commands and messages from the messages
+     tab**. People then see the app's messages in Slack, and know not to
+     reply to it.
+   - Copy the **Bot User OAuth Token** (`xoxb-...`) from **OAuth &
+     Permissions**, and add it in Supabase as `SLACK_BOT_TOKEN`. If it's
+     different from the one in GitHub's `database` environment (it usually
+     stays the same when you reinstall), update that one too.
+   - To post in a channel, the app has to be in it: type
+     `/invite @Ctrl-Z Team App` there.
+5. **Connect the team's Google Calendar.** The app signs in to Google as a
+   *service account*: a robot Google account that only sees what's shared
+   with it.
+   1. Sign in to [console.cloud.google.com](https://console.cloud.google.com)
+      with a team or mentor Google account, and make a project (the project
+      picker at the top > **New project**) named `ctrlz-team-app`.
+   2. **APIs & Services > Library**: find **Google Calendar API** and click
+      **Enable**.
+   3. **IAM & Admin > Service Accounts > Create service account**, named
+      `team-app`. Skip the optional steps: it needs no roles.
+   4. Open it, then **Keys > Add key > Create new key > JSON**. A file
+      downloads: that's the key. Keep it in Bitwarden and delete the
+      download. (If Google says key creation is turned off, your Google
+      organization's admin has to allow it for this project.)
+   5. Copy the service account's email, like
+      `team-app@ctrlz-team-app.iam.gserviceaccount.com`.
+   6. In Google Calendar, open the team calendar's **Settings and
+      sharing**. Under **Share with specific people or groups**, add that
+      email with **Make changes to events**. (With **See all event
+      details**, the app can show events but not add them.) Under
+      **Integrate calendar**, copy the **Calendar ID**.
+   7. In Supabase, add `GOOGLE_SERVICE_ACCOUNT_KEY`: open the JSON file in
+      a text editor and paste all of it. Then add `GOOGLE_CALENDAR_ID`: the
+      calendar ID.
+6. **Deploy:** **Actions > Deploy > Run workflow** on `main`.
+7. **Check:** in the app, **Members > Server functions > Check them**. Every
+   line should say OK, and the Slack bot sends you a test message.
 
 A new secret works straight away, with no redeploy. To change one, set it
 again with the same name.
@@ -275,17 +335,23 @@ Never log a secret, send one back to the browser, or commit one: keys for
 trying functions on your own computer go in `functions/.env`, which Git
 ignores.
 
-### Running a function on a schedule
+### Slack reminders on a schedule
 
-Nothing needs this yet; Slack reminders (#22) will be first. Two ways:
+The **Send Slack reminders** workflow (`.github/workflows/slack-reminders.yml`)
+runs every afternoon and sends the reminders listed in
+`src/modules/reminders.ts`. How to write one is in `src/core/reminders.ts`,
+with an example in `src/modules/example/reminders.ts`. It runs in GitHub
+rather than Supabase, with the `database` environment's `SUPABASE_DB_URL`
+and `SLACK_BOT_TOKEN`, and only reads the database.
 
-- **A scheduled GitHub workflow,** like `.github/workflows/attendance-sync.yml`,
-  which already runs every night with secrets from the `database`
-  environment. Simplest when the work can run in Node.
-- **Supabase's `pg_cron`,** which calls a function from the database on a
-  schedule, with the secret key kept in Supabase Vault. The function then
-  accepts that key instead of a member's sign-in. See Supabase's
-  "Scheduling Edge Functions" guide.
+- **Try it:** **Actions > Send Slack reminders > Run workflow**, with your
+  Slack user ID in **test_to** (in Slack: your profile > **⋮** > **Copy
+  member ID**). The bot messages you.
+- **See what it would send:** **Run workflow** with **send** unticked counts
+  today's messages without sending them.
+- **The time:** change the `cron` line in the workflow. It's in UTC.
+- The repo is public, so the run's log is too: it only says how many
+  messages went, never what they said or who to.
 
 ## Looking after it
 

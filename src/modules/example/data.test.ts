@@ -3,7 +3,8 @@
 // tests can't affect each other. Who is allowed to do what is the
 // database's job: that's tested in supabase/tests/example-notes.test.ts.
 import { beforeEach, describe, expect, it } from 'vitest'
-import { MAX_NOTE_LENGTH, addNote, checkNote, notesTable, removeNote } from './data'
+import { APP_ADDRESS } from '../../core/slack'
+import { MAX_NOTE_LENGTH, addNote, checkNote, notesTable, removeNote, sendMeASlackMessage, slackHello } from './data'
 
 beforeEach(() => {
   notesTable.reset()
@@ -43,5 +44,24 @@ describe('removeNote', () => {
 
   it('says so if the note is already gone', async () => {
     expect((await removeNote('not-a-note')).ok).toBe(false)
+  })
+})
+
+describe('slackHello', () => {
+  it('says hi, counts the notes, and links to the page', () => {
+    expect(slackHello('Alex Rivera', 2)).toBe(
+      'Hi Alex Rivera! You pressed "Send me a Slack message" on the Example page, so the team\'s Slack bot sent you this. ' +
+        `There are 2 notes posted. <${APP_ADDRESS}#/example|Open the Example page>`,
+    )
+  })
+
+  it('shows names exactly as typed', () => {
+    expect(slackHello('<Pat>', 1)).toMatch(/^Hi &lt;Pat&gt;! .* 1 note posted/)
+  })
+})
+
+describe('sendMeASlackMessage', () => {
+  it('says nothing was sent in demo mode', async () => {
+    expect(await sendMeASlackMessage()).toEqual({ ok: true, value: 'Demo mode: nothing was sent. On the live site, the Slack bot messages you.' })
   })
 })

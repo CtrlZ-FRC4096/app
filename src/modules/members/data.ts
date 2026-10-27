@@ -68,16 +68,26 @@ interface Hello {
 
 /**
  * Are the server functions deployed, and do their keys work? Asks the
- * example `hello` function, then The Blue Alliance for team 4096, then
- * Onshape whether the keys open anything (one Onshape API call).
+ * example `hello` function, then The Blue Alliance for team 4096, Onshape
+ * whether the keys open anything (one Onshape API call), Slack to send you
+ * a test message, and Google which calendar it is.
  */
 export async function checkServerFunctions(): Promise<FunctionCheck[]> {
-  const demoSecrets = { TBA_KEY: true, ONSHAPE_ACCESS_KEY: true, ONSHAPE_SECRET_KEY: true }
+  const demoSecrets = Object.fromEntries(
+    ['TBA_KEY', 'ONSHAPE_ACCESS_KEY', 'ONSHAPE_SECRET_KEY', 'SLACK_BOT_TOKEN', 'GOOGLE_SERVICE_ACCOUNT_KEY', 'GOOGLE_CALENDAR_ID'].map((name) => [name, true]),
+  )
   const hello = await callFunction<Hello>('hello', {}, () => ({ message: 'Hi', role: 'mentor', secrets: demoSecrets }))
   if (!hello.ok) return [{ name: 'Server functions', ok: false, text: hello.error }]
   const { secrets } = hello.value
   const checks: FunctionCheck[] = [{ name: 'Server functions', ok: true, text: `Deployed, and they know you: "${hello.value.message}".` }]
   const setUp = 'see "Server functions" in supabase/README.md.'
+  /** "No X secret yet…" when any of `names` isn't set, or null when they all are. */
+  const missing = (names: string[]): string | null => {
+    const unset = names.filter((name) => !secrets[name])
+    if (unset.length === 0) return null
+    const many = unset.length > 1
+    return `No ${unset.join(' and ')} secret${many ? 's' : ''} yet. Add ${many ? 'them' : 'it'} in Supabase: ${setUp}`
+  }
 
   if (!secrets.TBA_KEY) {
     checks.push({ name: 'The Blue Alliance', ok: false, text: `No TBA_KEY secret yet. Add it in Supabase: ${setUp}` })
@@ -90,10 +100,9 @@ export async function checkServerFunctions(): Promise<FunctionCheck[]> {
     )
   }
 
-  if (!secrets.ONSHAPE_ACCESS_KEY || !secrets.ONSHAPE_SECRET_KEY) {
-    const missing = ['ONSHAPE_ACCESS_KEY', 'ONSHAPE_SECRET_KEY'].filter((name) => !secrets[name]).join(' and ')
-    const both = missing.includes(' and ')
-    checks.push({ name: 'Onshape', ok: false, text: `No ${missing} secret${both ? 's' : ''} yet. Add ${both ? 'them' : 'it'} in Supabase: ${setUp}` })
+  const noOnshape = missing(['ONSHAPE_ACCESS_KEY', 'ONSHAPE_SECRET_KEY'])
+  if (noOnshape) {
+    checks.push({ name: 'Onshape', ok: false, text: noOnshape })
   } else {
     const onshape = await callFunction<{ ok: true }>('onshape', { kind: 'check' }, () => ({ ok: true }))
     checks.push(
@@ -101,6 +110,36 @@ export async function checkServerFunctions(): Promise<FunctionCheck[]> {
         ? { name: 'Onshape', ok: true, text: 'Working: Onshape accepted the keys. Import a system from the BOM page.' }
         : { name: 'Onshape', ok: false, text: onshape.error },
     )
+  }
+
+  const noSlack = missing(['SLACK_BOT_TOKEN'])
+  if (noSlack) {
+    checks.push({ name: 'Slack', ok: false, text: noSlack })
+  } else {
+    const slack = await callFunction<{ bot: string }>('slack', { kind: 'check' }, () => ({ bot: 'ctrl-z_team_app' }))
+    checks.push(
+      slack.ok
+        ? { name: 'Slack', ok: true, text: `Working: the bot (${slack.value.bot}) sent you a test message in Slack.` }
+        : { name: 'Slack', ok: false, text: slack.error },
+    )
+  }
+
+  const noCalendar = missing(['GOOGLE_SERVICE_ACCOUNT_KEY', 'GOOGLE_CALENDAR_ID'])
+  if (noCalendar) {
+    checks.push({ name: 'Google Calendar', ok: false, text: noCalendar })
+  } else {
+    type CalendarCheck = { name: string; canAdd: boolean; serviceAccount: string }
+    const demo = () => ({ name: 'Ctrl-Z team calendar', canAdd: true, serviceAccount: 'team-app@example.iam.gserviceaccount.com' })
+    const calendar = await callFunction<CalendarCheck>('calendar', { kind: 'check' }, demo)
+    if (!calendar.ok) checks.push({ name: 'Google Calendar', ok: false, text: calendar.error })
+    else if (calendar.value.canAdd) checks.push({ name: 'Google Calendar', ok: true, text: `Working: the app can see and add events in "${calendar.value.name}".` })
+    else {
+      checks.push({
+        name: 'Google Calendar',
+        ok: false,
+        text: `The app can see "${calendar.value.name}" but can't add events. In Google Calendar, share it with ${calendar.value.serviceAccount} and pick "Make changes to events".`,
+      })
+    }
   }
   return checks
 }

@@ -69,9 +69,27 @@ describe('checkServerFunctions', () => {
 
   it('says which keys are missing, without calling those functions', async () => {
     const checks = await withAnswers({ hello: { ok: true, value: { message: 'Hi Pat', role: 'admin', secrets: { TBA_KEY: false, ONSHAPE_ACCESS_KEY: true } } } })
-    expect(checks.map((c) => [c.name, c.ok])).toEqual([['Server functions', true], ['The Blue Alliance', false], ['Onshape', false]])
+    expect(checks.map((c) => [c.name, c.ok])).toEqual([
+      ['Server functions', true], ['The Blue Alliance', false], ['Onshape', false], ['Slack', false], ['Google Calendar', false],
+    ])
     expect(checks[1].text).toMatch(/TBA_KEY/)
     expect(checks[2].text).toBe('No ONSHAPE_SECRET_KEY secret yet. Add it in Supabase: see "Server functions" in supabase/README.md.')
+    expect(checks[3].text).toBe('No SLACK_BOT_TOKEN secret yet. Add it in Supabase: see "Server functions" in supabase/README.md.')
+    expect(checks[4].text).toBe('No GOOGLE_SERVICE_ACCOUNT_KEY and GOOGLE_CALENDAR_ID secrets yet. Add them in Supabase: see "Server functions" in supabase/README.md.')
+  })
+
+  it('has Slack send you a test message, and asks Google which calendar it is', async () => {
+    const secrets = { SLACK_BOT_TOKEN: true, GOOGLE_SERVICE_ACCOUNT_KEY: true, GOOGLE_CALENDAR_ID: true }
+    const hello = { ok: true as const, value: { message: 'Hi Pat', role: 'admin', secrets } }
+    const calendar = (canAdd: boolean) => ({ ok: true as const, value: { name: 'Ctrl-Z', canAdd, serviceAccount: 'app@x.iam.gserviceaccount.com' } })
+    const working = await withAnswers({ hello, slack: { ok: true, value: { bot: 'ctrl-z_team_app' } }, calendar: calendar(true) })
+    expect(working.slice(3)).toEqual([
+      { name: 'Slack', ok: true, text: 'Working: the bot (ctrl-z_team_app) sent you a test message in Slack.' },
+      { name: 'Google Calendar', ok: true, text: 'Working: the app can see and add events in "Ctrl-Z".' },
+    ])
+    const readOnly = await withAnswers({ hello, slack: { ok: false, error: 'The Slack app needs the chat:write permission.' }, calendar: calendar(false) })
+    expect(readOnly[3]).toEqual({ name: 'Slack', ok: false, text: 'The Slack app needs the chat:write permission.' })
+    expect(readOnly[4]).toMatchObject({ ok: false, text: expect.stringMatching(/share it with app@x\.iam\.gserviceaccount\.com and pick "Make changes to events"/) })
   })
 
   it('asks Onshape whether the keys work when both are set', async () => {

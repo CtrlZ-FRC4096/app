@@ -31,7 +31,8 @@ dist-ssr
 supabase/.temp/
 supabase/.branches/
 
-# Built attendance pull script (scripts/attendance-sync.ts)
+# Built scripts (scripts/attendance-sync.ts, scripts/slack-reminders.ts)
 .sync/
+.reminders/
 # Keys for trying server functions on your computer. Never commit them.
 supabase/functions/.env
