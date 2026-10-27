@@ -60,6 +60,11 @@ export interface Table<T extends Row> {
   useRows(): T[]
   /** Add a row. The database fills in id, created_at and created_by. */
   insert(fields: Fields<T>): Promise<Result<T>>
+  /**
+   * Add many rows at once, such as an import. They go in batches of
+   * 1,000; if a batch fails, the batches before it stay added.
+   */
+  insertMany(rows: Fields<T>[]): Promise<Result<T[]>>
   /** Change some columns of one row. */
   update(id: string, changes: Partial<Fields<T>>): Promise<Result<T>>
   /** Delete one row. */
@@ -122,6 +127,12 @@ function demoTable<T extends Row>(name: string, options: TableOptions<T>, order:
       store.set((rows) => order([...rows, row]))
       return ok(row)
     },
+    async insertMany(list) {
+      const now = new Date().toISOString()
+      const added = list.map((fields) => ({ id: newId(), created_at: now, created_by: demoUserId(), ...fields }) as unknown as T)
+      store.set((rows) => order([...rows, ...added]))
+      return ok(added)
+    },
     async update(id, changes) {
       const current = find(id)
       if (!current) return fail(GONE)
@@ -157,6 +168,7 @@ type LiveState<T> =
   | { status: 'failed'; error: Error }
 
 const NO_ROWS: never[] = []
+const PAGE = 1000
 
 function liveTable<T extends Row>(
   client: SupabaseClient,
@@ -183,10 +195,16 @@ function liveTable<T extends Row>(
     if (state.status === 'ready') setState({ status: 'ready', rows: order(edit(state.rows)) })
   }
 
+  // The database sends at most 1,000 rows per request, so bigger tables
+  // (a season of check-ins) load a page at a time.
   async function fetchRows(): Promise<T[]> {
-    const { data, error } = await client.from(name).select('*')
-    if (error) throw new Error(`Couldn't load ${name}. ${explain(error)}`)
-    return order(data as T[])
+    const all: T[] = []
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await client.from(name).select('*').order('id').range(from, from + PAGE - 1)
+      if (error) throw new Error(`Couldn't load ${name}. ${explain(error)}`)
+      all.push(...(data as T[]))
+      if (data.length < PAGE) return order(all)
+    }
   }
 
   // Starts loading the first time a page asks for rows. It doesn't tell
@@ -243,6 +261,17 @@ function liveTable<T extends Row>(
       if (error) return fail(explain(error))
       change((rows) => replaceRow(rows, data as T))
       return ok(data as T)
+    },
+    async insertMany(list) {
+      const added: T[] = []
+      for (let start = 0; start < list.length; start += PAGE) {
+        const batch = list.slice(start, start + PAGE) as Record<string, unknown>[]
+        const { data, error } = await client.from(name).insert(batch).select()
+        if (error) return fail(explain(error))
+        added.push(...(data as T[]))
+        change((rows) => (data as T[]).reduce(replaceRow, rows))
+      }
+      return ok(added)
     },
     async update(id, changes) {
       const { data, error } = await client.from(name).update(changes as Record<string, unknown>).eq('id', id).select().single()
