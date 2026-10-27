@@ -40,7 +40,11 @@ jobs:
             echo "::notice::No team database is connected yet, so there are no migrations to apply. See supabase/README.md."
             exit 0
           fi
-          supabase db push --db-url "$SUPABASE_DB_URL" --yes
+          # People work on modules at the same time, so a migration can be
+          # merged after one with a later name. --include-all applies it
+          # anyway, instead of stopping because it sorts before the last one
+          # the database already has. Every migration is still applied once.
+          supabase db push --db-url "$SUPABASE_DB_URL" --yes --include-all
 
   build:
     needs: database

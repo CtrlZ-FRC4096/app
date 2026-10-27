@@ -56,6 +56,12 @@ fit the table.
 **Never edit a migration after it's merged.** The database has already run
 it. To change a table, add a new migration that alters it.
 
+**Merge order doesn't have to match name order.** If your branch's
+migration is named before one that was merged while you were working, the
+Deploy workflow still applies it. The tests run migrations in name order,
+so they'll fail if yours needs a table from a migration named after it:
+rename yours with the current date and time.
+
 **Never put the secret key anywhere in this repo.** The site only ever uses
 the publishable key, which is meant to be public.
 
