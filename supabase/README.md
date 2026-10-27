@@ -365,6 +365,24 @@ and `SLACK_BOT_TOKEN`, and only reads the database.
 - **Attendance from Slack:** the "Pull attendance from Slack" workflow
   reads the attendance channel every night once it has a Slack bot token. See
   [the Attendance README](../src/modules/attendance/README.md#pulling-from-slack-automatically).
+- **Staying on the free plan.** The team's use fits, with room to spare, except
+  for data sent to browsers (egress). Check **Organization > Usage** in
+  Supabase once a month during build season; it shows each item against
+  the plan. Going over doesn't cost money on the free plan, but if it keeps
+  happening Supabase restricts the project until the next month.
+
+  | Item | Free plan | The team |
+  |:--|:--|:--|
+  | Database size | 500 MB | A few MB. Attendance adds a few hundred rows a week |
+  | Egress (data sent to browsers) | 5 GB a month | The one to watch: each visit loads whole tables, and the attendance tables grow all season. Estimated 1.5 GB a month in build season now, more by the end |
+  | Monthly active users | 50,000 | About 100 |
+  | Server function calls | 500,000 a month | Thousands. Live rankings at events (#39) will add the most |
+  | Realtime connections at once | 200 | One per open tab |
+  | Server functions | 100 | 5 |
+
+  If egress gets close, the cheapest fixes are loading less of the
+  attendance tables (only this season's rows, or only when the Attendance
+  tab opens), or the Pro plan's 250 GB.
 - **Backups:** the free plan has none. Before the team relies on the data,
   either upgrade to Pro ($25 a month, daily backups) or set up a scheduled
   backup.
