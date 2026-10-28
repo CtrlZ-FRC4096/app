@@ -170,6 +170,20 @@ type LiveState<T> =
 const NO_ROWS: never[] = []
 const PAGE = 1000
 
+/**
+ * How long a tab must be hidden before its tables reload when it comes
+ * back. While the tab is open, live updates keep rows current, so switching
+ * tabs for a moment doesn't need a reload. Every reload counts toward the
+ * free plan's 5 GB of monthly data (egress), and some tables, like a
+ * season of check-ins, are big.
+ */
+export const RELOAD_AFTER_HIDDEN_MS = 60 * 1000
+
+/** Whether a tab hidden at `hiddenAt` should reload its tables now that it's back. */
+export function reloadOnReturn(hiddenAt: number | null, now: number): boolean {
+  return hiddenAt !== null && now - hiddenAt >= RELOAD_AFTER_HIDDEN_MS
+}
+
 function liveTable<T extends Row>(
   client: SupabaseClient,
   name: string,
@@ -221,8 +235,8 @@ function liveTable<T extends Row>(
   }
 
   // Other people's changes arrive by themselves. When the tab comes back
-  // after being hidden (a phone asleep in a pocket), reload in case some
-  // were missed.
+  // after being hidden for a while (a phone asleep in a pocket), reload in
+  // case some were missed. A quick switch to another tab doesn't reload.
   function listen() {
     if (listening) return
     listening = true
@@ -232,8 +246,15 @@ function liveTable<T extends Row>(
         change((rows) => applyChange(rows, payload)),
       )
       .subscribe()
+    let hiddenAt: number | null = null
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState !== 'visible' || state.status !== 'ready') return
+      if (document.visibilityState === 'hidden') {
+        hiddenAt ??= Date.now()
+        return
+      }
+      const reload = reloadOnReturn(hiddenAt, Date.now())
+      hiddenAt = null
+      if (!reload || state.status !== 'ready') return
       fetchRows().then(
         (rows) => setState({ status: 'ready', rows }),
         () => {},

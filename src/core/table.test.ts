@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { applyChange, createTable, explain, newestFirst, type Row } from './table'
+import { applyChange, createTable, explain, newestFirst, RELOAD_AFTER_HIDDEN_MS, reloadOnReturn, type Row } from './table'
 import { DEMO_PEOPLE, setDemoRole } from './demo'
 
 interface Thing extends Row {
@@ -75,5 +75,14 @@ describe('explain', () => {
       'The team needs at least one admin. Make someone else an admin first.',
     )
     expect(explain({ message: 'TypeError: Failed to fetch' })).toMatch(/Couldn't reach the team database/)
+  })
+})
+
+describe('reloadOnReturn', () => {
+  it('reloads after the tab was hidden a while, not after a quick switch', () => {
+    expect(reloadOnReturn(null, 5_000)).toBe(false)
+    expect(reloadOnReturn(1_000, 1_000 + RELOAD_AFTER_HIDDEN_MS - 1)).toBe(false)
+    expect(reloadOnReturn(1_000, 1_000 + RELOAD_AFTER_HIDDEN_MS)).toBe(true)
+    expect(reloadOnReturn(1_000, 1_000 + 60 * RELOAD_AFTER_HIDDEN_MS)).toBe(true)
   })
 })
