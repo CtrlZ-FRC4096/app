@@ -7,7 +7,11 @@ import { setDemoRole } from '../../core/demo'
 import { membersTable } from '../../core/members'
 import {
   addCheck,
+  cancelRequest,
+  decideRequest,
   findMyPerson,
+  requestHours,
+  requestsTable,
   sortRows,
   useAttendanceAttention,
   useAttendanceSummary,
@@ -35,6 +39,7 @@ beforeEach(() => {
   checksTable.reset()
   rsvpsTable.reset()
   periodsTable.reset()
+  requestsTable.reset()
 })
 
 const existing = () => ({ people: peopleTable.rows(), checks: checksTable.rows(), rsvps: rsvpsTable.rows() })
@@ -259,5 +264,53 @@ describe('your own attendance', () => {
   it('still shows mentors how many came to the last meeting', () => {
     setDemoRole('mentor')
     expect(home(() => useAttendanceSummary('mentor').text)).toMatch(/^<p>\d+ at /)
+  })
+})
+
+describe('requests for missing hours', () => {
+  afterEach(() => setDemoRole('student'))
+  const request = (name: string) => requestsTable.rows().find((r) => r.person_id === person(name).id && r.status === 'pending')!
+  const season = (name: string) => buildReport(peopleTable.rows(), checksTable.rows(), rsvpsTable.rows(), { from: '2026-01-10' }).rows.find((r) => r.person.name === name)!
+
+  it('lets people ask about a day, once at a time', async () => {
+    const asked = await requestHours(person('Alex Rivera'), { day: '2026-01-13', inClock: '', outClock: '20:45', note: ' Left late ' })
+    expect(asked.ok && asked.value).toMatchObject({ day: '2026-01-13', in_at: null, out_at: teamInstant('2026-01-13', '20:45'), note: 'Left late', status: 'pending' })
+    // Alex already has one waiting for Jan 15.
+    expect(await requestHours(person('Alex Rivera'), { day: '2026-01-15', inClock: '', outClock: '20:40', note: 'Again' })).toEqual({
+      ok: false,
+      error: `You already asked about ${dayLabel('2026-01-15')}. Take that request back first to change it.`,
+    })
+    expect(await requestHours(person('Alex Rivera'), { day: '2026-01-14', inClock: '', outClock: '', note: 'x' })).toMatchObject({ ok: false })
+  })
+
+  it('lets people take back a waiting request, but not a decided one', async () => {
+    expect(await cancelRequest(request('Alex Rivera'))).toEqual({ ok: true, value: null })
+    const declined = requestsTable.rows().find((r) => r.status === 'declined')!
+    expect(await cancelRequest(declined)).toEqual({ ok: false, error: 'A mentor already decided that one.' })
+  })
+
+  it("adds the hours when a mentor approves, so the person's points update", async () => {
+    // Alex forgot to check out on Jan 15: −1 that day, so 6 points this season.
+    expect(season('Alex Rivera').points).toBe(6)
+    setDemoRole('mentor')
+    const approved = await decideRequest(request('Alex Rivera'), true)
+    expect(approved.ok && approved.value).toMatchObject({ status: 'approved', decided_by: expect.any(String) })
+    // 18:10 to 20:40 is a full session: 3 points instead of −1.
+    expect(season('Alex Rivera').points).toBe(10)
+    expect(season('Alex Rivera').hours).toBeCloseTo(2.2167 + 2.5, 3)
+  })
+
+  it('adds nothing when a mentor declines, and decides only once', async () => {
+    setDemoRole('admin')
+    const before = checksTable.rows().length
+    const jordan = request('Jordan Kim')
+    expect(await decideRequest(jordan, false)).toMatchObject({ ok: true, value: { status: 'declined' } })
+    expect(checksTable.rows()).toHaveLength(before)
+    const again = requestsTable.rows().find((r) => r.id === jordan.id)!
+    expect(await decideRequest(again, true)).toEqual({ ok: false, error: 'That request was already declined.' })
+  })
+
+  it("doesn't let students approve", async () => {
+    expect(await decideRequest(request('Alex Rivera'), true)).toEqual({ ok: false, error: 'Only mentors and admins can approve requests.' })
   })
 })

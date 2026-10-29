@@ -7,6 +7,7 @@ import { ImportPanel } from './ImportPanel'
 import { MyAttendance } from './MyAttendance'
 import { PeriodsPanel } from './PeriodsPanel'
 import { PersonPanel } from './PersonPanel'
+import { RequestsPanel } from './RequestsPanel'
 import { BASE_POINTS, FULL_SESSION_HOURS, POINTS } from './points'
 import { rangeText } from './periods'
 import { periodsTable, SHEET_SORT, sheetRows, sortRows, toCsv, useCountRange, useLastPull, useReport, type Sheet, type SortBy } from './data'
@@ -38,6 +39,7 @@ export default function AttendancePage() {
       <MyAttendance range={range} rangeName={rangeName} />
       {isMentor(role) && <TeamAttendance range={range} />}
       <PointsRules />
+      {isMentor(role) && <RequestsPanel />}
     </>
   )
 }

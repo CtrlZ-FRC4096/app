@@ -7,6 +7,13 @@ Who said they'd come, when they checked in and out, and attendance points.
   matched by Slack account, so someone added by name only (a Jibble name
   that matched no Slack account) sees nothing until a mentor fixes it. The
   home page tile shows their points and hours this period.
+- **Requests for missing hours.** Anyone can ask for hours Jibble missed,
+  from their own attendance: a forgotten check-out, or a whole session they
+  didn't check in for, with a note. Mentors and admins see the requests at
+  the bottom of the tab (and a reminder on the home page) and approve or
+  decline them. Approving adds the times as check-ins and check-outs made
+  by hand, in the database in the same step, so hours and points update
+  straight away. People can take back a request until it's decided.
 - **Mentors and admins see everyone's**, and are the only ones who can
   change anything. Attendance is personal information about students: the
   database's rules give everyone else only their own rows, read-only.

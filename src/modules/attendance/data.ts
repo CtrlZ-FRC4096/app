@@ -17,11 +17,12 @@ import { DEMO_PEOPLE } from '../../core/demo'
 import { isLive } from '../../core/supabase'
 import { membersTable, type Member } from '../../core/members'
 import { isMentor, type Role } from '../../core/roles'
-import { useSession } from '../../core/session'
+import { currentUser, useSession } from '../../core/session'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 import { BASE_POINTS, buildReport, type DayRecord, type PersonReport, type Report } from './points'
 import { countRange, type CountRange, type Counting, type Period } from './periods'
+import { checkRequest, type HoursRequestInput, type RequestStatus } from './requests'
 import { ago, dayLabel, teamClock, teamDay, teamInstant, today } from './time'
 import { nameKey, resolve, slackKey, type ParsedDay, type SlackUser } from './slack-export'
 
@@ -56,6 +57,22 @@ export interface AttendanceRsvp extends Row {
 /** The dates points are counted over, like "2027 build season" (see periods.ts). */
 export interface AttendancePeriod extends Row, Period {
   created_by: string | null
+}
+
+/** Someone asking for hours Jibble missed, for a mentor to approve or decline (see requests.ts). */
+export interface AttendanceRequest extends Row {
+  person_id: string
+  /** The meeting day, like "2026-01-13". */
+  day: string
+  /** ISO instants, or null for one Jibble already has. */
+  in_at: string | null
+  out_at: string | null
+  note: string
+  status: RequestStatus
+  /** Who asked. */
+  created_by: string | null
+  decided_at: string | null
+  decided_by: string | null
 }
 
 /** One automatic pull from the Slack channel (see sync.ts). */
@@ -118,6 +135,28 @@ export const periodsTable = createTable<AttendancePeriod>('attendance_periods', 
 })
 export const syncsTable = createTable<AttendanceSync>('attendance_syncs', {
   demo: [{ id: demoId(0xa4, 1), created_at: '2026-01-16T03:07:00Z', newest_message_at: '2026-01-16T02:52:00Z', people_added: 0, checks_added: 9, rsvps_changed: 1 }],
+})
+
+// Alex forgot to check out on Jan 15, Jordan's Jibble didn't work at the
+// Jan 10 Saturday build, and a mentor declined one of Sam's.
+export const requestsTable = createTable<AttendanceRequest>('attendance_requests', {
+  demo: [
+    {
+      id: demoId(0xa6, 1), person_id: demoId(0xa1, 3), day: '2026-01-06', in_at: teamInstant('2026-01-06', '18:00'), out_at: teamInstant('2026-01-06', '20:00'),
+      note: 'I was at the robot demo at the library.', status: 'declined', created_at: '2026-01-07T02:00:00Z', created_by: DEMO_PEOPLE.sam,
+      decided_at: '2026-01-07T15:00:00Z', decided_by: DEMO_PEOPLE.pat,
+    },
+    {
+      id: demoId(0xa6, 2), person_id: demoId(0xa1, 2), day: '2026-01-10', in_at: teamInstant('2026-01-10', '10:00'), out_at: teamInstant('2026-01-10', '15:00'),
+      note: "Jibble wasn't working at the Saturday build.", status: 'pending', created_at: '2026-01-11T01:00:00Z', created_by: DEMO_PEOPLE.jordan,
+      decided_at: null, decided_by: null,
+    },
+    {
+      id: demoId(0xa6, 3), person_id: demoId(0xa1, 1), day: '2026-01-15', in_at: null, out_at: teamInstant('2026-01-15', '20:40'),
+      note: 'Forgot to check out after the meeting.', status: 'pending', created_at: '2026-01-16T14:00:00Z', created_by: DEMO_PEOPLE.alex,
+      decided_at: null, decided_by: null,
+    },
+  ],
 })
 
 /** The latest automatic pull from Slack, or null if it has never run. */
@@ -224,6 +263,7 @@ export function useAttendanceAttention(role: Role): Notice[] {
   const report = useReport({})
   const lastPull = useLastPull()
   const mine = useMyAttendance({})
+  const waiting = useWaitingRequests()
   const [openedAt] = useState(() => Date.now())
   const notices: Notice[] = []
   if (!isMentor(role)) {
@@ -241,7 +281,90 @@ export function useAttendanceAttention(role: Role): Notice[] {
   if (isLive && lastPull && openedAt - Date.parse(lastPull.created_at) > PULL_OVERDUE_HOURS * 3_600_000) {
     notices.push({ tone: 'crit', text: `Attendance was last pulled from Slack ${ago(lastPull.created_at, new Date(openedAt))}. Check the "Pull attendance from Slack" workflow in GitHub Actions.` })
   }
+  if (waiting.length) {
+    notices.push({ tone: 'warn', text: `${plural(waiting.length, 'request', 'requests')} for missing hours waiting. Approve or decline them at the bottom of Attendance.` })
+  }
   return notices
+}
+
+// ---------------------------------------------------------------------------
+// Requests for missing hours. Anyone asks about their own attendance; mentors
+// and admins see everyone's at the bottom of the tab and decide.
+
+/** Your requests, newest first. */
+export function useMyRequests(): AttendanceRequest[] {
+  const { id } = useSession()
+  const people = peopleTable.useRows()
+  const members = membersTable.useRows()
+  const requests = requestsTable.useRows()
+  const person = findMyPerson(people, members, id)
+  return person ? requests.filter((r) => r.person_id === person.id).sort((a, b) => b.created_at.localeCompare(a.created_at)) : []
+}
+
+/** Requests waiting for a mentor, oldest first. */
+export function useWaitingRequests(): AttendanceRequest[] {
+  return requestsTable.useRows().filter((r) => r.status === 'pending')
+}
+
+/** Requests decided lately, newest first. */
+export function useDecidedRequests(limit = 5): AttendanceRequest[] {
+  const requests = requestsTable.useRows()
+  return requests
+    .filter((r) => r.status !== 'pending')
+    .sort((a, b) => (b.decided_at ?? '').localeCompare(a.decided_at ?? ''))
+    .slice(0, limit)
+}
+
+/** Ask for hours Jibble missed, for `person` (your own attendance row). */
+export async function requestHours(person: AttendancePerson, input: HoursRequestInput): Promise<Result<AttendanceRequest>> {
+  const problem = checkRequest(input, today())
+  if (problem) return fail(problem)
+  if (requestsTable.rows().some((r) => r.person_id === person.id && r.day === input.day && r.status === 'pending')) {
+    return fail(`You already asked about ${dayLabel(input.day)}. Take that request back first to change it.`)
+  }
+  const fields = {
+    person_id: person.id,
+    day: input.day,
+    in_at: input.inClock ? teamInstant(input.day, input.inClock) : null,
+    out_at: input.outClock ? teamInstant(input.day, input.outClock) : null,
+    note: input.note.trim(),
+  }
+  // The team database fills in the status and the rest, and doesn't let
+  // anyone set them; demo mode needs them here.
+  const row = isLive ? fields : { ...fields, status: 'pending' as const, decided_at: null, decided_by: null }
+  return requestsTable.insert(row as Fields<AttendanceRequest>)
+}
+
+/** Take back a request that's still waiting. */
+export async function cancelRequest(request: AttendanceRequest): Promise<Result> {
+  if (request.status !== 'pending') return fail('A mentor already decided that one.')
+  return requestsTable.remove(request.id)
+}
+
+/**
+ * Approve or decline a request (mentors and admins). Approving adds its
+ * times as check-ins and check-outs made by hand. In the team database a
+ * trigger does that in the same step (see the requests migration); demo
+ * mode does the same here.
+ */
+export async function decideRequest(request: AttendanceRequest, approve: boolean): Promise<Result<AttendanceRequest>> {
+  const me = currentUser()
+  if (!me || !isMentor(me.role)) return fail('Only mentors and admins can approve requests.')
+  if (request.status !== 'pending') return fail(`That request was already ${request.status}.`)
+  const status = approve ? 'approved' : 'declined'
+  if (isLive) return requestsTable.update(request.id, { status })
+
+  const result = await requestsTable.update(request.id, { status, decided_at: new Date().toISOString(), decided_by: me.id })
+  if (!result.ok || !approve) return result
+  for (const [direction, at] of [['in', request.in_at], ['out', request.out_at]] as const) {
+    if (!at) continue
+    const same = checksTable.rows().find((c) => c.person_id === request.person_id && c.direction === direction && Date.parse(c.at) === Date.parse(at))
+    const added = same
+      ? await checksTable.update(same.id, { ignored: false })
+      : await checksTable.insert({ person_id: request.person_id, direction, at, source: 'manual', ignored: false })
+    if (!added.ok) return added
+  }
+  return result
 }
 
 // ---------------------------------------------------------------------------
