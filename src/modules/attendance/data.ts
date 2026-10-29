@@ -1,7 +1,8 @@
 /**
  * Attendance module data: who said they'd come, when they checked in and
- * out, and the points from both. Mentors and admins only (see the
- * attendance migration in supabase/migrations/).
+ * out, and the points from both. Mentors and admins see everyone's;
+ * everyone else sees only their own, matched by their Slack account (see
+ * the attendance migrations in supabase/migrations/).
  *
  * The data comes from the attendance channel's Slack export: Simple Poll
  * answers become RSVPs, and Jibble's "jibbled in/out" messages become
@@ -14,8 +15,12 @@ import { createTable, fail, ok, type Fields, type Result, type Row } from '../..
 import { createStore, useStore } from '../../core/store'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { isLive } from '../../core/supabase'
+import { membersTable, type Member } from '../../core/members'
+import { isMentor, type Role } from '../../core/roles'
+import { useSession } from '../../core/session'
+import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
-import { buildReport, type DayRecord, type Report } from './points'
+import { BASE_POINTS, buildReport, type DayRecord, type PersonReport, type Report } from './points'
 import { countRange, type CountRange, type Counting, type Period } from './periods'
 import { ago, dayLabel, teamClock, teamDay, teamInstant, today } from './time'
 import { nameKey, resolve, slackKey, type ParsedDay, type SlackUser } from './slack-export'
@@ -153,21 +158,81 @@ export function useCountRange(): CountRange<AttendancePeriod> & { set: (next: Co
   return { ...countRange(counting, periods, day), set: countingStore.set }
 }
 
-/** The home page tile: how many came to the last meeting. */
-export function useAttendanceSummary(): Notice {
+// ---------------------------------------------------------------------------
+// Your own attendance. Everyone sees this, students included. In the team
+// database, students can only read their own rows anyway; in demo mode
+// every row is there, so this picks out yours.
+
+/** The signed-in person's attendance row: the one with their Slack account, or null if there isn't one yet. */
+export function findMyPerson(people: AttendancePerson[], members: Member[], userId: string): AttendancePerson | null {
+  const slack = members.find((m) => m.id === userId)?.slack_user_id
+  return (slack && people.find((p) => p.slack_user_id === slack)) || null
+}
+
+/**
+ * Your own attendance over part of the season: your row of the report
+ * (points, hours and each of your days), or null when you have nothing in
+ * these dates. Days you have no record for score 0, so these are the same
+ * numbers the mentors' sheets show for you.
+ */
+export function useMyAttendance(range: { from?: string; to?: string }): { person: AttendancePerson | null; row: PersonReport<AttendancePerson> | null } {
+  const { id } = useSession()
+  const { people, checks, rsvps } = useAttendance()
+  const members = membersTable.useRows()
+  const person = findMyPerson(people, members, id)
+  const { from, to } = range
+  const row = useMemo(() => {
+    if (!person) return null
+    const mine = { checks: checks.filter((c) => c.person_id === person.id), rsvps: rsvps.filter((r) => r.person_id === person.id) }
+    return buildReport([person], mine.checks, mine.rsvps, { from, to }).rows[0] ?? null
+  }, [person, checks, rsvps, from, to])
+  return { person, row }
+}
+
+/** The points period that includes today, as dates, for the home page. */
+function useTodaysPeriod(): { from?: string; to?: string } {
+  const periods = periodsTable.useRows()
+  const [day] = useState(today)
+  const { from, to } = countRange(null, periods, day)
+  return { from, to }
+}
+
+/**
+ * The home page tile. Mentors: how many came to the last meeting. Everyone
+ * else: their own points and hours this period.
+ */
+export function useAttendanceSummary(role: Role): Notice {
   const report = useReport({})
+  const mine = useMyAttendance(useTodaysPeriod())
+  if (!isMentor(role)) {
+    if (!mine.person) return { tone: 'plain', text: 'No attendance for you yet' }
+    const points = mine.row?.points ?? BASE_POINTS
+    return { tone: 'info', text: `You: ${plural(points, 'point', 'points')} · ${(mine.row?.hours ?? 0).toFixed(1)} hours` }
+  }
   const last = report.days[report.days.length - 1]
   if (!last) return { tone: 'plain', text: 'No meetings yet' }
   const came = report.rows.filter((row) => row.days.get(last)?.sessions.length).length
   return { tone: 'info', text: `${came} at ${dayLabel(last)}` }
 }
 
-/** "Needs attention" on the home page: people who never checked out at the last meeting. */
-export function useAttendanceAttention(): Notice[] {
+/**
+ * "Needs attention" on the home page. Mentors: people who never checked out
+ * at the last meeting, and pulls from Slack that stopped. Everyone else: a
+ * nudge when they didn't check out at their last meeting.
+ */
+export function useAttendanceAttention(role: Role): Notice[] {
   const report = useReport({})
   const lastPull = useLastPull()
+  const mine = useMyAttendance({})
   const [openedAt] = useState(() => Date.now())
   const notices: Notice[] = []
+  if (!isMentor(role)) {
+    const latest = mine.row ? [...mine.row.days.values()].filter((d) => d.sessions.length || d.rsvp).pop() : undefined
+    if (latest?.stillIn) {
+      notices.push({ tone: 'warn', text: `You didn't check out on ${dayLabel(latest.day)}. Ask a mentor to add your check-out so your hours count.` })
+    }
+    return notices
+  }
   const last = report.days[report.days.length - 1]
   const stillIn = last ? report.rows.filter((row) => row.days.get(last)?.stillIn).length : 0
   if (stillIn) {
@@ -345,6 +410,18 @@ export async function applyImport(plan: ImportPlan): Promise<Result<string>> {
 
 export type Sheet = 'points' | 'hours' | 'checks' | 'rsvps'
 
+/** What the sheets can be sorted by: a name, or a total. */
+export type SortBy = 'name' | 'points' | 'hours' | 'days'
+
+/** Each sheet starts sorted by its own total: Points by points, Hours by hours, the others by days here. */
+export const SHEET_SORT: Record<Sheet, SortBy> = { points: 'points', hours: 'hours', checks: 'days', rsvps: 'days' }
+
+/** Rows sorted most first (names A to Z), with ties in name order. */
+export function sortRows<R extends { person: { name: string }; points: number; hours: number; daysPresent: number }>(rows: R[], by: SortBy): R[] {
+  const value = (row: R) => (by === 'points' ? row.points : by === 'hours' ? row.hours : by === 'days' ? row.daysPresent : 0)
+  return [...rows].sort((a, b) => value(b) - value(a) || a.person.name.localeCompare(b.person.name))
+}
+
 /** What a day's cell shows on each sheet. */
 export function cellText(record: DayRecord | undefined, sheet: Sheet): string {
   if (!record) return ''
@@ -360,14 +437,17 @@ export function cellText(record: DayRecord | undefined, sheet: Sheet): string {
   }
 }
 
-/** A sheet as rows of cells, oldest day first, like the old spreadsheet. */
+/** A sheet as rows of cells, oldest day first, like the old spreadsheet, with every total: points, hours and days here. */
 export function sheetRows(report: Report<AttendancePerson>, sheet: Sheet): string[][] {
-  const total = (row: Report<AttendancePerson>['rows'][number]) =>
-    sheet === 'points' ? String(row.points) : sheet === 'hours' ? row.hours.toFixed(2) : String(row.daysPresent)
-  const totalName = sheet === 'points' ? 'Total' : sheet === 'hours' ? 'Total hours' : 'Days here'
   return [
-    ['Name', totalName, ...report.days],
-    ...report.rows.map((row) => [row.person.name, total(row), ...report.days.map((day) => cellText(row.days.get(day), sheet))]),
+    ['Name', 'Points', 'Hours', 'Days here', ...report.days],
+    ...report.rows.map((row) => [
+      row.person.name,
+      String(row.points),
+      row.hours.toFixed(2),
+      String(row.daysPresent),
+      ...report.days.map((day) => cellText(row.days.get(day), sheet)),
+    ]),
   ]
 }
 

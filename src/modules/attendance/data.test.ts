@@ -1,8 +1,16 @@
 // Tests for data.ts, in demo mode on the example data. Who can see and
 // change attendance is tested in supabase/tests/attendance.test.ts.
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToString } from 'react-dom/server'
+import { setDemoRole } from '../../core/demo'
+import { membersTable } from '../../core/members'
 import {
   addCheck,
+  findMyPerson,
+  sortRows,
+  useAttendanceAttention,
+  useAttendanceSummary,
   applyImport,
   checksTable,
   peopleTable,
@@ -19,7 +27,7 @@ import {
 } from './data'
 import { buildReport } from './points'
 import { countRange } from './periods'
-import { teamInstant } from './time'
+import { dayLabel, teamInstant } from './time'
 import type { ParsedDay, SlackUser } from './slack-export'
 
 beforeEach(() => {
@@ -135,8 +143,9 @@ describe('importing a Slack export', () => {
 describe('downloads', () => {
   it('makes a points sheet with a row per person and a column per meeting day', () => {
     const rows = sheetRows(report(), 'points')
-    expect(rows[0]).toEqual(['Name', 'Total', '2026-01-06', '2026-01-08', '2026-01-10', '2026-01-13', '2026-01-15'])
-    expect(rows.find((r) => r[0] === 'Alex Rivera')).toEqual(['Alex Rivera', '12', '3', '3', '1', '3', '-1'])
+    expect(rows[0]).toEqual(['Name', 'Points', 'Hours', 'Days here', '2026-01-06', '2026-01-08', '2026-01-10', '2026-01-13', '2026-01-15'])
+    // Alex: 12 points; 2.42 + 2.75 + 2.22 hours over the 3 days with a check-out.
+    expect(rows.find((r) => r[0] === 'Alex Rivera')).toEqual(['Alex Rivera', '12', '7.38', '3', '3', '3', '1', '3', '-1'])
   })
 
   it('writes CSV that spreadsheets open safely', () => {
@@ -183,5 +192,72 @@ describe('points periods', () => {
     // Keeping its own name while changing its dates is fine.
     const build = period('2026 build season')
     expect(await error({ name: '2026 build season', first_day: '2026-01-10', last_day: '2026-04-18' }, build.id)).toBeNull()
+  })
+})
+
+describe('sorting', () => {
+  const names = (by: Parameters<typeof sortRows>[1]) => sortRows(report().rows, by).map((r) => r.person.name)
+
+  it('puts the most first for points, hours and days here, and names A to Z', () => {
+    const rows = report().rows
+    for (const by of ['points', 'hours', 'days'] as const) {
+      const value = (r: (typeof rows)[number]) => (by === 'points' ? r.points : by === 'hours' ? r.hours : r.daysPresent)
+      const sorted = sortRows(rows, by)
+      for (let i = 1; i < sorted.length; i++) expect(value(sorted[i - 1])).toBeGreaterThanOrEqual(value(sorted[i]))
+    }
+    expect(names('name')).toEqual([...names('name')].sort((a, b) => a.localeCompare(b)))
+  })
+
+  it('sorts by hours differently from points', () => {
+    // Without hidden people, as the sheets open. Casey has the most of both; Jordan
+    // is fourth on points (9) but second on hours (7.8).
+    const shown = buildReport(peopleTable.rows().filter((p) => !p.hidden), checksTable.rows(), rsvpsTable.rows()).rows
+    expect(sortRows(shown, 'points').slice(0, 3).map((r) => r.person.name)).toEqual(['Casey Nguyen', 'Alex Rivera', 'Sam Ortiz'])
+    expect(sortRows(shown, 'hours').slice(0, 3).map((r) => r.person.name)).toEqual(['Casey Nguyen', 'Jordan Kim', 'Alex Rivera'])
+  })
+})
+
+describe('your own attendance', () => {
+  afterEach(() => setDemoRole('student'))
+
+  it('finds your attendance by your Slack account', () => {
+    const members = membersTable.rows()
+    const alex = members.find((m) => m.name === 'Alex Rivera')!
+    const morgan = members.find((m) => m.name === 'Morgan Lee')!
+    expect(findMyPerson(peopleTable.rows(), members, alex.id)?.name).toBe('Alex Rivera')
+    // Morgan has never checked in, so there's nothing to find.
+    expect(findMyPerson(peopleTable.rows(), members, morgan.id)).toBeNull()
+    expect(findMyPerson(peopleTable.rows(), members, 'not-a-member')).toBeNull()
+  })
+
+  it("gives everyone the same numbers from their own rows as the mentors' sheets show", () => {
+    for (const range of [{}, { from: '2026-01-10' }]) {
+      const team = buildReport(peopleTable.rows(), checksTable.rows(), rsvpsTable.rows(), range)
+      for (const row of team.rows) {
+        const own = buildReport(
+          [row.person],
+          checksTable.rows().filter((c) => c.person_id === row.person.id),
+          rsvpsTable.rows().filter((r) => r.person_id === row.person.id),
+          range,
+        ).rows[0]
+        expect([own.points, own.hours, own.daysPresent]).toEqual([row.points, row.hours, row.daysPresent])
+      }
+    }
+  })
+
+  const home = (hook: () => string) => renderToString(createElement(() => createElement('p', null, hook())))
+
+  it("shows students their own points and hours this period on the home page, and nobody else's", () => {
+    setDemoRole('student')
+    // Alex, in the 2026 build season: 6 points, and 2.2 hours (Jan 13; Jan 15 has no check-out).
+    expect(home(() => useAttendanceSummary('student').text)).toBe('<p>You: 6 points · 2.2 hours</p>')
+    expect(home(() => useAttendanceAttention('student').map((n) => n.text).join(' | '))).toBe(
+      `<p>You didn&#x27;t check out on ${dayLabel('2026-01-15')}. Ask a mentor to add your check-out so your hours count.</p>`,
+    )
+  })
+
+  it('still shows mentors how many came to the last meeting', () => {
+    setDemoRole('mentor')
+    expect(home(() => useAttendanceSummary('mentor').text)).toMatch(/^<p>\d+ at /)
   })
 })
