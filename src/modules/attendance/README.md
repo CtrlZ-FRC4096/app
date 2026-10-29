@@ -52,9 +52,11 @@ Days and times are in Central time, whatever the computer's time zone.
 3. **Periods**: the dates points are counted over, like "2027 build season,
    Jan 9 to Apr 17" (leave the last day empty while it's still going).
    Everyone starts a period with 3 points and only its meetings count.
-   Mentors save periods once and all see the same ones; the sheets open on
-   the period that includes today. "Count points over" switches to another
-   period, all time, or any dates, until the app is reloaded.
+   Mentors save periods once and all see the same ones; the tab opens on
+   the period that includes today. Mentors and admins can switch with
+   "Count points over" to another period, all time, or any dates, until the
+   app is reloaded. Everyone else always sees the period that includes
+   today.
 4. **Fixes**: choose a name to add a missed check-out, change an RSVP,
    ignore a wrong check-in, or hide someone (mentors, parents) from the
    tables. Manual RSVPs are never overwritten by importing again.
