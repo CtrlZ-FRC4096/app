@@ -1,32 +1,51 @@
 import type { Report } from './points'
-import { cellText, type AttendancePerson, type Sheet } from './data'
+import { cellText, type AttendancePerson, type Sheet, type SortBy } from './data'
 import { dayLabel } from './time'
 
 /**
- * One sheet of the report: a row per person, a column per meeting day
- * (newest first, so the latest meeting is in view). The name column stays
- * put while the days scroll sideways.
+ * One sheet of the report: a row per person, with their points, hours and
+ * days here side by side, then a column per meeting day (newest first, so
+ * the latest meeting is in view). The name column stays put while the days
+ * scroll sideways. Clicking a column's heading sorts by it.
  */
 export function AttendanceGrid(props: {
   report: Report<AttendancePerson>
+  /** Already sorted. */
   rows: Report<AttendancePerson>['rows']
   sheet: Sheet
+  sortBy: SortBy
+  onSort: (by: SortBy) => void
   selected: string | null
   onSelect: (personId: string) => void
 }) {
-  const { report, rows, sheet } = props
+  const { report, rows, sheet, sortBy } = props
   const days = [...report.days].reverse()
-  const totalLabel = sheet === 'points' ? 'Points' : sheet === 'hours' ? 'Hours' : 'Days here'
 
   if (rows.length === 0) return <p className="panel-body muted">Nobody to show. Import a Slack export, or change the dates or search.</p>
+
+  const heading = (by: SortBy, label: string) => {
+    const active = sortBy === by
+    return (
+      <th className={by === 'name' ? undefined : 'num'} aria-sort={active ? (by === 'name' ? 'ascending' : 'descending') : undefined}>
+        <button type="button" className="name-btn" onClick={() => props.onSort(by)} title={`Sort by ${label.toLowerCase()}`}>
+          {label}
+          {active && (by === 'name' ? ' ↑' : ' ↓')}
+        </button>
+      </th>
+    )
+  }
+  // The total being sorted by stands out.
+  const total = (by: SortBy, text: string | number) => <td className="num cell">{sortBy === by ? <strong>{text}</strong> : text}</td>
 
   return (
     <div className="table-wrap">
       <table className="grid-table">
         <thead>
           <tr>
-            <th>Name</th>
-            <th className="num">{totalLabel}</th>
+            {heading('name', 'Name')}
+            {heading('points', 'Points')}
+            {heading('hours', 'Hours')}
+            {heading('days', 'Days here')}
             {days.map((day) => <th key={day} className="num day">{dayLabel(day)}</th>)}
           </tr>
         </thead>
@@ -39,9 +58,9 @@ export function AttendanceGrid(props: {
                 </button>
                 {row.person.hidden && <span className="note"> (hidden)</span>}
               </td>
-              <td className="num cell">
-                <strong>{sheet === 'points' ? row.points : sheet === 'hours' ? row.hours.toFixed(1) : row.daysPresent}</strong>
-              </td>
+              {total('points', row.points)}
+              {total('hours', row.hours.toFixed(1))}
+              {total('days', row.daysPresent)}
               {days.map((day) => {
                 const record = row.days.get(day)
                 return (

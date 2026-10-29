@@ -4,9 +4,9 @@ import { useAttendanceAttention, useAttendanceSummary } from './data'
 export const attendance: ModuleDefinition = {
   id: 'attendance',
   name: 'Attendance',
-  purpose: 'Who came, for how long, and attendance points, from the Slack poll and Jibble.',
-  // Attendance is personal information about students. The database's rules enforce this too.
-  roles: ['mentor', 'admin'],
+  purpose: 'Your attendance points and hours, from the Slack poll and Jibble. Mentors see everyone and fix mistakes.',
+  // Everyone can open it, but only mentors and admins see other people's
+  // attendance: it's personal information. The database's rules enforce that.
   load: () => import('./AttendancePage'),
   useSummary: useAttendanceSummary,
   useAttention: useAttendanceAttention,

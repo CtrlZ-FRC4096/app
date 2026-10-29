@@ -1,7 +1,8 @@
 /**
  * Attendance module data: who said they'd come, when they checked in and
- * out, and the points from both. Mentors and admins only (see the
- * attendance migration in supabase/migrations/).
+ * out, and the points from both. Mentors and admins see everyone's;
+ * everyone else sees only their own, matched by their Slack account (see
+ * the attendance migrations in supabase/migrations/).
  *
  * The data comes from the attendance channel's Slack export: Simple Poll
  * answers become RSVPs, and Jibble's "jibbled in/out" messages become
@@ -14,9 +15,14 @@ import { createTable, fail, ok, type Fields, type Result, type Row } from '../..
 import { createStore, useStore } from '../../core/store'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { isLive } from '../../core/supabase'
+import { membersTable, type Member } from '../../core/members'
+import { isMentor, type Role } from '../../core/roles'
+import { currentUser, useSession } from '../../core/session'
+import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
-import { buildReport, type DayRecord, type Report } from './points'
+import { BASE_POINTS, buildReport, type DayRecord, type PersonReport, type Report } from './points'
 import { countRange, type CountRange, type Counting, type Period } from './periods'
+import { checkRequest, type HoursRequestInput, type RequestStatus } from './requests'
 import { ago, dayLabel, teamClock, teamDay, teamInstant, today } from './time'
 import { nameKey, resolve, slackKey, type ParsedDay, type SlackUser } from './slack-export'
 
@@ -51,6 +57,22 @@ export interface AttendanceRsvp extends Row {
 /** The dates points are counted over, like "2027 build season" (see periods.ts). */
 export interface AttendancePeriod extends Row, Period {
   created_by: string | null
+}
+
+/** Someone asking for hours Jibble missed, for a mentor to approve or decline (see requests.ts). */
+export interface AttendanceRequest extends Row {
+  person_id: string
+  /** The meeting day, like "2026-01-13". */
+  day: string
+  /** ISO instants, or null for one Jibble already has. */
+  in_at: string | null
+  out_at: string | null
+  note: string
+  status: RequestStatus
+  /** Who asked. */
+  created_by: string | null
+  decided_at: string | null
+  decided_by: string | null
 }
 
 /** One automatic pull from the Slack channel (see sync.ts). */
@@ -115,6 +137,28 @@ export const syncsTable = createTable<AttendanceSync>('attendance_syncs', {
   demo: [{ id: demoId(0xa4, 1), created_at: '2026-01-16T03:07:00Z', newest_message_at: '2026-01-16T02:52:00Z', people_added: 0, checks_added: 9, rsvps_changed: 1 }],
 })
 
+// Alex forgot to check out on Jan 15, Jordan's Jibble didn't work at the
+// Jan 10 Saturday build, and a mentor declined one of Sam's.
+export const requestsTable = createTable<AttendanceRequest>('attendance_requests', {
+  demo: [
+    {
+      id: demoId(0xa6, 1), person_id: demoId(0xa1, 3), day: '2026-01-06', in_at: teamInstant('2026-01-06', '18:00'), out_at: teamInstant('2026-01-06', '20:00'),
+      note: 'I was at the robot demo at the library.', status: 'declined', created_at: '2026-01-07T02:00:00Z', created_by: DEMO_PEOPLE.sam,
+      decided_at: '2026-01-07T15:00:00Z', decided_by: DEMO_PEOPLE.pat,
+    },
+    {
+      id: demoId(0xa6, 2), person_id: demoId(0xa1, 2), day: '2026-01-10', in_at: teamInstant('2026-01-10', '10:00'), out_at: teamInstant('2026-01-10', '15:00'),
+      note: "Jibble wasn't working at the Saturday build.", status: 'pending', created_at: '2026-01-11T01:00:00Z', created_by: DEMO_PEOPLE.jordan,
+      decided_at: null, decided_by: null,
+    },
+    {
+      id: demoId(0xa6, 3), person_id: demoId(0xa1, 1), day: '2026-01-15', in_at: null, out_at: teamInstant('2026-01-15', '20:40'),
+      note: 'Forgot to check out after the meeting.', status: 'pending', created_at: '2026-01-16T14:00:00Z', created_by: DEMO_PEOPLE.alex,
+      decided_at: null, decided_by: null,
+    },
+  ],
+})
+
 /** The latest automatic pull from Slack, or null if it has never run. */
 export function useLastPull(): AttendanceSync | null {
   const syncs = syncsTable.useRows()
@@ -153,21 +197,82 @@ export function useCountRange(): CountRange<AttendancePeriod> & { set: (next: Co
   return { ...countRange(counting, periods, day), set: countingStore.set }
 }
 
-/** The home page tile: how many came to the last meeting. */
-export function useAttendanceSummary(): Notice {
+// ---------------------------------------------------------------------------
+// Your own attendance. Everyone sees this, students included. In the team
+// database, students can only read their own rows anyway; in demo mode
+// every row is there, so this picks out yours.
+
+/** The signed-in person's attendance row: the one with their Slack account, or null if there isn't one yet. */
+export function findMyPerson(people: AttendancePerson[], members: Member[], userId: string): AttendancePerson | null {
+  const slack = members.find((m) => m.id === userId)?.slack_user_id
+  return (slack && people.find((p) => p.slack_user_id === slack)) || null
+}
+
+/**
+ * Your own attendance over part of the season: your row of the report
+ * (points, hours and each of your days), or null when you have nothing in
+ * these dates. Days you have no record for score 0, so these are the same
+ * numbers the mentors' sheets show for you.
+ */
+export function useMyAttendance(range: { from?: string; to?: string }): { person: AttendancePerson | null; row: PersonReport<AttendancePerson> | null } {
+  const { id } = useSession()
+  const { people, checks, rsvps } = useAttendance()
+  const members = membersTable.useRows()
+  const person = findMyPerson(people, members, id)
+  const { from, to } = range
+  const row = useMemo(() => {
+    if (!person) return null
+    const mine = { checks: checks.filter((c) => c.person_id === person.id), rsvps: rsvps.filter((r) => r.person_id === person.id) }
+    return buildReport([person], mine.checks, mine.rsvps, { from, to }).rows[0] ?? null
+  }, [person, checks, rsvps, from, to])
+  return { person, row }
+}
+
+/** The points period that includes today, as dates, for the home page. */
+function useTodaysPeriod(): { from?: string; to?: string } {
+  const periods = periodsTable.useRows()
+  const [day] = useState(today)
+  const { from, to } = countRange(null, periods, day)
+  return { from, to }
+}
+
+/**
+ * The home page tile. Mentors: how many came to the last meeting. Everyone
+ * else: their own points and hours this period.
+ */
+export function useAttendanceSummary(role: Role): Notice {
   const report = useReport({})
+  const mine = useMyAttendance(useTodaysPeriod())
+  if (!isMentor(role)) {
+    if (!mine.person) return { tone: 'plain', text: 'No attendance for you yet' }
+    const points = mine.row?.points ?? BASE_POINTS
+    return { tone: 'info', text: `You: ${plural(points, 'point', 'points')} · ${(mine.row?.hours ?? 0).toFixed(1)} hours` }
+  }
   const last = report.days[report.days.length - 1]
   if (!last) return { tone: 'plain', text: 'No meetings yet' }
   const came = report.rows.filter((row) => row.days.get(last)?.sessions.length).length
   return { tone: 'info', text: `${came} at ${dayLabel(last)}` }
 }
 
-/** "Needs attention" on the home page: people who never checked out at the last meeting. */
-export function useAttendanceAttention(): Notice[] {
+/**
+ * "Needs attention" on the home page. Mentors: people who never checked out
+ * at the last meeting, and pulls from Slack that stopped. Everyone else: a
+ * nudge when they didn't check out at their last meeting.
+ */
+export function useAttendanceAttention(role: Role): Notice[] {
   const report = useReport({})
   const lastPull = useLastPull()
+  const mine = useMyAttendance({})
+  const waiting = useWaitingRequests()
   const [openedAt] = useState(() => Date.now())
   const notices: Notice[] = []
+  if (!isMentor(role)) {
+    const latest = mine.row ? [...mine.row.days.values()].filter((d) => d.sessions.length || d.rsvp).pop() : undefined
+    if (latest?.stillIn) {
+      notices.push({ tone: 'warn', text: `You didn't check out on ${dayLabel(latest.day)}. Ask a mentor to add your check-out so your hours count.` })
+    }
+    return notices
+  }
   const last = report.days[report.days.length - 1]
   const stillIn = last ? report.rows.filter((row) => row.days.get(last)?.stillIn).length : 0
   if (stillIn) {
@@ -176,7 +281,90 @@ export function useAttendanceAttention(): Notice[] {
   if (isLive && lastPull && openedAt - Date.parse(lastPull.created_at) > PULL_OVERDUE_HOURS * 3_600_000) {
     notices.push({ tone: 'crit', text: `Attendance was last pulled from Slack ${ago(lastPull.created_at, new Date(openedAt))}. Check the "Pull attendance from Slack" workflow in GitHub Actions.` })
   }
+  if (waiting.length) {
+    notices.push({ tone: 'warn', text: `${plural(waiting.length, 'request', 'requests')} for missing hours waiting. Approve or decline them at the bottom of Attendance.` })
+  }
   return notices
+}
+
+// ---------------------------------------------------------------------------
+// Requests for missing hours. Anyone asks about their own attendance; mentors
+// and admins see everyone's at the bottom of the tab and decide.
+
+/** Your requests, newest first. */
+export function useMyRequests(): AttendanceRequest[] {
+  const { id } = useSession()
+  const people = peopleTable.useRows()
+  const members = membersTable.useRows()
+  const requests = requestsTable.useRows()
+  const person = findMyPerson(people, members, id)
+  return person ? requests.filter((r) => r.person_id === person.id).sort((a, b) => b.created_at.localeCompare(a.created_at)) : []
+}
+
+/** Requests waiting for a mentor, oldest first. */
+export function useWaitingRequests(): AttendanceRequest[] {
+  return requestsTable.useRows().filter((r) => r.status === 'pending')
+}
+
+/** Requests decided lately, newest first. */
+export function useDecidedRequests(limit = 5): AttendanceRequest[] {
+  const requests = requestsTable.useRows()
+  return requests
+    .filter((r) => r.status !== 'pending')
+    .sort((a, b) => (b.decided_at ?? '').localeCompare(a.decided_at ?? ''))
+    .slice(0, limit)
+}
+
+/** Ask for hours Jibble missed, for `person` (your own attendance row). */
+export async function requestHours(person: AttendancePerson, input: HoursRequestInput): Promise<Result<AttendanceRequest>> {
+  const problem = checkRequest(input, today())
+  if (problem) return fail(problem)
+  if (requestsTable.rows().some((r) => r.person_id === person.id && r.day === input.day && r.status === 'pending')) {
+    return fail(`You already asked about ${dayLabel(input.day)}. Take that request back first to change it.`)
+  }
+  const fields = {
+    person_id: person.id,
+    day: input.day,
+    in_at: input.inClock ? teamInstant(input.day, input.inClock) : null,
+    out_at: input.outClock ? teamInstant(input.day, input.outClock) : null,
+    note: input.note.trim(),
+  }
+  // The team database fills in the status and the rest, and doesn't let
+  // anyone set them; demo mode needs them here.
+  const row = isLive ? fields : { ...fields, status: 'pending' as const, decided_at: null, decided_by: null }
+  return requestsTable.insert(row as Fields<AttendanceRequest>)
+}
+
+/** Take back a request that's still waiting. */
+export async function cancelRequest(request: AttendanceRequest): Promise<Result> {
+  if (request.status !== 'pending') return fail('A mentor already decided that one.')
+  return requestsTable.remove(request.id)
+}
+
+/**
+ * Approve or decline a request (mentors and admins). Approving adds its
+ * times as check-ins and check-outs made by hand. In the team database a
+ * trigger does that in the same step (see the requests migration); demo
+ * mode does the same here.
+ */
+export async function decideRequest(request: AttendanceRequest, approve: boolean): Promise<Result<AttendanceRequest>> {
+  const me = currentUser()
+  if (!me || !isMentor(me.role)) return fail('Only mentors and admins can approve requests.')
+  if (request.status !== 'pending') return fail(`That request was already ${request.status}.`)
+  const status = approve ? 'approved' : 'declined'
+  if (isLive) return requestsTable.update(request.id, { status })
+
+  const result = await requestsTable.update(request.id, { status, decided_at: new Date().toISOString(), decided_by: me.id })
+  if (!result.ok || !approve) return result
+  for (const [direction, at] of [['in', request.in_at], ['out', request.out_at]] as const) {
+    if (!at) continue
+    const same = checksTable.rows().find((c) => c.person_id === request.person_id && c.direction === direction && Date.parse(c.at) === Date.parse(at))
+    const added = same
+      ? await checksTable.update(same.id, { ignored: false })
+      : await checksTable.insert({ person_id: request.person_id, direction, at, source: 'manual', ignored: false })
+    if (!added.ok) return added
+  }
+  return result
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +533,18 @@ export async function applyImport(plan: ImportPlan): Promise<Result<string>> {
 
 export type Sheet = 'points' | 'hours' | 'checks' | 'rsvps'
 
+/** What the sheets can be sorted by: a name, or a total. */
+export type SortBy = 'name' | 'points' | 'hours' | 'days'
+
+/** Each sheet starts sorted by its own total: Points by points, Hours by hours, the others by days here. */
+export const SHEET_SORT: Record<Sheet, SortBy> = { points: 'points', hours: 'hours', checks: 'days', rsvps: 'days' }
+
+/** Rows sorted most first (names A to Z), with ties in name order. */
+export function sortRows<R extends { person: { name: string }; points: number; hours: number; daysPresent: number }>(rows: R[], by: SortBy): R[] {
+  const value = (row: R) => (by === 'points' ? row.points : by === 'hours' ? row.hours : by === 'days' ? row.daysPresent : 0)
+  return [...rows].sort((a, b) => value(b) - value(a) || a.person.name.localeCompare(b.person.name))
+}
+
 /** What a day's cell shows on each sheet. */
 export function cellText(record: DayRecord | undefined, sheet: Sheet): string {
   if (!record) return ''
@@ -360,14 +560,17 @@ export function cellText(record: DayRecord | undefined, sheet: Sheet): string {
   }
 }
 
-/** A sheet as rows of cells, oldest day first, like the old spreadsheet. */
+/** A sheet as rows of cells, oldest day first, like the old spreadsheet, with every total: points, hours and days here. */
 export function sheetRows(report: Report<AttendancePerson>, sheet: Sheet): string[][] {
-  const total = (row: Report<AttendancePerson>['rows'][number]) =>
-    sheet === 'points' ? String(row.points) : sheet === 'hours' ? row.hours.toFixed(2) : String(row.daysPresent)
-  const totalName = sheet === 'points' ? 'Total' : sheet === 'hours' ? 'Total hours' : 'Days here'
   return [
-    ['Name', totalName, ...report.days],
-    ...report.rows.map((row) => [row.person.name, total(row), ...report.days.map((day) => cellText(row.days.get(day), sheet))]),
+    ['Name', 'Points', 'Hours', 'Days here', ...report.days],
+    ...report.rows.map((row) => [
+      row.person.name,
+      String(row.points),
+      row.hours.toFixed(2),
+      String(row.daysPresent),
+      ...report.days.map((day) => cellText(row.days.get(day), sheet)),
+    ]),
   ]
 }
 

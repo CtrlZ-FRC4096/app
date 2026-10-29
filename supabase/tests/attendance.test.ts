@@ -1,5 +1,6 @@
-// Permission rules for attendance. Only mentors and admins can see or
-// change any of it: it's personal information about students.
+// Permission rules for attendance. It's personal information about
+// students: mentors and admins see and change all of it, and everyone else
+// sees only their own (matched by Slack account) and changes nothing.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
@@ -19,14 +20,18 @@ beforeEach(async () => {
 })
 
 const TABLES = ['attendance_people', 'attendance_checks', 'attendance_rsvps', 'attendance_periods']
+/** The tables about people. The points periods are only names and dates. */
+const PERSONAL = ['attendance_people', 'attendance_checks', 'attendance_rsvps']
 
 describe('attendance', () => {
   it('can be read by mentors', async () => {
     for (const table of TABLES) expect(await db.as(mentor, `select * from public.${table}`)).toHaveLength(1)
   })
 
-  it("can't be read by students, even about themselves", async () => {
-    for (const table of TABLES) expect(await db.as(student, `select * from public.${table}`)).toEqual([])
+  it("can't be read by students about anyone else, though they can see the points periods", async () => {
+    // Riley's attendance row has a Slack ID that isn't the student's account.
+    for (const table of PERSONAL) expect(await db.as(student, `select * from public.${table}`)).toEqual([])
+    expect(await db.as(student, 'select name from public.attendance_periods')).toEqual([{ name: '2026 build season' }])
   })
 
   it("can't be read by someone who isn't signed in", async () => {
@@ -95,5 +100,45 @@ describe('attendance', () => {
     await expect(db.as(mentor, "insert into public.attendance_periods (name, first_day) values ('   ', '2026-01-03')")).rejects.toThrow(
       'violates check constraint',
     )
+  })
+})
+
+describe('your own attendance', () => {
+  let other: string
+
+  beforeEach(async () => {
+    // Link Riley's attendance row to the student's Slack account, and add someone else.
+    const [{ slack_user_id }] = await db.sql<{ slack_user_id: string }>('select slack_user_id from public.members where id = $1', [student])
+    await db.sql('update public.attendance_people set slack_user_id = $1 where id = $2', [slack_user_id, person])
+    const [row] = await db.as<{ id: string }>(mentor, "insert into public.attendance_people (slack_user_id, name) values ('U0JORDAN', 'Jordan Kim') returning id")
+    other = row.id
+    await db.as(mentor, "insert into public.attendance_checks (person_id, direction, at, source) values ($1, 'in', '2026-01-09T00:10:00Z', 'jibble')", [other])
+    await db.as(mentor, "insert into public.attendance_rsvps (person_id, day, coming, source) values ($1, '2026-01-08', false, 'poll')", [other])
+  })
+
+  it('can be read by the person it belongs to, and nobody else’s', async () => {
+    expect(await db.as(student, 'select id from public.attendance_people')).toEqual([{ id: person }])
+    expect(await db.as(student, 'select person_id from public.attendance_checks')).toEqual([{ person_id: person }])
+    expect(await db.as(student, 'select person_id from public.attendance_rsvps')).toEqual([{ person_id: person }])
+  })
+
+  it("can't be changed by the person it belongs to", async () => {
+    await expect(
+      db.as(student, "insert into public.attendance_checks (person_id, direction, at) values ($1, 'out', '2026-01-09T03:00:00Z')", [person]),
+    ).rejects.toThrow(PERMISSION_DENIED)
+    expect(await db.as(student, 'update public.attendance_rsvps set coming = false returning id')).toEqual([])
+    expect(await db.as(student, 'update public.attendance_checks set ignored = true returning id')).toEqual([])
+    expect(await db.as(student, "update public.attendance_people set name = 'Someone else' returning id")).toEqual([])
+    expect(await db.as(student, 'delete from public.attendance_checks returning id')).toEqual([])
+    expect(await db.sql('select count(*)::int as n from public.attendance_checks where person_id = $1 and not ignored', [person])).toEqual([{ n: 1 }])
+  })
+
+  it("can't be read once the person's access is switched off", async () => {
+    await db.switchOff(student)
+    for (const table of TABLES) expect(await db.as(student, `select * from public.${table}`)).toEqual([])
+  })
+
+  it('still shows mentors everyone', async () => {
+    expect(await db.as(mentor, 'select count(*)::int as n from public.attendance_people')).toEqual([{ n: 2 }])
   })
 })
