@@ -4,11 +4,11 @@ import { useMemberNames } from '../../core/members'
 import { isMentor } from '../../core/roles'
 import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
-import { Panel, Pill, Stepper } from '../../core/ui'
+import { Panel, Pick, Pill, Stepper } from '../../core/ui'
 import { systemsTable } from '../bom/data'
 import {
-  STATUS_LABEL, STATUS_TONE, camStockFor, canReadShape, markReadyToCam, shapesTable, changeJob, cutsTable, readShapes, removeJob, setJobStatus, sheetsTable, sheetsWithRoom,
-  stockTable, useBoard, useMadeParts, type BoardJob, type CamStock, type JobStatus,
+  STATUS_LABEL, STATUS_TONE, STEPS, camStockFor, camStockOf, canReadShape, cutsTable, editJob, markReadyToCam, readShapes, removeJob,
+  setJobStatus, shapesTable, sheetsTable, sheetsWithRoom, stockTable, useBoard, useMadeParts, type BoardJob, type CamStock, type JobStatus,
 } from './data'
 import { CamStockPicker } from './CamStockPicker'
 import { designChecks, inches, minutesText, routerMinutes, sizeText } from './geometry'
@@ -82,7 +82,9 @@ export function Board(props: { onOpenSheet: (id: string) => void }) {
           <p className="panel-body muted">Nothing cut in the last two weeks.</p>
         ) : (
           <div className="row-list">
-            {lately.map((b) => (
+            {lately.map((b) => editing === b.job.id ? (
+              <EditJobForm key={b.job.id} item={b} onDone={() => setEditing(null)} />
+            ) : (
               <div key={b.job.id} style={{ flexWrap: 'wrap' }}>
                 <Pill tone="ok">Cut</Pill>
                 <span style={{ minWidth: 0, flex: '1 1 220px', overflowWrap: 'anywhere' }}>
@@ -99,6 +101,7 @@ export function Board(props: { onOpenSheet: (id: string) => void }) {
                 >
                   Not cut yet
                 </button>
+                <button type="button" className="btn btn-sm" onClick={() => setEditing(b.job.id)}>Change</button>
               </div>
             ))}
           </div>
@@ -191,7 +194,12 @@ function JobRow(props: { item: BoardJob; onEdit: () => void; onOpenSheet: (id: s
       </span>
       <span className="toolbar" style={{ marginLeft: 'auto' }}>
         {job.status === 'cam' && <button type="button" className="btn btn-sm" onClick={() => void move('to_cut')}>CAM done</button>}
-        {job.status === 'to_cut' && <button type="button" className="btn btn-sm" onClick={() => void move('cutting')}>Start cutting</button>}
+        {job.status === 'to_cut' && (
+          <>
+            <button type="button" className="btn btn-sm" onClick={() => void move('cutting')}>Start cutting</button>
+            <button type="button" className="btn btn-sm" onClick={() => void move('cam')}>Back to CAM</button>
+          </>
+        )}
         {job.status === 'cutting' && (
           <>
             <button type="button" className="btn btn-sm btn-primary" onClick={() => void move('cut')}>Mark cut</button>
@@ -201,27 +209,31 @@ function JobRow(props: { item: BoardJob; onEdit: () => void; onOpenSheet: (id: s
         {!shape && canReadShape(part) && (
           <button type="button" className="btn btn-sm" disabled={reading} onClick={() => void readSize()}>{reading ? 'Reading…' : 'Read from Onshape'}</button>
         )}
+        <button type="button" className="btn btn-sm" onClick={props.onEdit}>Change</button>
       </span>
     </div>
   )
 }
 
-/** Change a job's quantity, stock or note. Mentors can also take it off the board. */
+/**
+ * Change a part on the board: which step it's at (forward or back), how
+ * many, what it's cut from, and its note. Mentors can also take it off.
+ */
 function EditJobForm(props: { item: BoardJob; onDone: () => void }) {
-  const { job, part } = props.item
+  const { job, part, stock } = props.item
   const user = useSession()
-  const stocks = stockTable.useRows()
+  const [status, setStatus] = useState<JobStatus>(job.status)
   const [quantity, setQuantity] = useState(job.quantity)
-  const [stockId, setStockId] = useState(job.stock_id ?? '')
+  const [cutFrom, setCutFrom] = useState<CamStock>(() => camStockOf(stock))
   const [note, setNote] = useState(job.note ?? '')
   const [saving, setSaving] = useState(false)
 
   async function save(event: FormEvent) {
     event.preventDefault()
     setSaving(true)
-    const result = await changeJob(job, { quantity, stock_id: stockId || null, note })
+    const result = await editJob(job, { quantity, cutFrom, note, status })
     setSaving(false)
-    toast(result.ok ? 'Saved.' : result.error)
+    toast(result.ok ? (status === job.status ? 'Saved.' : `Saved, and moved to ${STATUS_LABEL[status]}.`) : result.error)
     if (result.ok) props.onDone()
   }
 
@@ -234,37 +246,29 @@ function EditJobForm(props: { item: BoardJob; onDone: () => void }) {
 
   return (
     <form onSubmit={save} style={{ display: 'grid', gap: 10 }} aria-label={`Change ${part?.name ?? 'job'}`}>
-      <strong>{part?.name ?? 'A deleted part'}</strong>
-      <div className="toolbar">
-        <div className="field">
-          How many
-          <Stepper id={`job-qty-${job.id}`} label="How many" min={1} value={quantity} onChange={setQuantity} />
-        </div>
-        <StockSelect id={`job-stock-${job.id}`} value={stockId} onChange={setStockId} stocks={stocks} />
+      <strong>Change {part?.name ?? 'a deleted part'}</strong>
+      <div className="field">
+        Step
+        <Pick label="Step" options={STEPS.map((s) => STATUS_LABEL[s])} value={STATUS_LABEL[status]} onChange={(label) => setStatus(STEPS.find((s) => STATUS_LABEL[s] === label) ?? status)} />
       </div>
+      {job.status === 'cut' && status !== 'cut' && (
+        <span className="note">Cuts already recorded on sheets stay. Delete them on the sheet if they weren't cut.</span>
+      )}
+      <div className="field">
+        How many
+        <Stepper id={`job-qty-${job.id}`} label="How many" min={1} value={quantity} onChange={setQuantity} />
+      </div>
+      <CamStockPicker id={`job-cut-from-${job.id}`} value={cutFrom} onChange={setCutFrom} />
       <label className="field" htmlFor={`job-note-${job.id}`}>
         Note (optional)
         <input id={`job-note-${job.id}`} className="input" value={note} maxLength={300} onChange={(e) => setNote(e.target.value)} placeholder="Spare, rush for Saturday…" />
       </label>
       <div className="toolbar">
-        <button type="submit" className="btn btn-primary btn-sm" disabled={saving}>Save</button>
+        <button type="submit" className="btn btn-primary btn-sm" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
         <button type="button" className="btn btn-sm" onClick={props.onDone}>Cancel</button>
         {isMentor(user.role) && <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={() => void remove()}>Take off the board</button>}
       </div>
     </form>
-  )
-}
-
-/** Pick a kind of stock, or none yet. */
-function StockSelect(props: { id: string; value: string; onChange: (id: string) => void; stocks: { id: string; name: string }[]; label?: string }) {
-  return (
-    <label className="field" htmlFor={props.id}>
-      {props.label ?? 'Cut from'}
-      <select id={props.id} className="input" value={props.value} onChange={(e) => props.onChange(e.target.value)}>
-        <option value="">Not picked yet</option>
-        {props.stocks.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-      </select>
-    </label>
   )
 }
 

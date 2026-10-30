@@ -49,10 +49,10 @@ Parts whose shape hasn't been read yet are read first, if you say so: the panel 
 
 Shapes and layouts come through the `onshape` server function (`supabase/functions/onshape/`), which holds the team's keys:
 
-- **shapes** reads parts' edges (`/parts/.../tessellatededges`) and works out each one's size, outline, cut length and the measurements the checks use (`shape.ts`). It costs one call for the Part Studio's part versions, then one per part that changed since it was last read.
+- **shapes** reads parts' edges (`/partstudios/.../tessellatededges`) and works out each one's size, outline, cut length and the measurements the checks use (`shape.ts`). Every part asked for in a Part Studio comes back in one call (one per configuration), however many there are.
 - **layout** reads where every part sits in the layout assembly (`/assemblies/...`, each part's place as a matrix). One call.
 
-Onshape limits API calls per year, so Onshape is only asked when someone presses a button, and what comes back is kept. **Update sizes from Onshape** only reads parts that changed. Each answer says how many calls it used.
+Onshape limits API calls per year, so Onshape is only asked when someone presses a button, and what comes back is kept. Onshape has no way to send many different requests as one, but reading shapes a Part Studio at a time does the same job: **Update sizes from Onshape** reads every part on the board with one call per Part Studio. Each answer says how many calls it used.
 
 Onshape's published API (checked October 2026) has nothing for CAM Studio's toolpaths, times or G-code, so the time is worked out from the outline: once round every loop per pass, at the stock's feed. It leaves out pockets, moving between cuts and tool changes, so treat it as a lower bound.
 

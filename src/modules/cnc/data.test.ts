@@ -6,7 +6,7 @@ import { setDemoRole } from '../../core/demo'
 import { partsTable, systemsTable } from '../bom/data'
 import {
   addJob, addManualCut, addSheet, addStock, boardGroups, canRemoveCut, changeJob, changeSheet, cncSummary, cutLately, cutsTable, jobsTable,
-  addStockFromOnshape, camStockFor, markReadyToCam, onshapeMadeParts, plateStock, partForOnshape, planLayout, planRoom, planStockImport, readLayout, shapeReadCalls, readShapes, readSheet, readStock, removeCut, removeJob, removeStock, saveRoomPlan,
+  addStockFromOnshape, camStockFor, camStockOf, editJob, markReadyToCam, onshapeMadeParts, plateStock, partForOnshape, planLayout, planRoom, planStockImport, readLayout, shapeReadCalls, readShapes, readSheet, readStock, removeCut, removeJob, removeStock, saveRoomPlan,
   setJobStatus, shapesTable, sheetForm, sheetsTable, sheetsWithRoom, splitRemnant, stockForm, stockTable,
   type Cut, type Job, type ManualCut, type OnshapePlacement, type Shape, type Sheet,
 } from './data'
@@ -155,17 +155,15 @@ describe('the CNC board', () => {
 })
 
 describe('shapes from Onshape', () => {
-  it("doesn't read a shape again if it hasn't changed", async () => {
-    const result = await readShapes([part(SIDE_PLATE)])
-    expect(result).toEqual({ ok: true, value: "Nothing new to read from Onshape. 1 part hasn’t changed. That used 1 Onshape API call." })
+  it('reads every part in a Part Studio with one call, saving new shapes and updating old ones', async () => {
+    const result = await readShapes([part(SIDE_PLATE), part('4096-26-INT-002'), part('4096-26-INT-003')])
+    expect(result).toEqual({ ok: true, value: 'Read 3 parts from Onshape. That used 1 Onshape API call.' })
+    expect(shapesTable.rows().map((s) => s.part_id)).toEqual([part(SIDE_PLATE).id, part('4096-26-INT-002').id, part('4096-26-INT-003').id])
   })
 
-  it('reads a shape not read before, and says which parts are gone from Onshape', async () => {
-    const shape = shapesTable.rows()[0]
-    await shapesTable.remove(shape.id)
-    const result = await readShapes([part(SIDE_PLATE), part('4096-26-INT-002'), part('4096-26-INT-004')])
-    expect(result).toEqual({ ok: true, value: 'Read 2 parts from Onshape. 1 part isn’t in Onshape any more. That used 3 Onshape API calls.' })
-    expect(shapesTable.rows().map((s) => s.part_id)).toEqual([part(SIDE_PLATE).id, part('4096-26-INT-002').id])
+  it('says which parts are gone from Onshape', async () => {
+    const result = await readShapes([part(SIDE_PLATE), part('4096-26-INT-004')])
+    expect(result).toEqual({ ok: true, value: 'Read 1 part from Onshape. 1 part isn’t in Onshape any more. That used 1 Onshape API call.' })
   })
 
   it('says when parts were typed in, so there is nothing to read', async () => {
@@ -382,8 +380,9 @@ describe('importing stock from Onshape', () => {
   it('only looks at made parts from Onshape, and counts the API calls to read them', () => {
     const fromOnshape = onshapeMadeParts(partsTable.rows())
     expect(fromOnshape.map((p) => p.part_number)).toEqual(['4096-26-INT-001', '4096-26-INT-002', '4096-26-INT-003'])
-    // One Part Studio, plus one call per part.
-    expect(shapeReadCalls(fromOnshape)).toBe(4)
+    // One Part Studio: one call, however many parts.
+    expect(shapeReadCalls(fromOnshape)).toBe(1)
+    expect(shapeReadCalls([...fromOnshape, { ...fromOnshape[0], onshape_id: `${fromOnshape[0].onshape_id}?size=2` }])).toBe(2)
   })
 
   it('adds the plates picked, which anyone can do', async () => {
@@ -440,5 +439,36 @@ describe('flagging parts ready to CAM', () => {
     expect(await markReadyToCam(part('4096-26-DRV-002'), 4, { stockId: stockByCode('AT2X1').id })).toMatchObject({ ok: true, value: { stock: { code: 'AT2X1' } } })
     expect(await markReadyToCam(part('4096-26-INT-003'), 4, { stockId: null })).toMatchObject({ ok: true, value: { stock: null, job: { stock_id: null } } })
     expect(await markReadyToCam(part('4096-26-INT-004'), 1, { stockId: null })).toMatchObject({ ok: false, error: expect.stringContaining('bought') })
+  })
+})
+
+describe('changing a part on the board', () => {
+  it('starts from its plate, or its stock if it is not an aluminum or polycarbonate plate', () => {
+    expect(camStockOf(stockByCode('AL250'))).toEqual({ plate: 'aluminum', thickness: 0.25 })
+    expect(camStockOf(stockByCode('PC125'))).toEqual({ plate: 'polycarbonate', thickness: 0.125 })
+    expect(camStockOf(stockByCode('AT2X1'))).toEqual({ stockId: stockByCode('AT2X1').id })
+    expect(camStockOf(undefined)).toEqual({ stockId: null })
+  })
+
+  it('moves a part back a step, and changes how many and the plate, adding the plate if needed', async () => {
+    const job = jobFor(SIDE_PLATE, 'to_cut')
+    const result = await editJob(job, { quantity: 4, cutFrom: { plate: 'aluminum', thickness: 0.1875 }, note: 'Thinner', status: 'cam' })
+    expect(result).toMatchObject({ ok: true, value: { status: 'cam', quantity: 4, note: 'Thinner', stock_id: stockByCode('AL188').id } })
+    expect(stockByCode('AL188').name).toBe('3/16 in aluminum plate')
+  })
+
+  it('moves a cut part back, and keeps the step when it is the same', async () => {
+    const done = jobFor(SIDE_PLATE, 'cut')
+    expect(await editJob(done, { quantity: 2, cutFrom: camStockOf(stockByCode('AL250')), note: '', status: 'cutting' })).toMatchObject({ ok: true, value: { status: 'cutting' } })
+    const rails = jobFor('4096-26-DRV-002', 'to_cut')
+    expect(await editJob(rails, { quantity: 6, cutFrom: { stockId: rails.stock_id }, note: '', status: 'to_cut' })).toMatchObject({ ok: true, value: { status: 'to_cut', quantity: 6 } })
+  })
+
+  it("refuses a bad quantity or a missing thickness, and changes nothing", async () => {
+    const job = jobFor(SIDE_PLATE, 'to_cut')
+    expect(await editJob(job, { quantity: 0, cutFrom: { plate: 'aluminum', thickness: 0.5 }, note: '', status: 'cam' })).toMatchObject({ ok: false })
+    expect(await editJob(job, { quantity: 1, cutFrom: { plate: 'aluminum', thickness: 0 }, note: '', status: 'cam' })).toMatchObject({ ok: false })
+    expect(jobFor(SIDE_PLATE, 'to_cut')).toEqual(job)
+    expect(stockTable.rows().some((s) => s.code === 'AL500')).toBe(false)
   })
 })

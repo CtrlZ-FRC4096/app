@@ -353,10 +353,10 @@ export function onshapeMadeParts(parts: Part[]): (Part & { onshape_id: string; o
   return parts.filter((p) => p.kind === 'made' && !p.removed_in_onshape).filter(canReadShape)
 }
 
-/** About how many Onshape API calls reading these parts' shapes takes: one per Part Studio, plus one per part. */
+/** How many Onshape API calls reading these parts' shapes takes: one per Part Studio (and configuration), however many parts. */
 export function shapeReadCalls(parts: Part[]): number {
   const readable = parts.filter(canReadShape)
-  return new Set(readable.map((p) => p.onshape_url)).size + readable.length
+  return new Set(readable.map((p) => `${p.onshape_url} ${p.onshape_id.split('?')[1] ?? ''}`)).size
 }
 
 /** Is this stock the same plate: the same material and thickness? */
@@ -621,6 +621,38 @@ export async function changeJob(job: Job, changes: { quantity: number; stock_id:
   return jobsTable.update(job.id, { quantity: changes.quantity, stock_id: changes.stock_id, note: text(changes.note) })
 }
 
+/** What a job's change form starts with: its plate's material and thickness, or the stock itself if it isn't an aluminum or polycarbonate plate. */
+export function camStockOf(stock: Stock | undefined): CamStock {
+  if (stock?.kind === 'plate' && stock.thickness_in) {
+    const words = materialWords(`${stock.material} ${stock.name}`)
+    const material = (['aluminum', 'polycarbonate'] as const).find((m) => words.has(m))
+    if (material) return { plate: material, thickness: stock.thickness_in }
+  }
+  return { stockId: stock?.id ?? null }
+}
+
+/**
+ * Change a job on the board: how many, what it's cut from (a plate not in
+ * the stock list yet is added), its note, and which step it's at, forward
+ * or back. Moving a cut job back leaves the cuts recorded on sheets.
+ */
+export async function editJob(job: Job, changes: { quantity: number; cutFrom: CamStock; note: string; status: JobStatus }): Promise<Result<Job>> {
+  const problem = checkQuantity(changes.quantity) ?? (changes.note.trim().length > 300 ? `Keep the note under 300 characters. This one is ${changes.note.trim().length}.` : null)
+  if (problem) return fail(problem)
+  let stockId = 'stockId' in changes.cutFrom ? changes.cutFrom.stockId : null
+  if ('plate' in changes.cutFrom) {
+    const found = await stockForPlate(changes.cutFrom.plate, changes.cutFrom.thickness)
+    if (!found.ok) return found
+    stockId = found.value.id
+  }
+  const changed = await changeJob(job, { quantity: changes.quantity, stock_id: stockId, note: changes.note })
+  if (!changed.ok || changes.status === job.status) return changed
+  return setJobStatus(changed.value, changes.status)
+}
+
+/** The steps a job goes through, in order. */
+export const STEPS: JobStatus[] = ['cam', 'to_cut', 'cutting', 'cut']
+
 /** Take a job off the board. Mentors only: the database enforces this too. */
 export async function removeJob(job: Job): Promise<Result> {
   const user = currentUser()
@@ -665,12 +697,14 @@ export type OnshapeShape = Omit<Shape, keyof Row | 'part_id' | 'read_at' | 'read
 /** What the onshape server function sends back for a `shapes` request. */
 export interface OnshapeShapes {
   shapes: OnshapeShape[]
-  unchanged: string[]
+  /** onshape_ids of parts no longer in Onshape. */
   missing: string[]
+  /** How many Onshape API calls it took. */
+  calls: number
 }
 
 /** The most parts one request reads. The same as MOST_SHAPES in supabase/functions/onshape/onshape.ts. */
-const MOST_SHAPES = 25
+const MOST_SHAPES = 100
 
 /** Can this part's shape be read from Onshape? Only parts imported from Onshape know which part they are. */
 export function canReadShape(part: Part | undefined): part is Part & { onshape_id: string; onshape_url: string } {
@@ -686,9 +720,9 @@ async function saveShape(part: Part, shape: OnshapeShape): Promise<Result<Shape>
 }
 
 /**
- * Read parts' shapes from Onshape and save them. Parts read before are
- * only read again if they've changed in Onshape. Each Part Studio costs one
- * of the team's yearly Onshape API calls, plus one per part read.
+ * Read parts' shapes from Onshape and save them. All the parts in a Part
+ * Studio are read together with one of the team's yearly Onshape API calls
+ * (one per configuration), however many there are.
  */
 export async function readShapes(parts: Part[]): Promise<Result<string>> {
   const readable = parts.filter(canReadShape)
@@ -698,60 +732,54 @@ export async function readShapes(parts: Part[]): Promise<Result<string>> {
 
   let calls = 0
   let read = 0
-  let unchanged = 0
   let missing = 0
   for (const [url, studioParts] of byStudio) {
-    for (let i = 0; i < studioParts.length; i += MOST_SHAPES) {
-      const chunk = studioParts.slice(i, i + MOST_SHAPES)
-      const known = (part: Part) => shapesTable.rows().find((s) => s.part_id === part.id && s.onshape_id === part.onshape_id)?.microversion ?? null
-      const body = { kind: 'shapes', url, parts: chunk.map((p) => ({ id: p.onshape_id, known: known(p) })) }
-      const answer = await callFunction<OnshapeShapes>('onshape', body, () => exampleShapes(chunk.map((p) => ({ id: p.onshape_id, known: known(p) }))))
+    // The same Onshape part can be in two systems: ask for it once.
+    const ids = [...new Set(studioParts.map((p) => p.onshape_id))]
+    for (let i = 0; i < ids.length; i += MOST_SHAPES) {
+      const chunk = ids.slice(i, i + MOST_SHAPES)
+      const answer = await callFunction<OnshapeShapes>('onshape', { kind: 'shapes', url, parts: chunk.map((id) => ({ id })) }, () => exampleShapes(chunk))
       if (!answer.ok) return answer
-      calls += 1 + answer.value.shapes.length
+      calls += answer.value.calls
       for (const shape of answer.value.shapes) {
-        for (const part of chunk.filter((p) => p.onshape_id === shape.onshape_id)) {
+        for (const part of studioParts.filter((p) => p.onshape_id === shape.onshape_id)) {
           const saved = await saveShape(part, shape)
           if (!saved.ok) return saved
           read += 1
         }
       }
-      unchanged += answer.value.unchanged.length
       missing += answer.value.missing.length
     }
   }
-  const said = [read ? `Read ${plural(read, 'part', 'parts')} from Onshape` : 'Nothing new to read from Onshape']
-  if (unchanged) said.push(`${plural(unchanged, 'part hasn’t', 'parts haven’t')} changed`)
+  const said = [read ? `Read ${plural(read, 'part', 'parts')} from Onshape` : 'Nothing read from Onshape']
   if (missing) said.push(`${plural(missing, 'part isn’t', 'parts aren’t')} in Onshape any more`)
   return ok(`${said.join('. ')}. That used ${plural(calls, 'Onshape API call', 'Onshape API calls')}.`)
 }
 
 /**
- * What the example Onshape answers for shapes: the side plate (which hasn't
- * changed since it was read), and the Intake's other made parts, which
- * aren't plates: a 1/2 in hex shaft and a 3/4 in nylon spacer.
+ * What the example Onshape answers for shapes, in one call: the side plate,
+ * and the Intake's other made parts, which aren't plates: a 1/2 in hex
+ * shaft and a 3/4 in nylon spacer.
  */
-function exampleShapes(parts: { id: string; known: string | null }[]): OnshapeShapes {
-  const answer: OnshapeShapes = { shapes: [], unchanged: [], missing: [] }
+function exampleShapes(ids: string[]): OnshapeShapes {
+  const answer: OnshapeShapes = { shapes: [], missing: [], calls: 1 }
   const [plate] = EXAMPLE_SHAPES
   const solid = (id: string, thickness: number, width: number, length: number): OnshapeShape => ({
-    onshape_id: id, microversion: 'example-1', axis: 'z', low_in: 0, thickness_in: thickness, width_in: width, length_in: length,
+    onshape_id: id, microversion: null, axis: 'z', low_in: 0, thickness_in: thickness, width_in: width, length_in: length,
     outline: [[0, 0, length, 0, length, width, 0, width]], cut_length_in: 2 * (length + width),
     smallest_hole_in: null, tightest_inside_radius_in: null, sharp_inside_corners: 0, narrowest_gap_in: null, pockets: false,
   })
-  const others = new Map<string, OnshapeShape>([
-    [demoPart('4096-26-INT-002').onshape_id!, solid(demoPart('4096-26-INT-002').onshape_id!, 0.5, 0.577, 12)],
-    [demoPart('4096-26-INT-003').onshape_id!, solid(demoPart('4096-26-INT-003').onshape_id!, 0.75, 0.75, 1)],
+  const shaft = demoPart('4096-26-INT-002').onshape_id!
+  const spacer = demoPart('4096-26-INT-003').onshape_id!
+  const shapes = new Map<string, OnshapeShape>([
+    [plate.onshape_id, shapeFields(plate)],
+    [shaft, solid(shaft, 0.5, 0.577, 12)],
+    [spacer, solid(spacer, 0.75, 0.75, 1)],
   ])
-  for (const part of parts) {
-    if (part.id === plate.onshape_id) {
-      if (part.known === plate.microversion) answer.unchanged.push(part.id)
-      else answer.shapes.push(shapeFields(plate))
-    } else if (others.has(part.id)) {
-      if (part.known === 'example-1') answer.unchanged.push(part.id)
-      else answer.shapes.push(others.get(part.id)!)
-    } else {
-      answer.missing.push(part.id)
-    }
+  for (const id of ids) {
+    const shape = shapes.get(id)
+    if (shape) answer.shapes.push(shape)
+    else answer.missing.push(id)
   }
   return answer
 }

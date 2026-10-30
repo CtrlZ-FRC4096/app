@@ -146,7 +146,7 @@ function ImportStock(props: { onDone: () => void }) {
             {plan.unread.length > 8 && ` and ${plan.unread.length - 8} more`}.
           </span>
           <span className="note">
-            Reading them uses about {plural(shapeReadCalls(plan.unread), 'Onshape API call', 'Onshape API calls')} (one per Part Studio, plus one per part).
+            Reading them uses about {plural(shapeReadCalls(plan.unread), 'Onshape API call', 'Onshape API calls')} (one per Part Studio, however many parts are in it).
             It's only done once: their sizes and checks show on the board after.
           </span>
           <span className="toolbar">
