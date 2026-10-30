@@ -19,6 +19,7 @@ import { calendar } from './calendar'
 import { attendance } from './attendance'
 import { members } from './members'
 import { training } from './training'
+import { feedback } from './feedback'
 import { example } from './example'
 
-export const modules: ModuleDefinition[] = [inventory, bom, scouting, status, calendar, attendance, members, training, example]
+export const modules: ModuleDefinition[] = [inventory, bom, scouting, status, calendar, attendance, members, training, feedback, example]

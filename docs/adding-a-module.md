@@ -46,7 +46,7 @@ Add one import and one entry to `src/modules/index.ts`:
 ```ts
 import { pitMap } from './pit-map'
 
-export const modules: ModuleDefinition[] = [inventory, bom, scouting, status, pitMap, calendar, attendance, members, training, example]
+export const modules: ModuleDefinition[] = [inventory, bom, scouting, status, pitMap, calendar, attendance, members, training, feedback, example]
 ```
 
 This file is shared, so this line needs a mentor's approval.
