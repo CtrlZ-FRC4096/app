@@ -4,9 +4,11 @@
  * TypeScript, no Deno.
  *
  * The app can only ask for a system's parts, from a link to an assembly or
- * Part Studio on cad.onshape.com, or check that the keys work. So the
- * team's Onshape keys can't be used for anything else.
+ * Part Studio on cad.onshape.com; for parts' shapes, for the CNC router;
+ * for where parts sit in a sheet's layout assembly; or check that the keys
+ * work. So the team's Onshape keys can't be used for anything else.
  */
+import type { OnshapeShape } from './shape.ts'
 
 export const ONSHAPE = 'https://cad.onshape.com'
 
@@ -53,15 +55,55 @@ export function parseOnshapeLink(url: string): OnshapeLink | null {
   return m ? { documentId: m[1], wvm: m[2] as OnshapeLink['wvm'], wvmId: m[3], elementId: m[4] } : null
 }
 
+/** A part to read the shape of, from a `shapes` request. */
+export interface ShapeAsk {
+  /** The part's onshape_id from the BOM: document/tab/part, and ?configuration if it has one. */
+  onshape_id: string
+  partId: string
+  configuration: string | null
+  /** The part's version when it was last read, to skip it if it hasn't changed. */
+  known: string | null
+}
+
+/** The most parts one `shapes` request can read: each costs one of the team's yearly Onshape API calls. */
+export const MOST_SHAPES = 25
+
+export type OnshapeRequest =
+  | { kind: 'check' }
+  | { kind: 'bom'; link: OnshapeLink }
+  | { kind: 'shapes'; link: OnshapeLink; parts: ShapeAsk[] }
+  | { kind: 'layout'; link: OnshapeLink }
+
+const NOT_A_LINK = "That isn't a link to an Onshape tab. Open it in Onshape and copy the address from the browser."
+
 /** What the app asked for, or why it isn't allowed. */
-export function onshapeRequest(body: unknown): { kind: 'check' } | { kind: 'bom'; link: OnshapeLink } | { error: string } {
+export function onshapeRequest(body: unknown): OnshapeRequest | { error: string } {
   const r = (body ?? {}) as Record<string, unknown>
   if (r.kind === 'check') return { kind: 'check' }
-  if (r.kind !== 'bom') return { error: 'Ask for a bom, with a system’s Onshape link, or check.' }
+  if (r.kind !== 'bom' && r.kind !== 'shapes' && r.kind !== 'layout') {
+    return { error: 'Ask for a bom (with a system’s Onshape link), shapes (with a Part Studio link and parts), a layout (with an assembly link), or check.' }
+  }
   const link = typeof r.url === 'string' ? parseOnshapeLink(r.url) : null
-  return link
-    ? { kind: 'bom', link }
-    : { error: "That isn't a link to an Onshape tab. Open the system's assembly in Onshape and copy the address from the browser." }
+  if (!link) return { error: r.kind === 'bom' ? "That isn't a link to an Onshape tab. Open the system's assembly in Onshape and copy the address from the browser." : NOT_A_LINK }
+  if (r.kind === 'bom' || r.kind === 'layout') return { kind: r.kind, link }
+
+  const asked = Array.isArray(r.parts) ? r.parts : []
+  if (asked.length === 0 || asked.length > MOST_SHAPES) return { error: `Ask for 1 to ${MOST_SHAPES} parts at a time.` }
+  const parts: ShapeAsk[] = []
+  for (const part of asked as Record<string, unknown>[]) {
+    const id = typeof part?.id === 'string' ? part.id : ''
+    const ask = shapeAsk(id, link, typeof part?.known === 'string' && part.known.length <= 100 ? part.known : null)
+    if (!ask) return { error: `${id || 'A part'} isn't a part in that Part Studio. Import the system from Onshape again.` }
+    parts.push(ask)
+  }
+  return { kind: 'shapes', link, parts }
+}
+
+/** Read a BOM onshape_id (document/tab/part?configuration) for a part in the linked tab, or null if it isn't one. */
+export function shapeAsk(onshapeId: string, link: OnshapeLink, known: string | null = null): ShapeAsk | null {
+  const m = onshapeId.match(/^([0-9a-f]{24})\/([0-9a-f]{24})\/([^/?#\s]{1,64})(?:\?(.{1,500}))?$/)
+  if (!m || m[1] !== link.documentId || m[2] !== link.elementId) return null
+  return { onshape_id: onshapeId, partId: m[3], configuration: m[4] ?? null, known }
 }
 
 const base = (link: OnshapeLink) => `/d/${link.documentId}/${link.wvm}/${link.wvmId}`
@@ -74,6 +116,12 @@ export const paths = {
   // indented=false flattens sub-assemblies into one list of parts.
   bom: (link: OnshapeLink) => `/api/v6/assemblies${base(link)}/e/${link.elementId}/bom?indented=false`,
   parts: (link: OnshapeLink) => `/api/v9/parts${base(link)}/e/${link.elementId}`,
+  // Every edge of one part, as lines of points: its shape for the CNC router.
+  edges: (link: OnshapeLink, part: Pick<ShapeAsk, 'partId' | 'configuration'>) =>
+    `/api/v6/parts${base(link)}/e/${link.elementId}/partid/${encodeURIComponent(part.partId)}/tessellatededges` +
+    (part.configuration ? `?configuration=${encodeURIComponent(part.configuration)}` : ''),
+  // Where every part in an assembly sits, for a sheet's layout.
+  assembly: (link: OnshapeLink) => `/api/v6/assemblies${base(link)}/e/${link.elementId}?excludeSuppressed=true`,
 }
 
 // Onshape's IDs for its standard properties, as BOM headers use them.
@@ -205,6 +253,101 @@ export function partStudioLines(parts: unknown, link: OnshapeLink): OnshapeLine[
       standard: false,
       url: tabUrl(link.documentId, link.wvm, link.wvmId, link.elementId),
     }))
+}
+
+/** Each part's version in a Part Studio, from the same answer partStudioLines reads. */
+export function partVersions(parts: unknown): Map<string, string> {
+  const versions = new Map<string, string>()
+  for (const p of Array.isArray(parts) ? (parts as { partId?: unknown; microversionId?: unknown }[]) : []) {
+    if (typeof p.partId === 'string') versions.set(p.partId, typeof p.microversionId === 'string' ? p.microversionId : '')
+  }
+  return versions
+}
+
+/** The answer to a `shapes` request. Parts that haven't changed since `known` aren't read again. */
+export interface OnshapeShapes {
+  shapes: OnshapeShape[]
+  /** onshape_ids of parts that haven't changed. */
+  unchanged: string[]
+  /** onshape_ids of parts no longer in the Part Studio. */
+  missing: string[]
+}
+
+/** Where one part sits in a layout assembly. */
+export interface OnshapePlacement {
+  /** Which Onshape part, the same way the BOM's onshape_id says it. */
+  onshape_id: string
+  /** The part's name in the assembly, like "Side plate <2>". */
+  name: string
+  /**
+   * How the part is moved and turned into place: 16 numbers, a 4 x 4
+   * matrix row by row, as Onshape gives it, but with the move (the 4th,
+   * 8th and 12th numbers) in inches.
+   */
+  transform: number[]
+}
+
+/** The answer to a `layout` request. */
+export interface OnshapeLayout {
+  placements: OnshapePlacement[]
+}
+
+interface AssemblyInstance {
+  id?: string
+  name?: string
+  type?: string
+  documentId?: string
+  elementId?: string
+  partId?: string
+  configuration?: string
+  suppressed?: boolean
+  isStandardContent?: boolean
+}
+interface Assembly {
+  documentId?: string
+  elementId?: string
+  configuration?: string
+  instances?: AssemblyInstance[]
+  occurrences?: { path?: string[]; transform?: number[]; hidden?: boolean }[]
+}
+
+/**
+ * Every part in a layout assembly, including inside sub-assemblies, with
+ * where it sits. Hidden and suppressed parts, and standard content like
+ * screws, are left out.
+ */
+export function layoutPlacements(definition: unknown): OnshapePlacement[] {
+  const d = (definition ?? {}) as { rootAssembly?: Assembly; subAssemblies?: Assembly[] }
+  const root = d.rootAssembly ?? {}
+  const subs = d.subAssemblies ?? []
+  const placements: OnshapePlacement[] = []
+  for (const occurrence of root.occurrences ?? []) {
+    const path = occurrence.path ?? []
+    const transform = occurrence.transform ?? []
+    if (path.length === 0 || occurrence.hidden || transform.length !== 16 || !transform.every(Number.isFinite)) continue
+    // Follow the path down through sub-assemblies to the part.
+    let instances = root.instances ?? []
+    let instance: AssemblyInstance | undefined
+    for (const [i, id] of path.entries()) {
+      instance = instances.find((x) => x.id === id)
+      if (!instance || instance.suppressed) break
+      if (i < path.length - 1) {
+        const sub =
+          subs.find((s) => s.documentId === instance!.documentId && s.elementId === instance!.elementId && (s.configuration ?? '') === (instance!.configuration ?? '')) ??
+          subs.find((s) => s.documentId === instance!.documentId && s.elementId === instance!.elementId)
+        instances = sub?.instances ?? []
+      }
+    }
+    if (!instance || instance.suppressed || instance.type !== 'Part' || instance.isStandardContent) continue
+    if (!instance.documentId || !instance.elementId || !instance.partId) continue
+    const configuration = instance.configuration && instance.configuration !== 'default' ? `?${instance.configuration}` : ''
+    placements.push({
+      onshape_id: `${instance.documentId}/${instance.elementId}/${instance.partId}${configuration}`,
+      name: text(instance.name) ?? 'Unnamed part',
+      transform: transform.map((n, i) => (i === 3 || i === 7 || i === 11 ? n / 0.0254 : n)),
+    })
+  }
+  return placements
 }
 
 /** What to tell the person when Onshape says no. */
