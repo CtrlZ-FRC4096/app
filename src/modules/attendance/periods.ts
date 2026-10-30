@@ -1,11 +1,11 @@
 /**
  * Points periods: the dates attendance points are counted over.
  *
- * Mentors save periods like "2027 build season" (data.ts). Everyone starts a
- * period with the base points and only its meetings count, so last season's
- * points don't carry into this one. The tab opens on the period that
- * includes today; a mentor can switch to another period, all time, or dates
- * they pick.
+ * Mentors and admins save periods like "Fall 2026" or "2027 build season"
+ * (data.ts). Everyone starts a period with the base points and only its
+ * meetings count, so last season's points don't carry into this one. The
+ * tab opens on the most recent period (see latestPeriod); anyone can switch
+ * to another saved period, all time, or dates they pick.
  */
 import { dateLabel } from './time'
 
@@ -18,7 +18,7 @@ export interface Period {
   last_day: string | null
 }
 
-/** What to count over: null for the period that includes today, or what a mentor picked. */
+/** What to count over: null for the most recent period, or what someone picked. */
 export type Counting = null | { kind: 'all' } | { kind: 'period'; id: string } | { kind: 'custom'; from: string; to: string }
 
 export interface CountRange<P extends Period> {
@@ -41,12 +41,23 @@ export function periodOn<P extends Period>(periods: P[], day: string): P | null 
   return periods.filter((p) => covers(p, day)).sort((a, b) => b.first_day.localeCompare(a.first_day) || end(a).localeCompare(end(b)))[0] ?? null
 }
 
-/** The dates to count. A picked period that has since been removed falls back to today's. */
+/**
+ * The period the tab opens on: the one that includes today (the narrowest,
+ * if several do), or else the most recent one that has started, like last
+ * season while the next one hasn't begun. Null if none has started yet.
+ */
+export function latestPeriod<P extends Period>(periods: P[], today: string): P | null {
+  const end = (p: Period) => p.last_day ?? '9999-12-31'
+  const started = periods.filter((p) => p.first_day <= today).sort((a, b) => b.first_day.localeCompare(a.first_day) || end(b).localeCompare(end(a)))
+  return periodOn(periods, today) ?? started[0] ?? null
+}
+
+/** The dates to count. A picked period that has since been removed falls back to the most recent one. */
 export function countRange<P extends Period>(counting: Counting, periods: P[], today: string): CountRange<P> {
   if (counting?.kind === 'all') return { choice: 'all', period: null }
   if (counting?.kind === 'custom') return { choice: 'custom', from: counting.from || undefined, to: counting.to || undefined, period: null }
   const picked = counting?.kind === 'period' ? periods.find((p) => p.id === counting.id) : undefined
-  const period = picked ?? periodOn(periods, today)
+  const period = picked ?? latestPeriod(periods, today)
   if (!period) return { choice: 'all', period: null }
   return { choice: period.id, from: period.first_day, to: period.last_day ?? undefined, period }
 }
