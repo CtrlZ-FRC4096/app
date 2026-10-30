@@ -125,7 +125,6 @@ function Shell({ user }: { user: User }) {
                 {group.modules.map((m) => (
                   <a key={m.id} className="menu-item" href={href(m.id)} aria-current={m.id === id ? 'page' : undefined}>
                     <span className="menu-item-name">{m.name}</span>
-                    <span className="menu-item-note">{m.purpose}</span>
                   </a>
                 ))}
               </Menu>

@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="robots" content="noindex" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <script>
+      // Put the saved colours on the page before anything is drawn, so a dark
+      // page never flashes white while the app loads. src/core/theme.ts saves
+      // the choice under this name; change both together.
+      try {
+        var choice = localStorage.getItem('ctrlz-app:theme:v1')
+        var dark = choice === '"Dark"' || (choice !== '"Light"' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+      } catch (e) {
+        // A private window can refuse to say. The device's setting still works.
+      }
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" />
