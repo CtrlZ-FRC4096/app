@@ -189,18 +189,16 @@ export function useReport(range: { from?: string; to?: string }, showHidden = fa
 // to another tab and back keeps it; reloading goes back to today's period.
 const countingStore = createStore<Counting>('attendance-counting', 1, () => null, { persist: false })
 
-/** Only mentors and admins pick the dates; everyone else always sees the period that includes today. */
-export function countingFor(role: Role, counting: Counting): Counting {
-  return isMentor(role) ? counting : null
-}
-
-/** The dates the tab counts points over, and (for mentors and admins) a way to change them. */
+/**
+ * The dates the tab counts points over, and a way to change them. It opens
+ * on the most recent period mentors saved (see latestPeriod in periods.ts);
+ * anyone can switch to another period, all time, or dates they pick.
+ */
 export function useCountRange(): CountRange<AttendancePeriod> & { set: (next: Counting) => void } {
-  const { role } = useSession()
   const periods = periodsTable.useRows()
   const counting = useStore(countingStore)
   const [day] = useState(today)
-  return { ...countRange(countingFor(role, counting), periods, day), set: countingStore.set }
+  return { ...countRange(counting, periods, day), set: countingStore.set }
 }
 
 // ---------------------------------------------------------------------------
@@ -234,7 +232,7 @@ export function useMyAttendance(range: { from?: string; to?: string }): { person
   return { person, row }
 }
 
-/** The points period that includes today, as dates, for the home page. */
+/** The most recent points period, as dates, for the home page. */
 function useTodaysPeriod(): { from?: string; to?: string } {
   const periods = periodsTable.useRows()
   const [day] = useState(today)

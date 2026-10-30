@@ -8,7 +8,6 @@ import { membersTable } from '../../core/members'
 import {
   addCheck,
   cancelRequest,
-  countingFor,
   decideRequest,
   findMyPerson,
   requestHours,
@@ -319,19 +318,21 @@ describe('requests for missing hours', () => {
 describe('which dates are counted', () => {
   afterEach(() => setDemoRole('student'))
 
-  it('lets only mentors and admins pick them; everyone else sees the period that includes today', () => {
-    expect(countingFor('mentor', { kind: 'all' })).toEqual({ kind: 'all' })
-    expect(countingFor('admin', { kind: 'custom', from: '2026-01-01', to: '' })).toEqual({ kind: 'custom', from: '2026-01-01', to: '' })
-    expect(countingFor('student', { kind: 'all' })).toBeNull()
+  it('shows everyone the date controls, opening on the most recent period', async () => {
+    const { default: AttendancePage } = await import('./AttendancePage')
+    for (const role of ['student', 'mentor'] as const) {
+      setDemoRole(role)
+      const page = renderToString(createElement(AttendancePage))
+      expect(page).toContain('Count points over')
+      expect(page).toContain('2026 build season')
+    }
   })
 
-  it('shows the date controls to mentors and admins only', async () => {
+  it('lets only mentors and admins save periods', async () => {
     const { default: AttendancePage } = await import('./AttendancePage')
     setDemoRole('student')
-    const student = renderToString(createElement(AttendancePage))
-    expect(student).not.toContain('Count points over')
-    expect(student).toContain('2026 build season')
-    setDemoRole('mentor')
-    expect(renderToString(createElement(AttendancePage))).toContain('Count points over')
+    expect(renderToString(createElement(AttendancePage))).not.toContain('>Periods<')
+    setDemoRole('admin')
+    expect(renderToString(createElement(AttendancePage))).toContain('>Periods<')
   })
 })

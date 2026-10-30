@@ -35,7 +35,7 @@ export default function AttendancePage() {
           ? "Who said they'd come, when they checked in and out, and the points from both. Pulled from the attendance channel's Slack poll and Jibble; fix mistakes by choosing a name."
           : "Your points and hours, from the attendance poll in Slack and your Jibble check-ins. Only you and the mentors can see them. If something's wrong, ask a mentor to fix it."}
       </PageHead>
-      {isMentor(role) && <RangePicker range={range} />}
+      <RangePicker range={range} />
       <RangeNote range={range} />
       <MyAttendance range={range} rangeName={rangeName} />
       {isMentor(role) && <TeamAttendance range={range} />}
@@ -45,7 +45,7 @@ export default function AttendancePage() {
   )
 }
 
-/** Mentors and admins: the dates points are counted over, a saved period, all time, or dates they pick. */
+/** The dates points are counted over: a period mentors saved, all time, or dates someone picks. Anyone can switch. */
 function RangePicker({ range }: { range: ReturnType<typeof useCountRange> }) {
   const periods = periodsTable.useRows()
   return (
