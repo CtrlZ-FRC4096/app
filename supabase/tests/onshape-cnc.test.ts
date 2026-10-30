@@ -3,8 +3,8 @@
 // layout assembly (layoutPlacements in onshape.ts). The sample answers have
 // the shape of Onshape's, cut down to what we read. Onshape works in meters.
 import { describe, expect, it } from 'vitest'
-import { layoutPlacements, MOST_SHAPES, onshapeRequest, partVersions, paths, shapeAsk } from '../functions/onshape/onshape.ts'
-import { readEdges, shapeFromEdges } from '../functions/onshape/shape.ts'
+import { byConfiguration, layoutPlacements, MOST_SHAPES, onshapeRequest, paths } from '../functions/onshape/onshape.ts'
+import { readBodies, readEdges, shapeFromEdges } from '../functions/onshape/shape.ts'
 
 const D = 'aaaaaaaaaaaaaaaaaaaaaaaa'
 const W = 'bbbbbbbbbbbbbbbbbbbbbbbb'
@@ -61,6 +61,13 @@ describe('readEdges', () => {
   it('skips what it cannot read', () => {
     expect(readEdges(null)).toEqual([])
     expect(readEdges([{ edges: [{ vertices: [[0, 0, 0]] }, { vertices: [['a', 0, 0], [1, 1, 1]] }] }])).toEqual([])
+  })
+
+  it('keeps each part apart, by its ID, when a Part Studio sends several', () => {
+    const line = (x: number) => ({ vertices: [[0, 0, 0], [x * 0.0254, 0, 0]] })
+    const bodies = readBodies([{ id: 'JHD', edges: [line(1)] }, { id: 'JKD', edges: [line(2), line(3)] }])
+    expect([...bodies.keys()]).toEqual(['JHD', 'JKD'])
+    expect(bodies.get('JKD')).toHaveLength(2)
   })
 })
 
@@ -143,13 +150,13 @@ describe('shapeFromEdges', () => {
 })
 
 describe('shapes requests', () => {
-  it('asks for parts in the linked Part Studio, with their versions', () => {
-    expect(onshapeRequest({ kind: 'shapes', url: URL, parts: [{ id: `${D}/${E}/JHD`, known: 'mv1' }, { id: `${D}/${E}/JKD?size=2` }] })).toEqual({
+  it('asks for parts in the linked Part Studio', () => {
+    expect(onshapeRequest({ kind: 'shapes', url: URL, parts: [{ id: `${D}/${E}/JHD` }, { id: `${D}/${E}/JKD?size=2` }] })).toEqual({
       kind: 'shapes',
       link,
       parts: [
-        { onshape_id: `${D}/${E}/JHD`, partId: 'JHD', configuration: null, known: 'mv1' },
-        { onshape_id: `${D}/${E}/JKD?size=2`, partId: 'JKD', configuration: 'size=2', known: null },
+        { onshape_id: `${D}/${E}/JHD`, partId: 'JHD', configuration: null },
+        { onshape_id: `${D}/${E}/JKD?size=2`, partId: 'JKD', configuration: 'size=2' },
       ],
     })
   })
@@ -163,14 +170,15 @@ describe('shapes requests', () => {
     expect(onshapeRequest({ kind: 'shapes', url: 'https://example.com', parts: [{ id: `${D}/${E}/JHD` }] })).toHaveProperty('error')
   })
 
-  it("asks Onshape for a part's edges, with its configuration", () => {
-    expect(paths.edges(link, { partId: 'JHD', configuration: null })).toBe(`/api/v6/parts/d/${D}/w/${W}/e/${E}/partid/JHD/tessellatededges`)
-    expect(paths.edges(link, shapeAsk(`${D}/${E}/JKD?size=2 in`, link)!)).toBe(`/api/v6/parts/d/${D}/w/${W}/e/${E}/partid/JKD/tessellatededges?configuration=size%3D2%20in`)
+  it("asks Onshape for every part's edges in a Part Studio in one call, with the configuration", () => {
+    expect(paths.studioEdges(link, ['JHD', 'JKD'], null)).toBe(`/api/v6/partstudios/d/${D}/w/${W}/e/${E}/tessellatededges?partId=JHD&partId=JKD`)
+    expect(paths.studioEdges(link, ['JKD'], 'size=2 in')).toBe(`/api/v6/partstudios/d/${D}/w/${W}/e/${E}/tessellatededges?partId=JKD&configuration=size%3D2%20in`)
   })
 
-  it("reads each part's version from the Part Studio's parts", () => {
-    expect(partVersions([{ partId: 'JHD', microversionId: 'mv1' }, { partId: 'JKD' }, { name: 'no id' }])).toEqual(new Map([['JHD', 'mv1'], ['JKD', '']]))
-    expect(partVersions(null)).toEqual(new Map())
+  it('makes one call per configuration, however many parts', () => {
+    const request = onshapeRequest({ kind: 'shapes', url: URL, parts: ['JAD', 'JBD', 'JCD?size=2', 'JDD', 'JED?size=2'].map((p) => ({ id: `${D}/${E}/${p}` })) })
+    if (!('parts' in request)) throw new Error('expected parts')
+    expect(byConfiguration(request.parts).map((g) => g.map((p) => p.partId))).toEqual([['JAD', 'JBD', 'JDD'], ['JCD', 'JED']])
   })
 })
 

@@ -5,9 +5,8 @@
 //   into one list) or Part Studio, so the app can import them. Called
 //   through src/modules/bom/data.ts. Two Onshape API calls: which tab it
 //   is, then its parts.
-// - shapes: parts' sizes and outlines, for the CNC module. One call for
-//   the Part Studio's part versions, then one per part that changed since
-//   the app last read it.
+// - shapes: parts' sizes and outlines, for the CNC module. One call for all
+//   the parts asked for in a Part Studio (one per configuration).
 // - layout: where each part sits in a sheet's layout assembly, for the CNC
 //   module. One call.
 //
@@ -16,17 +15,17 @@
 import { forMembers, reply } from '../_shared/members.ts'
 import {
   bomLines,
+  byConfiguration,
   createOnshape,
   layoutPlacements,
   onshapeRequest,
   partStudioLines,
-  partVersions,
   paths,
   type OnshapeBom,
   type OnshapeLayout,
   type OnshapeShapes,
 } from './onshape.ts'
-import { readEdges, shapeFromEdges } from './shape.ts'
+import { readBodies, shapeFromEdges } from './shape.ts'
 
 const accessKey = Deno.env.get('ONSHAPE_ACCESS_KEY') ?? ''
 const secretKey = Deno.env.get('ONSHAPE_SECRET_KEY') ?? ''
@@ -55,30 +54,25 @@ export default {
     }
 
     if (request.kind === 'shapes') {
+      // Every part asked for in one call per configuration, not one call each.
       const { link, parts } = request
-      const listed = await onshape(paths.parts(link))
-      if (!listed.ok) return reply({ error: listed.error }, listed.status)
-      const versions = partVersions(listed.data)
-      const answer: OnshapeShapes = { shapes: [], unchanged: [], missing: [] }
-      for (const part of parts) {
-        const version = versions.get(part.partId)
-        if (version === undefined) {
-          answer.missing.push(part.onshape_id)
-          continue
-        }
-        if (part.known && version && part.known === version) {
-          answer.unchanged.push(part.onshape_id)
-          continue
-        }
-        const edges = await onshape(paths.edges(link, part))
+      const answer: OnshapeShapes = { shapes: [], missing: [], calls: 0 }
+      for (const group of byConfiguration(parts)) {
+        const edges = await onshape(paths.studioEdges(link, group.map((p) => p.partId), group[0].configuration))
+        answer.calls += 1
         if (!edges.ok) {
-          if (edges.status === 404) answer.missing.push(part.onshape_id)
-          else return reply({ error: edges.error }, edges.status)
+          if (edges.status !== 404) return reply({ error: edges.error }, edges.status)
+          answer.missing.push(...group.map((p) => p.onshape_id))
           continue
         }
-        const shape = shapeFromEdges(readEdges(edges.data), part.onshape_id, version || null)
-        if (shape) answer.shapes.push(shape)
-        else answer.missing.push(part.onshape_id)
+        const bodies = readBodies(edges.data)
+        for (const part of group) {
+          // One part asked for, and one body back without an ID: that's it.
+          const found = bodies.get(part.partId) ?? (group.length === 1 && bodies.size === 1 ? [...bodies.values()][0] : undefined)
+          const shape = found ? shapeFromEdges(found, part.onshape_id, null) : null
+          if (shape) answer.shapes.push(shape)
+          else answer.missing.push(part.onshape_id)
+        }
       }
       return reply(answer)
     }

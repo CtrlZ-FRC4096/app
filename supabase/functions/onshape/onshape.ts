@@ -61,12 +61,14 @@ export interface ShapeAsk {
   onshape_id: string
   partId: string
   configuration: string | null
-  /** The part's version when it was last read, to skip it if it hasn't changed. */
-  known: string | null
 }
 
-/** The most parts one `shapes` request can read: each costs one of the team's yearly Onshape API calls. */
-export const MOST_SHAPES = 25
+/**
+ * The most parts one `shapes` request can read. They're all read with one
+ * Onshape API call (one per configuration), so this only keeps answers a
+ * sensible size.
+ */
+export const MOST_SHAPES = 100
 
 export type OnshapeRequest =
   | { kind: 'check' }
@@ -92,7 +94,7 @@ export function onshapeRequest(body: unknown): OnshapeRequest | { error: string 
   const parts: ShapeAsk[] = []
   for (const part of asked as Record<string, unknown>[]) {
     const id = typeof part?.id === 'string' ? part.id : ''
-    const ask = shapeAsk(id, link, typeof part?.known === 'string' && part.known.length <= 100 ? part.known : null)
+    const ask = shapeAsk(id, link)
     if (!ask) return { error: `${id || 'A part'} isn't a part in that Part Studio. Import the system from Onshape again.` }
     parts.push(ask)
   }
@@ -100,10 +102,10 @@ export function onshapeRequest(body: unknown): OnshapeRequest | { error: string 
 }
 
 /** Read a BOM onshape_id (document/tab/part?configuration) for a part in the linked tab, or null if it isn't one. */
-export function shapeAsk(onshapeId: string, link: OnshapeLink, known: string | null = null): ShapeAsk | null {
+export function shapeAsk(onshapeId: string, link: OnshapeLink): ShapeAsk | null {
   const m = onshapeId.match(/^([0-9a-f]{24})\/([0-9a-f]{24})\/([^/?#\s]{1,64})(?:\?(.{1,500}))?$/)
   if (!m || m[1] !== link.documentId || m[2] !== link.elementId) return null
-  return { onshape_id: onshapeId, partId: m[3], configuration: m[4] ?? null, known }
+  return { onshape_id: onshapeId, partId: m[3], configuration: m[4] ?? null }
 }
 
 const base = (link: OnshapeLink) => `/d/${link.documentId}/${link.wvm}/${link.wvmId}`
@@ -116,10 +118,11 @@ export const paths = {
   // indented=false flattens sub-assemblies into one list of parts.
   bom: (link: OnshapeLink) => `/api/v6/assemblies${base(link)}/e/${link.elementId}/bom?indented=false`,
   parts: (link: OnshapeLink) => `/api/v9/parts${base(link)}/e/${link.elementId}`,
-  // Every edge of one part, as lines of points: its shape for the CNC router.
-  edges: (link: OnshapeLink, part: Pick<ShapeAsk, 'partId' | 'configuration'>) =>
-    `/api/v6/parts${base(link)}/e/${link.elementId}/partid/${encodeURIComponent(part.partId)}/tessellatededges` +
-    (part.configuration ? `?configuration=${encodeURIComponent(part.configuration)}` : ''),
+  // Every edge of the parts asked for in a Part Studio, as lines of points,
+  // in one call: their shapes for the CNC router.
+  studioEdges: (link: OnshapeLink, partIds: string[], configuration: string | null) =>
+    `/api/v6/partstudios${base(link)}/e/${link.elementId}/tessellatededges?` +
+    [...partIds.map((id) => `partId=${encodeURIComponent(id)}`), ...(configuration ? [`configuration=${encodeURIComponent(configuration)}`] : [])].join('&'),
   // Where every part in an assembly sits, for a sheet's layout.
   assembly: (link: OnshapeLink) => `/api/v6/assemblies${base(link)}/e/${link.elementId}?excludeSuppressed=true`,
 }
@@ -255,22 +258,20 @@ export function partStudioLines(parts: unknown, link: OnshapeLink): OnshapeLine[
     }))
 }
 
-/** Each part's version in a Part Studio, from the same answer partStudioLines reads. */
-export function partVersions(parts: unknown): Map<string, string> {
-  const versions = new Map<string, string>()
-  for (const p of Array.isArray(parts) ? (parts as { partId?: unknown; microversionId?: unknown }[]) : []) {
-    if (typeof p.partId === 'string') versions.set(p.partId, typeof p.microversionId === 'string' ? p.microversionId : '')
-  }
-  return versions
+/** The parts asked for, grouped by configuration: each group is one Onshape API call. */
+export function byConfiguration(parts: ShapeAsk[]): ShapeAsk[][] {
+  const groups = new Map<string, ShapeAsk[]>()
+  for (const part of parts) groups.set(part.configuration ?? '', [...(groups.get(part.configuration ?? '') ?? []), part])
+  return [...groups.values()]
 }
 
-/** The answer to a `shapes` request. Parts that haven't changed since `known` aren't read again. */
+/** The answer to a `shapes` request. */
 export interface OnshapeShapes {
   shapes: OnshapeShape[]
-  /** onshape_ids of parts that haven't changed. */
-  unchanged: string[]
   /** onshape_ids of parts no longer in the Part Studio. */
   missing: string[]
+  /** How many Onshape API calls it took: one per configuration. */
+  calls: number
 }
 
 /** Where one part sits in a layout assembly. */
