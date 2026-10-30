@@ -6,6 +6,7 @@ export const calendar: ModuleDefinition = {
   id: 'calendar',
   name: 'Calendar',
   purpose: "What's coming up on the team calendar: build sessions, outreach and competitions.",
+  group: 'team',
   load: () => import('./CalendarPage'),
   useSummary: useCalendarSummary,
 }

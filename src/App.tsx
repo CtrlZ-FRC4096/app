@@ -1,9 +1,10 @@
-import { createElement, lazy, Suspense, useEffect, type ReactNode } from 'react'
+import { createElement, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { modules } from './modules'
 import { ROLES, canOpen, roleName, signOut, useAccess, useSession, useSignIn, type User } from './core/session'
 import { isLive } from './core/supabase'
 import { setDemoRole } from './core/demo'
 import { initials } from './core/members'
+import { groupModules } from './core/registry'
 import { href, useRoute } from './core/router'
 import { resetAllStores } from './core/store'
 import { toast, useToast } from './core/toast'
@@ -46,21 +47,21 @@ function Gate() {
   return <Shell user={access.user} />
 }
 
+/** The logo, which is the whole of the top bar on the left. It goes home. */
 function Brand() {
   return (
-    <a className="brand" href="#/" aria-label="Ctrl-Z Team App home">
+    <a className="brand" href="#/" aria-label="Ctrl-Z, home">
       <span className="keys" aria-hidden="true"><span className="key">Ctrl</span><span className="key">Z</span></span>
-      <span className="brand-name">Team App<small>FRC 4096</small></span>
     </a>
   )
 }
 
-/** The page around the sign-in screens: just the header. */
+/** The page around the sign-in screens: just the logo. */
 function Frame({ children }: { children: ReactNode }) {
   return (
     <>
       <header className="app-header">
-        <div className="wrap gutter header-only"><Brand /></div>
+        <div className="wrap gutter topbar"><Brand /></div>
       </header>
       <main className="wrap gutter" id="main">{children}</main>
     </>
@@ -69,69 +70,181 @@ function Frame({ children }: { children: ReactNode }) {
 
 function Shell({ user }: { user: User }) {
   const { id } = useRoute()
-  const visible = modules.filter((m) => canOpen(user.role, m.roles))
+  const groups = groupModules(modules.filter((m) => canOpen(user.role, m.roles)))
+  /*
+   * Which menu is open: its name (a group's id, or 'account') together with
+   * the page we were on when it opened. Only one menu is open at a time, and
+   * because the page is remembered with it, opening a module closes the menu
+   * by itself.
+   */
+  const [menu, setMenu] = useState({ name: '', page: '' })
+  const openMenu = menu.page === id ? menu.name : ''
 
+  function toggle(name: string) {
+    setMenu({ name: openMenu === name ? '' : name, page: id })
+  }
+
+  function close() {
+    setMenu({ name: '', page: id })
+  }
+
+  // Every page starts at the top.
   useEffect(() => {
     window.scrollTo(0, 0)
   }, [id])
 
+  // A tap or click anywhere outside a menu closes it.
+  useEffect(() => {
+    if (!openMenu) return
+    function closeIfOutside(event: Event) {
+      if (!(event.target as Element | null)?.closest('.menu')) setMenu({ name: '', page: '' })
+    }
+    document.addEventListener('pointerdown', closeIfOutside)
+    return () => document.removeEventListener('pointerdown', closeIfOutside)
+  }, [openMenu])
+
   return (
     <>
+      <a className="skip-link" href="#main">Skip to the page</a>
       <header className="app-header">
-        <div className="wrap gutter">
+        <div className="wrap gutter topbar">
           <Brand />
-          <div className="header-tools">
-            {!isLive && (
-              <div className="role-switch">
-                <span>View as</span>
-                <div className="seg" role="group" aria-label="View as">
-                  {ROLES.map((role) => (
-                    <button key={role} type="button" aria-pressed={user.role === role} onClick={() => setDemoRole(role)}>
-                      {roleName(role)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="user-chip">
-              {user.avatarUrl ? (
-                <img className="avatar" src={user.avatarUrl} alt="" />
-              ) : (
-                <span className="avatar" aria-hidden="true">{initials(user.name)}</span>
-              )}
-              <span>{user.name}</span>
-            </div>
-            {isLive && <button type="button" className="link-btn" onClick={() => void signOut()}>Sign out</button>}
-          </div>
-          <nav className="nav" aria-label="Modules">
-            <a href="#/" aria-current={id === '' ? 'page' : undefined}>Home</a>
-            {visible.map((m) => (
-              <a key={m.id} href={href(m.id)} aria-current={id === m.id ? 'page' : undefined}>{m.name}</a>
+          <nav className="nav" aria-label="Sections">
+            <a className="nav-link" href="#/" aria-current={id === '' ? 'page' : undefined}>Home</a>
+            {groups.map((group) => (
+              <Menu
+                key={group.id}
+                panelId={`menu-${group.id}`}
+                label={group.name}
+                current={group.modules.some((m) => m.id === id)}
+                open={openMenu === group.id}
+                onToggle={() => toggle(group.id)}
+                onClose={close}
+              >
+                {group.modules.map((m) => (
+                  <a key={m.id} className="menu-item" href={href(m.id)} aria-current={m.id === id ? 'page' : undefined}>
+                    <span className="menu-item-name">{m.name}</span>
+                    <span className="menu-item-note">{m.purpose}</span>
+                  </a>
+                ))}
+              </Menu>
             ))}
           </nav>
+          <Menu
+            className="account"
+            panelId="menu-account"
+            buttonLabel={`${user.name}, ${roleName(user.role)}`}
+            label={user.avatarUrl
+              ? <img className="avatar" src={user.avatarUrl} alt="" />
+              : <span className="avatar" aria-hidden="true">{initials(user.name)}</span>}
+            open={openMenu === 'account'}
+            onToggle={() => toggle('account')}
+            onClose={close}
+          >
+            <p className="menu-head">
+              <strong>{user.name}</strong>
+              <span className="note">{roleName(user.role)}</span>
+            </p>
+            {isLive ? (
+              <button type="button" className="menu-item" onClick={() => void signOut()}>
+                <span className="menu-item-name">Sign out</span>
+              </button>
+            ) : (
+              <>
+                <p className="eyebrow menu-label">View as</p>
+                {ROLES.map((role) => (
+                  <button
+                    key={role}
+                    type="button"
+                    className="menu-item"
+                    aria-pressed={user.role === role}
+                    onClick={() => { setDemoRole(role); close() }}
+                  >
+                    <span className="menu-item-name">{roleName(role)}</span>
+                  </button>
+                ))}
+              </>
+            )}
+          </Menu>
         </div>
       </header>
-      <div className="banner">
-        <div className="wrap gutter">
-          {isLive ? (
-            <>
-              <strong>Work in progress.</strong>
-              <span className="muted">Students are building this app. Found a problem or have an idea?</span>
-            </>
-          ) : (
-            <>
-              <strong>Demo mode.</strong>
-              <span className="muted">Example data only, saved in this browser. Use "View as" to try each role.</span>
-              <button type="button" className="link-btn" onClick={() => { resetAllStores(); toast('Example data reset.') }}>Reset example data</button>
-            </>
-          )}
-          <a href={CONTRIBUTING} target="_blank" rel="noopener">How to contribute</a>
-        </div>
-      </div>
+      <Banner />
       <main className="wrap gutter" id="main">
         <Page id={id} />
       </main>
     </>
+  )
+}
+
+/**
+ * A button in the top bar with a panel of links under it. Shell remembers
+ * which one is open, so opening one closes the last; Escape or a tap outside
+ * closes it too.
+ */
+function Menu(props: {
+  panelId: string
+  /** What the button shows: a group's name, or the signed-in person's picture. */
+  label: ReactNode
+  /** Say what the button does when the label is a picture rather than words. */
+  buttonLabel?: string
+  /** True when the page you're on is in this menu, so the button can say so. */
+  current?: boolean
+  open: boolean
+  onToggle: () => void
+  onClose: () => void
+  className?: string
+  children: ReactNode
+}) {
+  const button = useRef<HTMLButtonElement>(null)
+  return (
+    <div
+      className={'menu' + (props.className ? ' ' + props.className : '')}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || !props.open) return
+        props.onClose()
+        button.current?.focus()
+      }}
+    >
+      <button
+        ref={button}
+        type="button"
+        className="menu-btn"
+        aria-expanded={props.open}
+        aria-controls={props.panelId}
+        aria-label={props.buttonLabel}
+        data-current={props.current ? '' : undefined}
+        onClick={props.onToggle}
+      >
+        {props.label}
+        <span className="chev" aria-hidden="true" />
+      </button>
+      <div className="menu-panel" id={props.panelId} hidden={!props.open}>
+        {props.children}
+      </div>
+    </div>
+  )
+}
+
+/** The one line under the top bar: what state the app is in, and how to help. */
+function Banner() {
+  return (
+    <div className="banner">
+      <div className="wrap gutter">
+        {isLive ? (
+          <>
+            <strong>Work in progress.</strong>
+            <span className="muted">Students are building this app. Found a problem or have an idea?</span>
+          </>
+        ) : (
+          <>
+            <strong>Demo mode.</strong>
+            <span className="muted">Example data only, saved in this browser. Try each role from the menu at the top right.</span>
+            <button type="button" className="link-btn" onClick={() => { resetAllStores(); toast('Example data reset.') }}>Reset example data</button>
+          </>
+        )}
+        <a href={CONTRIBUTING} target="_blank" rel="noopener">How to contribute</a>
+      </div>
+    </div>
   )
 }
 

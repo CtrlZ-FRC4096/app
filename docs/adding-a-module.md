@@ -16,7 +16,10 @@ The id becomes the address: `app.team4096.org/#/pit-map`.
 In your new folder:
 
 - `index.ts`: change `example` to your module's name, and set `id`, `name`
-  and `purpose`. Point `load` at your page file.
+  and `purpose`. Point `load` at your page file. Set `group` to the menu it
+  belongs under in the top bar: `build`, `competition`, `team`,
+  `software` (code and widgets) or `more` (the menus are listed in
+  `src/core/registry.ts`).
 - Rename `ExamplePage.tsx` to match, such as `PitMapPage.tsx`.
 - `data.ts`: replace the notes with your module's data. Give the table a
   new name that starts with your module's, such as `pit_map_spots` (the
@@ -43,10 +46,14 @@ Add one import and one entry to `src/modules/index.ts`:
 ```ts
 import { pitMap } from './pit-map'
 
-export const modules: ModuleDefinition[] = [inventory, training, bom, scouting, status, pitMap, example, members]
+export const modules: ModuleDefinition[] = [inventory, bom, scouting, status, pitMap, calendar, attendance, members, training, example]
 ```
 
 This file is shared, so this line needs a mentor's approval.
+
+Your module shows up in the top bar under the menu its `group` names, and on
+the home page under the same heading. Inside a menu, modules appear in the
+order of this list.
 
 ## 5. Check it
 
@@ -62,7 +69,7 @@ every role that can open it.
 
 | File | Job |
 |:--|:--|
-| `index.ts` | Tells the app about the module. Optional `useSummary` puts a status on the home page tile; optional `useAttention` adds lines to "Needs attention". Both are hooks from `data.ts`. |
+| `index.ts` | Tells the app about the module, including which menu it sits under (`group`). Optional `useSummary` puts a status on the home page tile; optional `useAttention` adds lines to "Needs attention". Both are hooks from `data.ts`. |
 | `data.ts` | The module's table (`createTable`), its rules, and the functions that change it. Pages never save anything themselves. |
 | `data.test.ts` | Tests for every function in `data.ts`. They run in demo mode. |
 | `SomethingPage.tsx` | The page. Reads rows with a `use...()` hook and changes them with functions from `data.ts`. |

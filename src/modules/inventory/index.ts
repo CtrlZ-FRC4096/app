@@ -4,6 +4,7 @@ export const inventory: ModuleDefinition = {
   id: 'inventory',
   name: 'Inventory',
   purpose: 'Parts, where they live and how many are left.',
+  group: 'build',
   load: () => import('./InventoryPage'),
   // Replace this with a hook from data.ts once the module has data, such
   // as "3 parts low". See useNoteSummary in the Example module.
