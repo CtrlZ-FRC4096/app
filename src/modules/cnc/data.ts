@@ -4,9 +4,11 @@
  * part came out of each sheet, so each sheet has a digital twin.
  *
  *   stockTable   Kinds of stock, like "1/4 in aluminum plate", with router
- *                settings. Mentors manage these.
+ *                settings. Anyone adds them, by hand or from the parts in
+ *                Onshape; mentors delete them.
  *   jobsTable    The CNC board: parts from the BOM to cut, how many, and
- *                To cut → Cutting → Cut. Anyone adds and moves them.
+ *                Ready to CAM → To cut → Cutting → Cut. Anyone adds and
+ *                moves them.
  *   shapesTable  Each part's size and outline, read from Onshape and kept,
  *                so the team's yearly Onshape API calls aren't spent twice.
  *   sheetsTable  The real sheets, each with an ID like AL250-007.
@@ -27,7 +29,7 @@ import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 import { isOnshapeLink, partsTable, systemsTable, type BomSystem, type Part } from '../bom/data'
 import {
-  findSpots, flatOutline, footprint, guessStock, inches, nextLabel, onSheet, parseInches, quarterTurn, sizeText,
+  findSpots, flatOutline, footprint, guessStock, inches, isPlate, materialName, materialWords, nextLabel, onSheet, parseInches, quarterTurn, sizeText, snapInches, suggestCode,
   type Box, type Loops, type ShapeGeometry, type Spot, type StockGeometry,
 } from './geometry'
 
@@ -55,7 +57,8 @@ export interface Stock extends Row, StockGeometry {
   created_by: string | null
 }
 
-export type JobStatus = 'to_cut' | 'cutting' | 'cut'
+/** Ready to CAM (the design's done; toolpaths next), then To cut, Cutting and Cut. */
+export type JobStatus = 'cam' | 'to_cut' | 'cutting' | 'cut'
 
 /** One row of cnc_jobs: a part on the CNC board. */
 export interface Job extends Row {
@@ -126,8 +129,8 @@ export interface Cut extends Row {
   created_by: string | null
 }
 
-export const STATUS_LABEL: Record<JobStatus, string> = { to_cut: 'To cut', cutting: 'Cutting', cut: 'Cut' }
-export const STATUS_TONE = { to_cut: 'plain', cutting: 'warn', cut: 'ok' } as const
+export const STATUS_LABEL: Record<JobStatus, string> = { cam: 'Ready to CAM', to_cut: 'To cut', cutting: 'Cutting', cut: 'Cut' }
+export const STATUS_TONE = { cam: 'info', to_cut: 'plain', cutting: 'warn', cut: 'ok' } as const
 export const SHEET_STATUS_LABEL: Record<SheetStatus, string> = { new: 'New', partly_used: 'Partly used', scrap: 'Scrap' }
 export const SHEET_STATUS_TONE = { new: 'info', partly_used: 'plain', scrap: 'warn' } as const
 export const STOCK_KINDS: StockKind[] = ['plate', 'tube', 'bar', 'other']
@@ -325,6 +328,110 @@ export async function removeStock(stock: Stock): Promise<Result> {
   return result
 }
 
+/** A kind of plate the BOM's parts need, worked out from Onshape, and the parts cut from it. */
+export interface StockToAdd {
+  stock: Fields<Stock>
+  parts: Part[]
+}
+
+/** What importing stock from Onshape would add. Nothing is saved until addStockFromOnshape(). */
+export interface StockImportPlan {
+  /** Plates the parts need that aren't in the stock list yet. */
+  add: StockToAdd[]
+  /** Plates the parts need that are already there. */
+  have: { stock: Stock; parts: Part[] }[]
+  /** Parts whose shape isn't a flat plate, like shafts, tubes and blocks. */
+  notPlates: Part[]
+  /** Plates with no material in Onshape, so there's no knowing what they're cut from. */
+  noMaterial: Part[]
+  /** Parts from Onshape whose shape hasn't been read yet. */
+  unread: Part[]
+}
+
+/** The made parts that came from Onshape, so their shape can be read. Parts removed in Onshape are left out. */
+export function onshapeMadeParts(parts: Part[]): (Part & { onshape_id: string; onshape_url: string })[] {
+  return parts.filter((p) => p.kind === 'made' && !p.removed_in_onshape).filter(canReadShape)
+}
+
+/** About how many Onshape API calls reading these parts' shapes takes: one per Part Studio, plus one per part. */
+export function shapeReadCalls(parts: Part[]): number {
+  const readable = parts.filter(canReadShape)
+  return new Set(readable.map((p) => p.onshape_url)).size + readable.length
+}
+
+/** Is this stock the same plate: the same material and thickness? */
+function samePlate(stock: Pick<Stock, 'kind' | 'name' | 'material' | 'thickness_in'>, material: string, thickness: number): boolean {
+  if (stock.kind !== 'plate' || !stock.thickness_in || Math.abs(stock.thickness_in - thickness) > 0.003) return false
+  const has = materialName(`${stock.material} ${stock.name}`)?.split(' ') ?? []
+  return material.split(' ').every((word) => has.includes(word))
+}
+
+/**
+ * Work out the plates the BOM's made parts are cut from, from each part's
+ * material (imported from Onshape into the BOM) and its thickness (from its
+ * shape in Onshape), and which aren't in the stock list yet. Parts from
+ * Onshape whose shape hasn't been read are listed in `unread`, to read first.
+ */
+export function planStockImport(parts: Part[], shapes: Shape[], stocks: Stock[]): StockImportPlan {
+  const plan: StockImportPlan = { add: [], have: [], notPlates: [], noMaterial: [], unread: [] }
+  const codes = new Set(stocks.map((s) => s.code))
+  for (const part of onshapeMadeParts(parts)) {
+    const shape = shapes.find((s) => s.part_id === part.id)
+    if (!shape) {
+      plan.unread.push(part)
+      continue
+    }
+    if (!isPlate(shape)) {
+      plan.notPlates.push(part)
+      continue
+    }
+    const material = materialName(part.material)
+    if (!material) {
+      plan.noMaterial.push(part)
+      continue
+    }
+    const thickness = snapInches(shape.thickness_in)
+    const name = `${inches(thickness)} ${material} plate`
+    const have = stocks.find((s) => samePlate(s, material, thickness) || s.name.toLowerCase() === name.toLowerCase())
+    if (have) {
+      const same = plan.have.find((h) => h.stock.id === have.id)
+      if (same) same.parts.push(part)
+      else plan.have.push({ stock: have, parts: [part] })
+      continue
+    }
+    const adding = plan.add.find((a) => a.stock.name === name)
+    if (adding) {
+      adding.parts.push(part)
+      continue
+    }
+    // A code no other stock has: AL250, then AL250B, AL250C...
+    const start = suggestCode(material, thickness)
+    let code = start
+    for (let i = 0; codes.has(code); i += 1) code = `${start.slice(0, 7)}${String.fromCharCode(66 + i)}`
+    codes.add(code)
+    // The material as Onshape names it, without a size: "6061 aluminum, 1/4 in plate" → "6061 aluminum".
+    const fullMaterial = (part.material ?? material).split(',')[0].trim().slice(0, 100) || material
+    plan.add.push({
+      stock: {
+        kind: 'plate', name, code, material: fullMaterial, thickness_in: thickness,
+        sheet_width_in: null, sheet_length_in: null, bit_in: null, feed_ipm: null, depth_per_pass_in: null,
+      },
+      parts: [part],
+    })
+  }
+  return plan
+}
+
+/** Add the plates picked from an import plan to the stock list. */
+export async function addStockFromOnshape(picked: StockToAdd[]): Promise<Result<string>> {
+  if (picked.length === 0) return fail('Pick at least one kind of stock to add.')
+  for (const { stock } of picked) {
+    const result = await stockTable.insert(stock)
+    if (!result.ok) return result
+  }
+  return ok(`Added ${plural(picked.length, 'kind of stock', 'kinds of stock')}. Add each one's full sheet size and router settings when you know them.`)
+}
+
 // ---------------------------------------------------------------------------
 // The CNC board.
 
@@ -343,7 +450,7 @@ export interface BoardGroup {
   jobs: BoardJob[]
 }
 
-const STATUS_ORDER: Record<JobStatus, number> = { cutting: 0, to_cut: 1, cut: 2 }
+const STATUS_ORDER: Record<JobStatus, number> = { cutting: 0, to_cut: 1, cam: 2, cut: 3 }
 
 function boardJob(job: Job, parts: Part[], systems: BomSystem[], stocks: Stock[], shapes: Shape[]): BoardJob {
   const part = parts.find((p) => p.id === job.part_id)
@@ -357,9 +464,9 @@ function boardJob(job: Job, parts: Part[], systems: BomSystem[], stocks: Stock[]
 }
 
 /**
- * Jobs still to cut or being cut, grouped by stock in the stock's order,
- * with "no stock picked" last. In each group, what's being cut comes first,
- * then the oldest.
+ * Jobs not cut yet, grouped by stock in the stock's order, with "no stock
+ * picked" last. In each group, what's being cut comes first, then what's
+ * ready to cut, then what's waiting for CAM, oldest first.
  */
 export function boardGroups(jobs: Job[], parts: Part[], systems: BomSystem[], stocks: Stock[], shapes: Shape[]): BoardGroup[] {
   const open = jobs
@@ -395,25 +502,103 @@ export function checkQuantity(quantity: number): string | null {
 }
 
 /**
- * Put a made part on the CNC board. If it's already waiting on the same
- * stock, the quantity is added to that job instead of making another.
+ * Put a made part on the CNC board, Ready to CAM. If it's already waiting
+ * for CAM on the same stock, the quantity is added to that job instead of
+ * making another.
  */
 export async function addJob(part: Part, quantity: number, stockId: string | null, note = ''): Promise<Result<{ job: Job; added: boolean }>> {
   if (part.kind !== 'made') return fail(`${part.name} is bought, not made, so it doesn't go on the CNC board.`)
   const problem = checkQuantity(quantity)
   if (problem) return fail(problem)
   if (note.trim().length > 300) return fail(`Keep the note under 300 characters. This one is ${note.trim().length}.`)
-  const waiting = jobsTable.rows().find((j) => j.part_id === part.id && j.stock_id === stockId && j.status === 'to_cut')
+  const waiting = jobsTable.rows().find((j) => j.part_id === part.id && j.stock_id === stockId && j.status === 'cam')
   if (waiting) {
     const total = waiting.quantity + quantity
     if (total > 999) return fail('That would make more than 999 waiting. Change the quantity on the board instead.')
     const result = await jobsTable.update(waiting.id, { quantity: total })
     return result.ok ? ok({ job: result.value, added: false }) : result
   }
-  const fields = { part_id: part.id, stock_id: stockId, quantity, status: 'to_cut' as const, note: text(note) }
+  const fields = { part_id: part.id, stock_id: stockId, quantity, status: 'cam' as const, note: text(note) }
   const row = isLive ? fields : { ...fields, status_at: now(), status_by: me() }
   const result = await jobsTable.insert(row as Fields<Job>)
   return result.ok ? ok({ job: result.value, added: true }) : result
+}
+
+/** The plates parts are flagged ready to CAM on, and the usual thicknesses. */
+export type PlateMaterial = 'aluminum' | 'polycarbonate'
+export const PLATE_MATERIAL_LABEL: Record<PlateMaterial, string> = { aluminum: 'Aluminum', polycarbonate: 'Polycarbonate' }
+export const PLATE_THICKNESSES = [1 / 32, 1 / 16, 1 / 8, 3 / 16, 1 / 4]
+
+/** What's picked when flagging a part ready to CAM: a plate by material and thickness, or any kind of stock (a tube, say). */
+export type CamStock = { plate: PlateMaterial; thickness: number } | { stockId: string | null }
+
+/** The plate stock of this material and thickness, if there is one. */
+export function plateStock(material: PlateMaterial, thickness: number, stocks: Stock[]): Stock | undefined {
+  return stocks.find((s) => samePlate(s, material, thickness))
+}
+
+/**
+ * What to start the form with for a part: aluminum or polycarbonate and a
+ * thickness if the part's material in the BOM, or its shape from Onshape,
+ * says; otherwise the stock it most likely is.
+ */
+export function camStockFor(part: Part, shape: Shape | undefined, stocks: Stock[]): CamStock {
+  const words = materialWords(part.material ?? '')
+  const material = (['aluminum', 'polycarbonate'] as const).find((m) => words.has(m))
+  const notPlate = words.has('tube') || words.has('bar') || (shape && !isPlate(shape))
+  if (!material || notPlate) return { stockId: likelyStock(part, stocks)?.id ?? null }
+  const written = [...words].map(Number).find((n) => n > 0 && n <= 1)
+  // 0 means no thickness picked yet.
+  return { plate: material, thickness: shape ? snapInches(shape.thickness_in) : (written ?? 0) }
+}
+
+/** Why a thickness typed in won't do, or null if it will. */
+export function checkThickness(thickness: number | null): string | null {
+  return thickness !== null && thickness > 0 && thickness <= 4 ? null : 'Pick a thickness, or type one in inches, like 3/8 or 0.375.'
+}
+
+/**
+ * The stock for a plate of this material and thickness, adding it to the
+ * stock list if it isn't there yet, so nobody has to set stock up first.
+ */
+export async function stockForPlate(material: PlateMaterial, thickness: number): Promise<Result<Stock>> {
+  const problem = checkThickness(thickness)
+  if (problem) return fail(problem)
+  const stocks = stockTable.rows()
+  const have = plateStock(material, thickness, stocks)
+  if (have) return ok(have)
+  const name = `${inches(thickness)} ${material} plate`
+  const named = stocks.find((s) => s.name.toLowerCase() === name.toLowerCase())
+  if (named) return ok(named)
+  const codes = new Set(stocks.map((s) => s.code))
+  const start = suggestCode(material, thickness)
+  let code = start
+  for (let i = 0; codes.has(code); i += 1) code = `${start.slice(0, 7)}${String.fromCharCode(66 + i)}`
+  return stockTable.insert({
+    kind: 'plate', name, code, material: PLATE_MATERIAL_LABEL[material], thickness_in: thickness,
+    sheet_width_in: null, sheet_length_in: null, bit_in: null, feed_ipm: null, depth_per_pass_in: null,
+  })
+}
+
+/**
+ * Flag a made part ready to CAM: how many, and the plate (material and
+ * thickness) or other stock it's cut from. A plate not in the stock list
+ * yet is added to it.
+ */
+export async function markReadyToCam(part: Part, quantity: number, pick: CamStock, note = ''): Promise<Result<{ job: Job; added: boolean; stock: Stock | null }>> {
+  if (part.kind !== 'made') return fail(`${part.name} is bought, not made, so it doesn't go on the CNC board.`)
+  const problem = checkQuantity(quantity)
+  if (problem) return fail(problem)
+  let stock: Stock | null = null
+  if ('plate' in pick) {
+    const found = await stockForPlate(pick.plate, pick.thickness)
+    if (!found.ok) return found
+    stock = found.value
+  } else {
+    stock = stockTable.rows().find((s) => s.id === pick.stockId) ?? null
+  }
+  const result = await addJob(part, quantity, stock?.id ?? null, note)
+  return result.ok ? ok({ ...result.value, stock }) : result
 }
 
 /** Move a job along. Marking it cut also records the cuts planned for it on sheets. */
@@ -540,14 +725,33 @@ export async function readShapes(parts: Part[]): Promise<Result<string>> {
   return ok(`${said.join('. ')}. That used ${plural(calls, 'Onshape API call', 'Onshape API calls')}.`)
 }
 
-/** What the example Onshape answers for shapes: the example side plate, which hasn't changed. */
+/**
+ * What the example Onshape answers for shapes: the side plate (which hasn't
+ * changed since it was read), and the Intake's other made parts, which
+ * aren't plates: a 1/2 in hex shaft and a 3/4 in nylon spacer.
+ */
 function exampleShapes(parts: { id: string; known: string | null }[]): OnshapeShapes {
   const answer: OnshapeShapes = { shapes: [], unchanged: [], missing: [] }
-  const [example] = EXAMPLE_SHAPES
+  const [plate] = EXAMPLE_SHAPES
+  const solid = (id: string, thickness: number, width: number, length: number): OnshapeShape => ({
+    onshape_id: id, microversion: 'example-1', axis: 'z', low_in: 0, thickness_in: thickness, width_in: width, length_in: length,
+    outline: [[0, 0, length, 0, length, width, 0, width]], cut_length_in: 2 * (length + width),
+    smallest_hole_in: null, tightest_inside_radius_in: null, sharp_inside_corners: 0, narrowest_gap_in: null, pockets: false,
+  })
+  const others = new Map<string, OnshapeShape>([
+    [demoPart('4096-26-INT-002').onshape_id!, solid(demoPart('4096-26-INT-002').onshape_id!, 0.5, 0.577, 12)],
+    [demoPart('4096-26-INT-003').onshape_id!, solid(demoPart('4096-26-INT-003').onshape_id!, 0.75, 0.75, 1)],
+  ])
   for (const part of parts) {
-    if (part.id !== example.onshape_id) answer.missing.push(part.id)
-    else if (part.known === example.microversion) answer.unchanged.push(part.id)
-    else answer.shapes.push(shapeFields(example))
+    if (part.id === plate.onshape_id) {
+      if (part.known === plate.microversion) answer.unchanged.push(part.id)
+      else answer.shapes.push(shapeFields(plate))
+    } else if (others.has(part.id)) {
+      if (part.known === 'example-1') answer.unchanged.push(part.id)
+      else answer.shapes.push(others.get(part.id)!)
+    } else {
+      answer.missing.push(part.id)
+    }
   }
   return answer
 }
@@ -965,13 +1169,13 @@ export function sheetsWithRoom(shape: Shape | undefined, stock: Stock | undefine
 // ---------------------------------------------------------------------------
 // The home page.
 
-/** The home page tile's status, like "5 parts to cut · 1 cutting". */
+/** The home page tile's status, like "2 ready to CAM · 3 to cut · 1 cutting", counting parts. */
 export function cncSummary(jobs: Job[]): Notice {
   const count = (status: JobStatus) => jobs.filter((j) => j.status === status).reduce((total, j) => total + j.quantity, 0)
-  const toCut = count('to_cut')
-  const cutting = count('cutting')
-  if (!toCut && !cutting) return { tone: 'plain', text: 'Nothing waiting to cut' }
-  return { tone: 'info', text: [toCut && `${plural(toCut, 'part', 'parts')} to cut`, cutting && `${cutting} cutting`].filter(Boolean).join(' · ') }
+  const [cam, toCut, cutting] = [count('cam'), count('to_cut'), count('cutting')]
+  if (!cam && !toCut && !cutting) return { tone: 'plain', text: 'Nothing waiting to cut' }
+  const said = [cam && `${cam} ready to CAM`, toCut && `${toCut} to cut`, cutting && `${cutting} cutting`].filter(Boolean)
+  return { tone: 'info', text: said.join(' · ') }
 }
 
 export function useCncSummary(): Notice {

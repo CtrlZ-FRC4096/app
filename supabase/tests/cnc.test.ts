@@ -1,6 +1,6 @@
-// Permission rules for the CNC module's tables: everyone reads, adds jobs,
-// sheets, shapes and cuts, and moves jobs along; mentors manage stock and
-// delete things. Plus what the database fills in by itself: who changed a
+// Permission rules for the CNC module's tables: everyone reads, adds stock,
+// jobs, sheets, shapes and cuts, and moves jobs along; mentors delete
+// things. Plus what the database fills in by itself: who changed a
 // job's status, cuts planned for a job becoming real when it's marked cut,
 // and a new sheet becoming partly used at its first cut.
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -60,15 +60,30 @@ beforeEach(async () => {
 })
 
 describe('CNC stock', () => {
-  it('can be read by everyone, but only mentors add, change and delete it', async () => {
+  it('can be read, added and changed by anyone on the team, signed with their own id', async () => {
     expect(await db.as(student, 'select id from public.cnc_stock')).toEqual([{ id: stockId }])
+    const [polycarbonate] = await addStock(student, 'PC250', '1/4 in polycarbonate plate')
+    expect((await db.sql('select created_by from public.cnc_stock where id = $1', [polycarbonate.id]))[0]).toEqual({ created_by: student })
+    expect(await db.as(student, 'update public.cnc_stock set feed_ipm = 100 where id = $1 returning id', [polycarbonate.id])).toEqual([polycarbonate])
+  })
+
+  it("doesn't let anyone add stock as someone else, or change who added it", async () => {
+    await expect(
+      db.as(student, "insert into public.cnc_stock (kind, name, code, material, created_by) values ('plate', 'Plate', 'PL1', 'Steel', $1)", [mentor]),
+    ).rejects.toThrow(PERMISSION_DENIED)
+    await expect(db.as(student, 'update public.cnc_stock set created_by = $1', [student])).rejects.toThrow(PERMISSION_DENIED)
+  })
+
+  it('can only be deleted by a mentor', async () => {
+    const [polycarbonate] = await addStock(student, 'PC250', '1/4 in polycarbonate plate')
+    expect(await db.as(student, 'delete from public.cnc_stock where id = $1 returning id', [polycarbonate.id])).toEqual([])
+    expect(await db.as(mentor, 'delete from public.cnc_stock where id = $1 returning id', [polycarbonate.id])).toEqual([polycarbonate])
+  })
+
+  it("can't be added or changed by someone whose access is off", async () => {
+    await db.switchOff(student)
     await expect(addStock(student, 'PC250', '1/4 in polycarbonate plate')).rejects.toThrow(PERMISSION_DENIED)
     expect(await db.as(student, 'update public.cnc_stock set feed_ipm = 999 returning id')).toEqual([])
-    expect(await db.as(student, 'delete from public.cnc_stock returning id')).toEqual([])
-
-    const [polycarbonate] = await addStock(mentor, 'PC250', '1/4 in polycarbonate plate')
-    expect(await db.as(mentor, 'update public.cnc_stock set feed_ipm = 100 where id = $1 returning id', [polycarbonate.id])).toEqual([polycarbonate])
-    expect(await db.as(mentor, 'delete from public.cnc_stock where id = $1 returning id', [polycarbonate.id])).toEqual([polycarbonate])
   })
 
   it("can't be deleted while it has sheets, and needs a code made of capital letters and numbers", async () => {
@@ -78,9 +93,9 @@ describe('CNC stock', () => {
 })
 
 describe('CNC jobs', () => {
-  it('can be added by anyone on the team, signed with their own id', async () => {
+  it('can be added by anyone on the team, signed with their own id, starting at Ready to CAM', async () => {
     const [job] = await addJob(student)
-    expect(job).toMatchObject({ status: 'to_cut', status_by: student, created_by: student })
+    expect(job).toMatchObject({ status: 'cam', status_by: student, created_by: student })
   })
 
   it("doesn't let anyone add a job as someone else", async () => {
@@ -94,9 +109,9 @@ describe('CNC jobs', () => {
 
   it('records who moved a job along, and when', async () => {
     const [job] = await addJob(student)
-    await db.as(other, "update public.cnc_jobs set status = 'cutting' where id = $1", [job.id])
+    await db.as(other, "update public.cnc_jobs set status = 'to_cut' where id = $1", [job.id])
     const [moved] = await db.sql<{ status: string; status_by: string }>('select status, status_by from public.cnc_jobs where id = $1', [job.id])
-    expect(moved).toEqual({ status: 'cutting', status_by: other })
+    expect(moved).toEqual({ status: 'to_cut', status_by: other })
     // Changing the quantity isn't a status change.
     await db.as(student, 'update public.cnc_jobs set quantity = 3 where id = $1', [job.id])
     expect((await db.sql('select status_by from public.cnc_jobs where id = $1', [job.id]))[0]).toEqual({ status_by: other })

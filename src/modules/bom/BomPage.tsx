@@ -10,7 +10,9 @@ import {
   type BomSystem, type Part, type PartFilter, type PartKind, type Robot,
 } from './data'
 import { planImport, type OnshapeImportPlan } from './onshape'
-import { addJob, likelyStock, useOnBoard, useStock } from '../cnc/data'
+import { camStockFor, markReadyToCam, shapesTable, useOnBoard, useStock, type CamStock } from '../cnc/data'
+// The CNC module's material and thickness picker, so flagging a part looks the same here and on the CNC board.
+import { CamStockPicker } from '../cnc/CamStockPicker'
 
 // The form open at the top of the page, if any. A null robot, system or
 // part means adding a new one; otherwise it's the one being changed.
@@ -200,7 +202,7 @@ export default function BomPage() {
                             <br />
                             <span className="note">
                               {onBoard.get(p.id) ? `${onBoard.get(p.id)} on the CNC board · ` : ''}
-                              <button type="button" className="link-btn" onClick={() => setEditing({ form: 'cnc', part: p })}>Add to CNC board</button>
+                              <button type="button" className="link-btn" onClick={() => setEditing({ form: 'cnc', part: p })}>Ready to CAM</button>
                             </span>
                           </>
                         )}
@@ -490,50 +492,40 @@ function PartForm(props: { system: BomSystem; parts: Part[]; part: Part | null; 
   )
 }
 
-/** Put a made part on the CNC board, with how many and the stock it's cut from (guessed from its material). */
+/** Flag a made part ready to CAM on the CNC board: how many, and what it's cut from (guessed from its material and its shape in Onshape). */
 function CncForm(props: { part: Part; onDone: () => void }) {
   const { part } = props
   const stocks = useStock()
+  const shape = shapesTable.useRows().find((s) => s.part_id === part.id)
   const [quantity, setQuantity] = useState(part.quantity)
-  // Null until someone picks one: until then, the stock guessed from the material.
-  const [stockId, setStockId] = useState<string | null>(null)
-  const shownStock = stockId ?? likelyStock(part, stocks)?.id ?? ''
+  const [cutFrom, setCutFrom] = useState<CamStock>(() => camStockFor(part, shape, stocks))
   const [saving, setSaving] = useState(false)
   const form = useFocusOnOpen()
 
-  async function add(event: FormEvent) {
+  async function flag(event: FormEvent) {
     event.preventDefault()
     setSaving(true)
-    const result = await addJob(part, quantity, shownStock || null)
+    const result = await markReadyToCam(part, quantity, cutFrom)
     setSaving(false)
     if (!result.ok) {
       toast(result.error)
       return
     }
-    toast(result.value.added ? `Added ${part.name} ×${quantity} to the CNC board.` : `${part.name} was already on the CNC board: now ${result.value.job.quantity} to cut.`)
+    toast(result.value.added ? `Flagged ${part.name} ×${quantity} ready to CAM.` : `${part.name} was already waiting for CAM: now ${result.value.job.quantity}.`)
     props.onDone()
   }
 
   return (
-    <Panel title={`Add ${part.name} to the CNC board`}>
-      <form ref={form} className="panel-body" onSubmit={add}>
-        <p className="note">{part.material ? `${part.material}.` : 'No material in the BOM yet.'} The robot needs {part.quantity}.</p>
-        <div className="toolbar">
-          <div className="field">
-            How many to cut
-            <Stepper id="cnc-quantity" label="How many to cut" min={1} value={quantity} onChange={setQuantity} />
-          </div>
-          <label className="field" htmlFor="cnc-stock">
-            Cut from
-            <select id="cnc-stock" className="input" value={shownStock} onChange={(e) => setStockId(e.target.value)}>
-              <option value="">Not picked yet</option>
-              {stocks.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </label>
+    <Panel title={`${part.name}: ready to CAM`}>
+      <form ref={form} className="panel-body" onSubmit={flag}>
+        <p className="note">{part.material ? `${part.material}.` : 'No material in the BOM yet.'} The robot needs {part.quantity}. It goes on the CNC board.</p>
+        <div className="field">
+          How many to cut
+          <Stepper id="cnc-quantity" label="How many to cut" min={1} value={quantity} onChange={setQuantity} />
         </div>
-        {!stockId && shownStock && <p className="note">Stock guessed from the material. Change it if it's wrong.</p>}
+        <CamStockPicker id="cnc-cut-from" value={cutFrom} onChange={setCutFrom} />
         <div className="toolbar">
-          <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Adding…' : 'Add to CNC board'}</button>
+          <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Flagging…' : 'Ready to CAM'}</button>
           <button type="button" className="btn" onClick={props.onDone}>Cancel</button>
         </div>
       </form>

@@ -499,7 +499,7 @@ function SheetForm(props: { title: string; initial: NewSheet; fixedStock?: boole
           <label className="field" htmlFor="sheet-stock">
             Stock
             <select id="sheet-stock" className="input" value={input.stock_id} onChange={(e) => pickStock(e.target.value)}>
-              {stocks.length === 0 && <option value="">No plate stock yet: a mentor adds it under Stock</option>}
+              {stocks.length === 0 && <option value="">No plate stock yet: add it under Stock</option>}
               {stocks.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </label>
