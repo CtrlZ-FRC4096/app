@@ -16,9 +16,7 @@ export function Home() {
 
   return (
     <>
-      <PageHead title={`Hi ${name.split(' ')[0]}`}>
-        Everything the team tracks, in one place.
-      </PageHead>
+      <PageHead title={`Hi ${name.split(' ')[0]}`} />
 
       <Panel title="Needs attention" aside={<span className="note">Pulled from every module</span>}>
         {/* Each module adds its own lines. If none do, the list is empty and the note below shows instead. */}
