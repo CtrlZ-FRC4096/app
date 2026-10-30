@@ -26,7 +26,7 @@ export default function ScoutingPage() {
 
   return (
     <>
-      <PageHead eyebrow="Scouting" title="Match form">
+      <PageHead title="Match form">
         Count what one robot does in one match. Entries don't save yet.
       </PageHead>
       <Panel title="Scoring">

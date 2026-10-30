@@ -30,10 +30,10 @@ export default function AttendancePage() {
 
   return (
     <>
-      <PageHead eyebrow={isMentor(role) ? 'Everyone sees their own · mentors see everyone' : 'Your attendance'} title="Attendance">
+      <PageHead title="Attendance">
         {isMentor(role)
-          ? "Who said they'd come, when they checked in and out, and the points from both. Pulled from the attendance channel's Slack poll and Jibble; fix mistakes by choosing a name."
-          : "Your points and hours, from the attendance poll in Slack and your Jibble check-ins. Only you and the mentors can see them. If something's wrong, ask a mentor to fix it."}
+          ? 'Who came, for how long, and the points from both. Choose a name to fix a mistake.'
+          : "Your points and hours, from the Slack poll and your Jibble check-ins. Ask a mentor to fix anything that's wrong."}
       </PageHead>
       <RangePicker range={range} />
       <RangeNote range={range} />

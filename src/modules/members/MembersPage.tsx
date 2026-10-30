@@ -28,9 +28,8 @@ export default function MembersPage() {
 
   return (
     <>
-      <PageHead eyebrow="Team 4096 · Ctrl-Z" title="Members">
-        Everyone who has signed in with Slack. People start as students. Admins can make someone a mentor or an admin, or
-        switch off access for someone who has left the team.
+      <PageHead title="Members">
+        Everyone who has signed in. Admins set roles, and switch off access for anyone who has left.
       </PageHead>
       {!isLive && (
         <Callout title="Demo mode">
@@ -73,7 +72,7 @@ export default function MembersPage() {
         </div>
       </Panel>
       {off.length > 0 && (
-        <Panel title="Access switched off" aside={<span className="note">Can't sign in or see anything</span>}>
+        <Panel title="Access switched off">
           <div className="row-list">
             {off.map((m) => (
               <div key={m.id}>

@@ -6,6 +6,7 @@ export const example: ModuleDefinition = {
   id: 'example',
   name: 'Example',
   purpose: 'A small working module to copy when you start a new one.',
+  group: 'software',
   load: () => import('./ExamplePage'),
   useSummary: useNoteSummary,
 }

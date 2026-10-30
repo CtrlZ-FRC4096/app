@@ -13,7 +13,7 @@ export function SignIn({ error }: { error: string | null }) {
 
   return (
     <div className="signin">
-      <PageHead eyebrow="Team 4096 · Ctrl-Z" title="Sign in">
+      <PageHead title="Sign in">
         The team app is for members of Ctrl-Z. Sign in with your Ctrl-Z Slack account.
       </PageHead>
       {error && (
@@ -40,7 +40,7 @@ export function SignIn({ error }: { error: string | null }) {
 export function NoAccess({ name, reason }: { name: string | null; reason: string }) {
   return (
     <div className="signin">
-      <PageHead eyebrow="Team 4096 · Ctrl-Z" title={name ? `Hi ${name.split(' ')[0]}` : "You're signed in"}>
+      <PageHead title={name ? `Hi ${name.split(' ')[0]}` : "You're signed in"}>
         {reason}
       </PageHead>
       <p>

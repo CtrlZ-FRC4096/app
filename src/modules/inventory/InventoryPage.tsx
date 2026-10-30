@@ -12,7 +12,7 @@ export default function InventoryPage() {
 
   return (
     <>
-      <PageHead eyebrow="Inventory" title="Parts">
+      <PageHead title="Parts">
         Parts, where they live, and how many are left.
       </PageHead>
       {/* Anyone on the team can add parts. Changing and deleting them is for mentors. */}

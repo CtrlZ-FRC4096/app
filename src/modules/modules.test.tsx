@@ -6,6 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import { modules } from '.'
 import { ROLES, canOpen } from '../core/session'
+import { groupModules } from '../core/registry'
 import { setDemoRole } from '../core/demo'
 import type { Notice } from '../core/registry'
 
@@ -21,6 +22,11 @@ describe('the module list', () => {
     expect(m.id).toMatch(/^[a-z][a-z0-9-]*$/)
     expect(m.name.trim()).not.toBe('')
     expect(m.purpose.trim()).not.toBe('')
+  })
+
+  it('shows every module in one of the menus in the top bar', () => {
+    const inMenus = groupModules(modules).flatMap((group) => group.modules.map((m) => m.id))
+    expect(inMenus.toSorted()).toEqual(modules.map((m) => m.id).toSorted())
   })
 })
 
