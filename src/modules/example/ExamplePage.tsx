@@ -43,7 +43,7 @@ export default function ExamplePage() {
 
   return (
     <>
-      <PageHead eyebrow="Example module · copy me" title="Team notes">
+      <PageHead title="Team notes">
         A small working module to copy when you start a new one. It saves data, has a form and a list, checks the user's role, and has tests. See src/modules/example/.
       </PageHead>
       <Panel title="Post a note">

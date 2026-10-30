@@ -9,9 +9,8 @@ export default function CalendarPage() {
 
   return (
     <>
-      <PageHead eyebrow="Team calendar" title="Calendar">
-        What's coming up in the next {WEEKS_AHEAD} weeks, from the team's Google Calendar. To add or change an event, do it in
-        Google Calendar: it shows here within a few minutes.
+      <PageHead title="Calendar">
+        What's coming up in the next {WEEKS_AHEAD} weeks. Add or change an event in Google Calendar and it shows here within a few minutes.
       </PageHead>
       <div className="toolbar">
         <button type="button" className="btn btn-sm" disabled={loading} onClick={() => void loadEvents()}>

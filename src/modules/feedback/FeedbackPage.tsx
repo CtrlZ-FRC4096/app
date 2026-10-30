@@ -49,9 +49,8 @@ export default function FeedbackPage() {
 
   return (
     <>
-      <PageHead eyebrow="Feedback" title="Ideas and feedback">
-        Anything that would make the team, the robot or this app better. Everyone sees the list, so have a look before
-        you send yours.
+      <PageHead title="Ideas and feedback">
+        Anything that would make the team, the robot or this app better.
       </PageHead>
 
       <Panel title="Send one">

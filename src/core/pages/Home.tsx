@@ -14,7 +14,7 @@ export function Home() {
 
   return (
     <>
-      <PageHead eyebrow="Team 4096 · Ctrl-Z" title={`Hi ${name.split(' ')[0]}`}>
+      <PageHead title={`Hi ${name.split(' ')[0]}`}>
         Everything the team tracks, in one place.
       </PageHead>
 

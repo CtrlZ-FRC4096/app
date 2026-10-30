@@ -6,10 +6,11 @@
 import type { ReactNode } from 'react'
 import type { Tone } from './registry'
 
-export function PageHead(props: { eyebrow: string; title: string; children?: ReactNode }) {
+export function PageHead(props: { title: string; eyebrow?: string; children?: ReactNode }) {
   return (
     <section className="page-head">
-      <p className="eyebrow">{props.eyebrow}</p>
+      {/* Most pages don't need a line above the title: the top bar already says where you are. */}
+      {props.eyebrow && <p className="eyebrow">{props.eyebrow}</p>}
       <h1>{props.title}</h1>
       {props.children && <p className="lede">{props.children}</p>}
     </section>
@@ -88,7 +89,7 @@ const REPO = 'https://github.com/CtrlZ-FRC4096/app'
 export function ComingSoon(props: { id: string; name: string; goal: string; mustHave: string[] }) {
   return (
     <>
-      <PageHead eyebrow={`${props.name} · not built yet`} title={props.name}>{props.goal}</PageHead>
+      <PageHead title={props.name}>{props.goal}</PageHead>
       <Panel title="What it needs to do" aside={<Pill tone="plain">Not built yet</Pill>}>
         <ul className="goal-list">
           {props.mustHave.map((item) => <li key={item}>{item}</li>)}

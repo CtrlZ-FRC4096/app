@@ -47,9 +47,8 @@ export default function AttendancePage() {
 
   return (
     <>
-      <PageHead eyebrow="Mentors and admins only" title="Attendance">
-        Who said they'd come, when they checked in and out, and the points from both. Imported from the attendance channel's Slack poll
-        and Jibble; fix mistakes by choosing a name.
+      <PageHead title="Attendance">
+        Who came, for how long, and the points from both. Choose a name to fix a mistake.
       </PageHead>
 
       <p className="note">

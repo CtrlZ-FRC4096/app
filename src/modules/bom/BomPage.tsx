@@ -56,7 +56,7 @@ export default function BomPage() {
   if (!robot) {
     return (
       <>
-        <PageHead eyebrow="BOM" title="Bill of materials">{INTRO}</PageHead>
+        <PageHead title="Bill of materials">{INTRO}</PageHead>
         <RobotForm robot={null} intro="Start the BOM by naming the robot. Then add its systems, like Intake, and the parts in each." onDone={(saved) => saved && setRobotId(saved.id)} />
       </>
     )
@@ -64,7 +64,7 @@ export default function BomPage() {
 
   return (
     <>
-      <PageHead eyebrow="BOM" title={robot.name}>{INTRO}</PageHead>
+      <PageHead title={robot.name}>{INTRO}</PageHead>
       <div className="toolbar">
         {robots.length > 1 && (
           <Pick

@@ -15,8 +15,8 @@ export default function StatusPage() {
 
   return (
     <>
-      <PageHead eyebrow="Team 4096" title="Robot status">
-        Track each subsystem from design through testing, and work through the pit checklist at events.
+      <PageHead title="Robot status">
+        Where each subsystem stands, and the pit checklist to work through at events.
       </PageHead>
       <Panel title="Subsystem progress" className="status-panel">
         <p className="panel-body" id="status-instructions">
