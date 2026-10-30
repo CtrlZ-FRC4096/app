@@ -23,7 +23,7 @@ import type { Notice } from '../../core/registry'
 import { BASE_POINTS, buildReport, type DayRecord, type PersonReport, type Report } from './points'
 import { countRange, type CountRange, type Counting, type Period } from './periods'
 import { checkRequest, type HoursRequestInput, type RequestStatus } from './requests'
-import { dayLabel, teamClock, teamDay, teamInstant, today } from './time'
+import { ago, dayLabel, teamClock, teamDay, teamInstant, today } from './time'
 import { nameKey, resolve, slackKey, type ParsedDay, type SlackUser } from './slack-export'
 
 export interface AttendancePerson extends Row {
@@ -253,6 +253,54 @@ export function useAttendanceSummary(role: Role): Notice {
   if (!last) return { tone: 'plain', text: 'No meetings yet' }
   const came = report.rows.filter((row) => row.days.get(last)?.sessions.length).length
   return { tone: 'info', text: `${came} at ${dayLabel(last)}` }
+}
+
+/** Pulls run nightly. Longer than this without one means something stopped. */
+const PULL_OVERDUE_HOURS = 36
+
+/** A request nobody has answered in this long is overdue. */
+const REQUEST_WAITING_HOURS = 24
+
+const hoursSince = (at: string, now: number) => (now - Date.parse(at)) / 3_600_000
+
+/** Requests still waiting a day after they were sent. */
+export function lateRequests(requests: AttendanceRequest[], now: number): AttendanceRequest[] {
+  return requests.filter((request) => hoursSince(request.created_at, now) > REQUEST_WAITING_HOURS)
+}
+
+/** Whether the nightly pull from Slack looks like it stopped. */
+export function pullIsLate(lastPull: AttendanceSync | null, now: number): boolean {
+  return lastPull !== null && hoursSince(lastPull.created_at, now) > PULL_OVERDUE_HOURS
+}
+
+/**
+ * "Needs attention" on the home page, for mentors and admins only, and only
+ * when something is late: requests nobody has answered in a day, and a
+ * nightly pull from Slack that stopped. Anything still on time belongs on
+ * the Attendance page, not here.
+ */
+export function useAttendanceAttention(role: Role): Notice[] {
+  const lastPull = useLastPull()
+  const waiting = useWaitingRequests()
+  // Fixed when the page opens, so the list doesn't change while you read it.
+  const [openedAt] = useState(() => Date.now())
+  if (!isMentor(role)) return []
+  const notices: Notice[] = []
+  const late = lateRequests(waiting, openedAt)
+  if (late.length > 0) {
+    const oldest = late.reduce((a, b) => (a.created_at <= b.created_at ? a : b))
+    notices.push({
+      tone: 'warn',
+      text: `${plural(late.length, 'request', 'requests')} for missing hours waiting since ${ago(oldest.created_at, new Date(openedAt))}. Approve or decline them at the bottom of Attendance.`,
+    })
+  }
+  if (isLive && lastPull && pullIsLate(lastPull, openedAt)) {
+    notices.push({
+      tone: 'crit',
+      text: `Attendance was last pulled from Slack ${ago(lastPull.created_at, new Date(openedAt))}. Check the "Pull attendance from Slack" workflow in GitHub Actions.`,
+    })
+  }
+  return notices
 }
 
 // ---------------------------------------------------------------------------
