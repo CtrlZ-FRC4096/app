@@ -13,8 +13,9 @@ import {
   requestHours,
   requestsTable,
   sortRows,
-  useAttendanceAttention,
   useAttendanceSummary,
+  lateRequests,
+  pullIsLate,
   applyImport,
   checksTable,
   peopleTable,
@@ -24,6 +25,7 @@ import {
   removePeriod,
   restoreCheck,
   rsvpsTable,
+  syncsTable,
   savePeriod,
   setRsvp,
   sheetRows,
@@ -256,9 +258,6 @@ describe('your own attendance', () => {
     setDemoRole('student')
     // Alex, in the 2026 build season: 6 points, and 2.2 hours (Jan 13; Jan 15 has no check-out).
     expect(home(() => useAttendanceSummary('student').text)).toBe('<p>You: 6 points · 2.2 hours</p>')
-    expect(home(() => useAttendanceAttention('student').map((n) => n.text).join(' | '))).toBe(
-      `<p>You didn&#x27;t check out on ${dayLabel('2026-01-15')}. Ask a mentor to add your check-out so your hours count.</p>`,
-    )
   })
 
   it('still shows mentors how many came to the last meeting', () => {
@@ -334,5 +333,31 @@ describe('which dates are counted', () => {
     expect(renderToString(createElement(AttendancePage))).not.toContain('>Periods<')
     setDemoRole('admin')
     expect(renderToString(createElement(AttendancePage))).toContain('>Periods<')
+  })
+})
+
+describe('what Attendance puts on the home page', () => {
+  const now = Date.parse('2026-01-20T18:00:00Z')
+  const sentHoursAgo = (hours: number) => ({ ...requestsTable.demoRows[0], created_at: new Date(now - hours * 3_600_000).toISOString() })
+
+  it('leaves alone a request sent today, and speaks up once one has waited a day', () => {
+    expect(lateRequests([sentHoursAgo(3)], now)).toEqual([])
+    expect(lateRequests([sentHoursAgo(23)], now)).toEqual([])
+    expect(lateRequests([sentHoursAgo(30)], now)).toHaveLength(1)
+  })
+
+  it('counts only the ones that are late', () => {
+    expect(lateRequests([sentHoursAgo(2), sentHoursAgo(40), sentHoursAgo(50)], now)).toHaveLength(2)
+  })
+
+  it('says nothing about last night\'s pull, and speaks up when one stopped', () => {
+    const pulledHoursAgo = (hours: number) => ({ ...syncsTable.demoRows[0], created_at: new Date(now - hours * 3_600_000).toISOString() })
+    expect(pullIsLate(pulledHoursAgo(10), now)).toBe(false)
+    expect(pullIsLate(pulledHoursAgo(35), now)).toBe(false)
+    expect(pullIsLate(pulledHoursAgo(40), now)).toBe(true)
+  })
+
+  it('says nothing when the pull has never run, which is a setup job, not an alarm', () => {
+    expect(pullIsLate(null, now)).toBe(false)
   })
 })

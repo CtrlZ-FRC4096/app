@@ -2,21 +2,21 @@ import { modules } from '../../modules'
 import { canOpen, useSession, type Role } from '../session'
 import { href } from '../router'
 import { groupModules, type ModuleDefinition } from '../registry'
-import { PageHead, Panel, Pill } from '../ui'
+import { PageHead, Panel, Pick, Pill } from '../ui'
+import { THEMES, setTheme, useTheme } from '../theme'
 import { QuietBoundary } from '../ErrorBoundary'
 
 const ADD_MODULE_DOC = 'https://github.com/CtrlZ-FRC4096/app/blob/main/docs/adding-a-module.md'
 
 export function Home() {
   const { name, role } = useSession()
+  const theme = useTheme()
   // The same groups as the menus in the top bar, so both read the same way.
   const groups = groupModules(modules.filter((m) => canOpen(role, m.roles)))
 
   return (
     <>
-      <PageHead title={`Hi ${name.split(' ')[0]}`}>
-        Everything the team tracks, in one place.
-      </PageHead>
+      <PageHead title={`Hi ${name.split(' ')[0]}`} />
 
       <Panel title="Needs attention" aside={<span className="note">Pulled from every module</span>}>
         {/* Each module adds its own lines. If none do, the list is empty and the note below shows instead. */}
@@ -56,6 +56,11 @@ export function Home() {
             <p><a href={ADD_MODULE_DOC} target="_blank" rel="noopener">How to add a module ↗</a></p>
           </div>
         </div>
+      </section>
+
+      <section className="theme-row">
+        <span className="note">Appearance</span>
+        <Pick label="Appearance" options={[...THEMES]} value={theme} onChange={setTheme} />
       </section>
     </>
   )

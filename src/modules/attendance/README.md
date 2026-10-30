@@ -10,8 +10,8 @@ Who said they'd come, when they checked in and out, and attendance points.
 - **Requests for missing hours.** Anyone can ask for hours Jibble missed,
   from their own attendance: a forgotten check-out, or a whole session they
   didn't check in for, with a note. Mentors and admins see the requests at
-  the bottom of the tab (and a reminder on the home page) and approve or
-  decline them. Approving adds the times as check-ins and check-outs made
+  the bottom of the tab and approve or decline them, and the home page
+  says so once a request has waited a day. Approving adds the times as check-ins and check-outs made
   by hand, in the database in the same step, so hours and points update
   straight away. People can take back a request until it's decided.
 - **Mentors and admins see everyone's**, and are the only ones who can
@@ -68,8 +68,8 @@ Once set up, the **Pull attendance from Slack** workflow reads the
 attendance channel once a day, late in the evening after meetings, and adds
 anything new: poll answers and
 Jibble check-ins and check-outs. Nobody has to export Slack. The tab shows
-when the last pull ran, and mentors see a warning on the home page if pulls
-stop. It follows the same rules as importing an export: it updates poll
+when the last pull ran, and mentors see a warning on the home page once a
+day and a half goes by without one. It follows the same rules as importing an export: it updates poll
 answers but never ones a mentor set by hand, and never brings back a
 check-in a mentor ignored. Each pull re-reads the last 3 days, to catch late
 poll votes.
