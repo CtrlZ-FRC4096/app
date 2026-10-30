@@ -35,7 +35,8 @@ export default function AttendancePage() {
           ? "Who said they'd come, when they checked in and out, and the points from both. Pulled from the attendance channel's Slack poll and Jibble; fix mistakes by choosing a name."
           : "Your points and hours, from the attendance poll in Slack and your Jibble check-ins. Only you and the mentors can see them. If something's wrong, ask a mentor to fix it."}
       </PageHead>
-      <RangePicker range={range} />
+      {isMentor(role) && <RangePicker range={range} />}
+      <RangeNote range={range} />
       <MyAttendance range={range} rangeName={rangeName} />
       {isMentor(role) && <TeamAttendance range={range} />}
       <PointsRules />
@@ -44,49 +45,53 @@ export default function AttendancePage() {
   )
 }
 
-/** The dates points are counted over: a saved period, all time, or dates someone picks. */
+/** Mentors and admins: the dates points are counted over, a saved period, all time, or dates they pick. */
 function RangePicker({ range }: { range: ReturnType<typeof useCountRange> }) {
   const periods = periodsTable.useRows()
   return (
-    <>
-      <div className="toolbar">
-        <label className="field" htmlFor="att-period">
-          Count points over
-          <select
-            id="att-period"
-            className="input"
-            value={range.choice}
-            onChange={(e) => {
-              const choice = e.target.value
-              range.set(choice === 'all' ? { kind: 'all' } : choice === 'custom' ? { kind: 'custom', from: range.from ?? '', to: range.to ?? '' } : { kind: 'period', id: choice })
-            }}
-          >
-            {periods.map((period) => <option key={period.id} value={period.id}>{period.name}</option>)}
-            <option value="all">All time</option>
-            <option value="custom">Dates I pick</option>
-          </select>
-        </label>
-        {/* Changing a date switches to "Dates I pick", starting from the dates shown. */}
-        <label className="field" htmlFor="att-from">
-          From
-          <input id="att-from" className="input" type="date" value={range.from ?? ''} max={range.to} onChange={(e) => range.set({ kind: 'custom', from: e.target.value, to: range.to ?? '' })} />
-        </label>
-        <label className="field" htmlFor="att-to">
-          To
-          <input id="att-to" className="input" type="date" value={range.to ?? ''} min={range.from} onChange={(e) => range.set({ kind: 'custom', from: range.from ?? '', to: e.target.value })} />
-        </label>
-      </div>
-      <p className="note" aria-live="polite">
-        {range.from || range.to ? (
-          <>
-            Counting <strong>{range.period?.name ?? 'the dates you picked'}</strong> ({rangeText(range.from, range.to)}): everyone starts with{' '}
-            {BASE_POINTS} points, and only meetings in these dates count.
-          </>
-        ) : (
-          <>Counting <strong>all time</strong>: everyone starts with {BASE_POINTS} points, and every meeting counts.</>
-        )}
-      </p>
-    </>
+    <div className="toolbar">
+      <label className="field" htmlFor="att-period">
+        Count points over
+        <select
+          id="att-period"
+          className="input"
+          value={range.choice}
+          onChange={(e) => {
+            const choice = e.target.value
+            range.set(choice === 'all' ? { kind: 'all' } : choice === 'custom' ? { kind: 'custom', from: range.from ?? '', to: range.to ?? '' } : { kind: 'period', id: choice })
+          }}
+        >
+          {periods.map((period) => <option key={period.id} value={period.id}>{period.name}</option>)}
+          <option value="all">All time</option>
+          <option value="custom">Dates I pick</option>
+        </select>
+      </label>
+      {/* Changing a date switches to "Dates I pick", starting from the dates shown. */}
+      <label className="field" htmlFor="att-from">
+        From
+        <input id="att-from" className="input" type="date" value={range.from ?? ''} max={range.to} onChange={(e) => range.set({ kind: 'custom', from: e.target.value, to: range.to ?? '' })} />
+      </label>
+      <label className="field" htmlFor="att-to">
+        To
+        <input id="att-to" className="input" type="date" value={range.to ?? ''} min={range.from} onChange={(e) => range.set({ kind: 'custom', from: range.from ?? '', to: e.target.value })} />
+      </label>
+    </div>
+  )
+}
+
+/** Which dates are being counted, for everyone. */
+function RangeNote({ range }: { range: ReturnType<typeof useCountRange> }) {
+  return (
+    <p className="note" aria-live="polite">
+      {range.from || range.to ? (
+        <>
+          Counting <strong>{range.period?.name ?? 'the dates you picked'}</strong> ({rangeText(range.from, range.to)}): everyone starts with{' '}
+          {BASE_POINTS} points, and only meetings in these dates count.
+        </>
+      ) : (
+        <>Counting <strong>all time</strong>: everyone starts with {BASE_POINTS} points, and every meeting counts.</>
+      )}
+    </p>
   )
 }
 

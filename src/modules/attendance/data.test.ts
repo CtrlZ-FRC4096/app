@@ -8,6 +8,7 @@ import { membersTable } from '../../core/members'
 import {
   addCheck,
   cancelRequest,
+  countingFor,
   decideRequest,
   findMyPerson,
   requestHours,
@@ -312,5 +313,25 @@ describe('requests for missing hours', () => {
 
   it("doesn't let students approve", async () => {
     expect(await decideRequest(request('Alex Rivera'), true)).toEqual({ ok: false, error: 'Only mentors and admins can approve requests.' })
+  })
+})
+
+describe('which dates are counted', () => {
+  afterEach(() => setDemoRole('student'))
+
+  it('lets only mentors and admins pick them; everyone else sees the period that includes today', () => {
+    expect(countingFor('mentor', { kind: 'all' })).toEqual({ kind: 'all' })
+    expect(countingFor('admin', { kind: 'custom', from: '2026-01-01', to: '' })).toEqual({ kind: 'custom', from: '2026-01-01', to: '' })
+    expect(countingFor('student', { kind: 'all' })).toBeNull()
+  })
+
+  it('shows the date controls to mentors and admins only', async () => {
+    const { default: AttendancePage } = await import('./AttendancePage')
+    setDemoRole('student')
+    const student = renderToString(createElement(AttendancePage))
+    expect(student).not.toContain('Count points over')
+    expect(student).toContain('2026 build season')
+    setDemoRole('mentor')
+    expect(renderToString(createElement(AttendancePage))).toContain('Count points over')
   })
 })
