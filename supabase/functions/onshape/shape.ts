@@ -81,21 +81,29 @@ function point(value: unknown): P3 | null {
 }
 
 /**
- * The edges in Onshape's tessellatededges answer, each a line of points in
- * inches. Onshape has sent this both as a list of bodies and as { bodies },
- * so both are read.
+ * Each part's edges in Onshape's tessellatededges answer, by part ID, each
+ * edge a line of points in inches. Onshape has sent this both as a list of
+ * bodies and as { bodies }, so both are read. A body with no ID is "".
  */
-export function readEdges(answer: unknown): P3[][] {
+export function readBodies(answer: unknown): Map<string, P3[][]> {
   const a = answer as { bodies?: unknown } | unknown[] | null
   const bodies = Array.isArray(a) ? a : Array.isArray(a?.bodies) ? (a.bodies as unknown[]) : []
-  const edges: P3[][] = []
-  for (const body of bodies) {
-    for (const edge of ((body as { edges?: unknown[] })?.edges ?? []) as { vertices?: unknown[] }[]) {
+  const parts = new Map<string, P3[][]>()
+  for (const body of bodies as { id?: unknown; edges?: unknown[] }[]) {
+    const id = typeof body?.id === 'string' ? body.id : ''
+    const edges = parts.get(id) ?? []
+    for (const edge of (body?.edges ?? []) as { vertices?: unknown[] }[]) {
       const points = (edge?.vertices ?? []).map(point).filter((p): p is P3 => p !== null)
       if (points.length >= 2) edges.push(points)
     }
+    parts.set(id, edges)
   }
-  return edges
+  return parts
+}
+
+/** Every edge in a tessellatededges answer, whichever part it's on. */
+export function readEdges(answer: unknown): P3[][] {
+  return [...readBodies(answer).values()].flat()
 }
 
 const near = (a: P2, b: P2) => Math.abs(a[0] - b[0]) < TOL && Math.abs(a[1] - b[1]) < TOL
