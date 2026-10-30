@@ -23,7 +23,7 @@ import type { Notice } from '../../core/registry'
 import { BASE_POINTS, buildReport, type DayRecord, type PersonReport, type Report } from './points'
 import { countRange, type CountRange, type Counting, type Period } from './periods'
 import { checkRequest, type HoursRequestInput, type RequestStatus } from './requests'
-import { ago, dayLabel, teamClock, teamDay, teamInstant, today } from './time'
+import { dayLabel, teamClock, teamDay, teamInstant, today } from './time'
 import { nameKey, resolve, slackKey, type ParsedDay, type SlackUser } from './slack-export'
 
 export interface AttendancePerson extends Row {
@@ -165,9 +165,6 @@ export function useLastPull(): AttendanceSync | null {
   return syncs[syncs.length - 1] ?? null
 }
 
-/** Pulls run nightly. Longer than this without one means something stopped. */
-const PULL_OVERDUE_HOURS = 36
-
 // ---------------------------------------------------------------------------
 // Reading.
 
@@ -256,39 +253,6 @@ export function useAttendanceSummary(role: Role): Notice {
   if (!last) return { tone: 'plain', text: 'No meetings yet' }
   const came = report.rows.filter((row) => row.days.get(last)?.sessions.length).length
   return { tone: 'info', text: `${came} at ${dayLabel(last)}` }
-}
-
-/**
- * "Needs attention" on the home page. Mentors: people who never checked out
- * at the last meeting, and pulls from Slack that stopped. Everyone else: a
- * nudge when they didn't check out at their last meeting.
- */
-export function useAttendanceAttention(role: Role): Notice[] {
-  const report = useReport({})
-  const lastPull = useLastPull()
-  const mine = useMyAttendance({})
-  const waiting = useWaitingRequests()
-  const [openedAt] = useState(() => Date.now())
-  const notices: Notice[] = []
-  if (!isMentor(role)) {
-    const latest = mine.row ? [...mine.row.days.values()].filter((d) => d.sessions.length || d.rsvp).pop() : undefined
-    if (latest?.stillIn) {
-      notices.push({ tone: 'warn', text: `You didn't check out on ${dayLabel(latest.day)}. Ask a mentor to add your check-out so your hours count.` })
-    }
-    return notices
-  }
-  const last = report.days[report.days.length - 1]
-  const stillIn = last ? report.rows.filter((row) => row.days.get(last)?.stillIn).length : 0
-  if (stillIn) {
-    notices.push({ tone: 'warn', text: `${stillIn} ${stillIn === 1 ? "person didn't" : "people didn't"} check out on ${dayLabel(last)}. Add their check-out so their hours count.` })
-  }
-  if (isLive && lastPull && openedAt - Date.parse(lastPull.created_at) > PULL_OVERDUE_HOURS * 3_600_000) {
-    notices.push({ tone: 'crit', text: `Attendance was last pulled from Slack ${ago(lastPull.created_at, new Date(openedAt))}. Check the "Pull attendance from Slack" workflow in GitHub Actions.` })
-  }
-  if (waiting.length) {
-    notices.push({ tone: 'warn', text: `${plural(waiting.length, 'request', 'requests')} for missing hours waiting. Approve or decline them at the bottom of Attendance.` })
-  }
-  return notices
 }
 
 // ---------------------------------------------------------------------------

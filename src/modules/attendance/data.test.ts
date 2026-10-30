@@ -13,7 +13,6 @@ import {
   requestHours,
   requestsTable,
   sortRows,
-  useAttendanceAttention,
   useAttendanceSummary,
   applyImport,
   checksTable,
@@ -256,9 +255,6 @@ describe('your own attendance', () => {
     setDemoRole('student')
     // Alex, in the 2026 build season: 6 points, and 2.2 hours (Jan 13; Jan 15 has no check-out).
     expect(home(() => useAttendanceSummary('student').text)).toBe('<p>You: 6 points · 2.2 hours</p>')
-    expect(home(() => useAttendanceAttention('student').map((n) => n.text).join(' | '))).toBe(
-      `<p>You didn&#x27;t check out on ${dayLabel('2026-01-15')}. Ask a mentor to add your check-out so your hours count.</p>`,
-    )
   })
 
   it('still shows mentors how many came to the last meeting', () => {

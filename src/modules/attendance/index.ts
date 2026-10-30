@@ -1,5 +1,5 @@
 import type { ModuleDefinition } from '../../core/registry'
-import { useAttendanceAttention, useAttendanceSummary } from './data'
+import { useAttendanceSummary } from './data'
 
 export const attendance: ModuleDefinition = {
   id: 'attendance',
@@ -10,5 +10,4 @@ export const attendance: ModuleDefinition = {
   // attendance: it's personal information. The database's rules enforce that.
   load: () => import('./AttendancePage'),
   useSummary: useAttendanceSummary,
-  useAttention: useAttendanceAttention,
 }
