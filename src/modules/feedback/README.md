@@ -22,7 +22,7 @@ list tidy.
 
 ## Who can do what
 
-The rules are in `supabase/migrations/20261029120000_feedback_posts.sql`, and
+The rules are in `supabase/migrations/20261030000000_feedback_posts.sql`, and
 `supabase/tests/feedback-posts.test.ts` checks every one of them.
 
 - **Anyone on the team** reads the list and sends a post, signed with their own id.

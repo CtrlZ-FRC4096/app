@@ -1,8 +1,22 @@
 # Attendance
 
 Who said they'd come, when they checked in and out, and attendance points.
-**Mentors and admins only**: attendance is personal information about
-students, and the database's rules stop anyone else reading or changing it.
+
+- **Everyone sees their own** at the top of the tab: points, hours and
+  meetings for the dates being counted, and each of their days. They're
+  matched by Slack account, so someone added by name only (a Jibble name
+  that matched no Slack account) sees nothing until a mentor fixes it. The
+  home page tile shows their points and hours this period.
+- **Requests for missing hours.** Anyone can ask for hours Jibble missed,
+  from their own attendance: a forgotten check-out, or a whole session they
+  didn't check in for, with a note. Mentors and admins see the requests at
+  the bottom of the tab (and a reminder on the home page) and approve or
+  decline them. Approving adds the times as check-ins and check-outs made
+  by hand, in the database in the same step, so hours and points update
+  straight away. People can take back a request until it's decided.
+- **Mentors and admins see everyone's**, and are the only ones who can
+  change anything. Attendance is personal information about students: the
+  database's rules give everyone else only their own rows, read-only.
 
 This replaces the team's attendance notebook (Python, reading a Slack
 export into an Excel workbook). It works the same way:
@@ -32,13 +46,18 @@ Days and times are in Central time, whatever the computer's time zone.
    chooses the folder on the Import tab. Only Slack IDs, names, check-in
    times and poll votes are saved. Importing again only adds what's new.
 2. **Points, Hours, Check-ins, RSVPs**: the same sheets as the old workbook,
-   with a CSV download for each.
+   with a CSV download for each. Every sheet shows each person's points,
+   hours and days here side by side, and sorts by its own: Points by
+   points, Hours by hours. Click a column's heading to sort by it instead.
 3. **Periods**: the dates points are counted over, like "2027 build season,
    Jan 9 to Apr 17" (leave the last day empty while it's still going).
    Everyone starts a period with 3 points and only its meetings count.
-   Mentors save periods once and all see the same ones; the sheets open on
-   the period that includes today. "Count points over" switches to another
-   period, all time, or any dates, until the app is reloaded.
+   Only mentors and admins save periods, like "Fall 2026" or "2027 build
+   season", and everyone sees the same ones. The tab opens on the most
+   recent one: the period that includes today, or else the last one that
+   started (so between seasons it still shows last season). Anyone can
+   switch with "Count points over" to another period, all time, or any
+   dates, until the app is reloaded.
 4. **Fixes**: choose a name to add a missed check-out, change an RSVP,
    ignore a wrong check-in, or hide someone (mentors, parents) from the
    tables. Manual RSVPs are never overwritten by importing again.

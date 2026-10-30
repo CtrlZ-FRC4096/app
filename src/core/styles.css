@@ -250,3 +250,9 @@ img.avatar { object-fit: cover; background: var(--surface-2); }
 .check-ignored { text-decoration: line-through; color: var(--muted); }
 .steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
 .points-rules { max-width: 560px; }
+
+/* Big numbers with a label under each, like your points and hours on Attendance. */
+.stats { display: flex; flex-wrap: wrap; gap: 8px 28px; padding: 14px 16px; }
+.stats > div { display: grid; }
+.stats strong { font-size: 28px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stats span { font-size: 13px; color: var(--muted); }
