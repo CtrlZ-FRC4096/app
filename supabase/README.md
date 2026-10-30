@@ -196,7 +196,7 @@ the functions can read.
 |:--|:--|
 | `hello` | The example to copy. Answers members with their name and which secrets are set |
 | `tba` | The Blue Alliance for scouting: an event's schedule and rankings, and a team's matches and name |
-| `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio |
+| `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio. For the CNC module: parts' sizes and outlines, and where parts sit in a sheet's layout assembly |
 | `slack` | Slack messages from the team's bot: to yourself (anyone), or to people and a channel (mentors). Used through `src/core/slack.ts` |
 | `calendar` | The team's Google Calendar: everyone sees its events; mentors add events, and change or remove the ones the app added. Used through `src/core/calendar.ts` |
 
