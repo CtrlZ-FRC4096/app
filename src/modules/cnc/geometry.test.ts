@@ -1,8 +1,8 @@
 // Tests for geometry.ts. Run them with `npm test`.
 import { describe, expect, it } from 'vitest'
 import {
-  biggestClearPiece, boundsOf, designChecks, findSpot, findSpots, flatOutline, footprint, guessStock, inches, materialWords, minutesText,
-  nextLabel, onSheet, overlaps, parseInches, quarterTurn, routerMinutes, sizeText, suggestCode, svgPath, toCorner, usedShare,
+  biggestClearPiece, boundsOf, designChecks, findSpot, findSpots, flatOutline, footprint, guessStock, inches, isPlate, materialName, materialWords,
+  minutesText, nextLabel, onSheet, overlaps, parseInches, quarterTurn, routerMinutes, sizeText, snapInches, suggestCode, svgPath, toCorner, usedShare,
   type ShapeGeometry, type StockGeometry,
 } from './geometry'
 
@@ -223,6 +223,34 @@ describe('matching parts to stock', () => {
     expect(guess('Aluminum')).toBeNull()
     expect(guess('Nylon 6/6 rod, 3/4 in')).toBeNull()
     expect(guess(null)).toBeNull()
+  })
+})
+
+describe('stock from Onshape', () => {
+  it('names just the material, however it is written', () => {
+    expect(materialName('Aluminum - 6061')).toBe('aluminum')
+    expect(materialName('6061 aluminum, 1/4 in plate')).toBe('aluminum')
+    expect(materialName('Polycarbonate, 1/8 in sheet')).toBe('polycarbonate')
+    expect(materialName('Carbon fiber')).toBe('carbon fiber')
+    expect(materialName('6061')).toBeNull()
+    expect(materialName(null)).toBeNull()
+  })
+
+  it("snaps Onshape's 3 decimal places back to the fraction they were drawn as", () => {
+    expect(snapInches(0.188)).toBe(0.1875)
+    expect(snapInches(0.063)).toBe(0.0625)
+    expect(snapInches(0.25)).toBe(0.25)
+    // 3 mm isn't a fraction of an inch: it stays as it is.
+    expect(snapInches(0.118)).toBe(0.118)
+  })
+
+  it('tells plates from shafts, blocks and tubes', () => {
+    const shape = (thickness: number, width: number) => ({ outline: [[0, 0, 1, 0, 1, 1]], thickness_in: thickness, width_in: width })
+    expect(isPlate(shape(0.25, 6))).toBe(true)
+    expect(isPlate(shape(0.5, 0.577))).toBe(false)
+    expect(isPlate(shape(0.75, 2))).toBe(false)
+    expect(isPlate(shape(1, 2))).toBe(false)
+    expect(isPlate({ ...shape(0.25, 6), outline: [] })).toBe(false)
   })
 })
 

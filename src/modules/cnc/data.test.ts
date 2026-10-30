@@ -6,10 +6,11 @@ import { setDemoRole } from '../../core/demo'
 import { partsTable, systemsTable } from '../bom/data'
 import {
   addJob, addManualCut, addSheet, addStock, boardGroups, canRemoveCut, changeJob, changeSheet, cncSummary, cutLately, cutsTable, jobsTable,
-  partForOnshape, planLayout, planRoom, readLayout, readShapes, readSheet, readStock, removeCut, removeJob, removeStock, saveRoomPlan,
+  addStockFromOnshape, camStockFor, markReadyToCam, onshapeMadeParts, plateStock, partForOnshape, planLayout, planRoom, planStockImport, readLayout, shapeReadCalls, readShapes, readSheet, readStock, removeCut, removeJob, removeStock, saveRoomPlan,
   setJobStatus, shapesTable, sheetForm, sheetsTable, sheetsWithRoom, splitRemnant, stockForm, stockTable,
-  type Cut, type Job, type ManualCut, type OnshapePlacement, type Sheet,
+  type Cut, type Job, type ManualCut, type OnshapePlacement, type Shape, type Sheet,
 } from './data'
+import type { Part } from '../bom/data'
 
 beforeEach(() => {
   setDemoRole('student')
@@ -103,13 +104,16 @@ describe('the CNC board', () => {
     expect(cutLately(jobsTable.rows(), [], [], [], [], new Date('2026-12-30T12:00:00Z'))).toEqual([])
   })
 
-  it('adds made parts, adding to a job already waiting on the same stock', async () => {
-    const spareBefore = jobFor(SIDE_PLATE, 'to_cut').quantity
-    const more = await addJob(part(SIDE_PLATE), 2, stockByCode('AL250').id)
+  it('adds made parts ready to CAM, adding to a job already waiting for CAM on the same stock', async () => {
+    const first = await addJob(part(SIDE_PLATE), 2, stockByCode('AL250').id)
+    expect(first).toMatchObject({ ok: true, value: { added: true, job: { status: 'cam', quantity: 2 } } })
+    const more = await addJob(part(SIDE_PLATE), 3, stockByCode('AL250').id)
     expect(more).toMatchObject({ ok: true, value: { added: false } })
-    expect(jobFor(SIDE_PLATE, 'to_cut').quantity).toBe(spareBefore + 2)
+    expect(jobFor(SIDE_PLATE, 'cam').quantity).toBe(5)
+    // The spare already CAM'd and waiting to cut isn't changed.
+    expect(jobFor(SIDE_PLATE, 'to_cut').quantity).toBe(1)
     const other = await addJob(part(SIDE_PLATE), 1, stockByCode('AL125').id, 'Test piece')
-    expect(other).toMatchObject({ ok: true, value: { added: true, job: { status: 'to_cut', note: 'Test piece' } } })
+    expect(other).toMatchObject({ ok: true, value: { added: true, job: { status: 'cam', note: 'Test piece' } } })
   })
 
   it("refuses bought parts and quantities that aren't 1 to 999", async () => {
@@ -144,7 +148,8 @@ describe('the CNC board', () => {
   })
 
   it('sums up the board for the home page', () => {
-    expect(cncSummary(jobsTable.rows())).toEqual({ tone: 'info', text: '5 parts to cut · 1 cutting' })
+    expect(cncSummary(jobsTable.rows())).toEqual({ tone: 'info', text: '5 to cut · 1 cutting' })
+    expect(cncSummary([...jobsTable.rows(), { ...jobsTable.rows()[0], status: 'cam', quantity: 2 }])).toEqual({ tone: 'info', text: '2 ready to CAM · 5 to cut · 1 cutting' })
     expect(cncSummary([])).toEqual({ tone: 'plain', text: 'Nothing waiting to cut' })
   })
 })
@@ -158,9 +163,9 @@ describe('shapes from Onshape', () => {
   it('reads a shape not read before, and says which parts are gone from Onshape', async () => {
     const shape = shapesTable.rows()[0]
     await shapesTable.remove(shape.id)
-    const result = await readShapes([part(SIDE_PLATE), part('4096-26-INT-002')])
-    expect(result).toEqual({ ok: true, value: 'Read 1 part from Onshape. 1 part isn’t in Onshape any more. That used 2 Onshape API calls.' })
-    expect(shapesTable.rows().map((s) => s.part_id)).toEqual([part(SIDE_PLATE).id])
+    const result = await readShapes([part(SIDE_PLATE), part('4096-26-INT-002'), part('4096-26-INT-004')])
+    expect(result).toEqual({ ok: true, value: 'Read 2 parts from Onshape. 1 part isn’t in Onshape any more. That used 3 Onshape API calls.' })
+    expect(shapesTable.rows().map((s) => s.part_id)).toEqual([part(SIDE_PLATE).id, part('4096-26-INT-002').id])
   })
 
   it('says when parts were typed in, so there is nothing to read', async () => {
@@ -327,5 +332,113 @@ describe('finding room', () => {
     expect(sheetsWithRoom(shape, stockByCode('AL250'), sheetsTable.rows(), cutsTable.rows()).map((s) => s.label)).toEqual(['AL250-001', 'AL250-002'])
     expect(sheetsWithRoom(shape, stockByCode('AL125'), sheetsTable.rows(), cutsTable.rows()).map((s) => s.label)).toEqual(['AL125-002'])
     expect(sheetsWithRoom(undefined, stockByCode('AL250'), sheetsTable.rows(), cutsTable.rows())).toEqual([])
+  })
+})
+
+describe('importing stock from Onshape', () => {
+  // Made-up parts from Onshape, each with a material and a shape.
+  let n = 0
+  const madePart = (name: string, material: string | null): Part => {
+    n += 1
+    return { ...part(SIDE_PLATE), id: `part-${n}`, name, part_number: `4096-26-TST-00${n}`, material, onshape_id: `doc/elem/J${n}D` }
+  }
+  const shapeOf = (p: Part, thickness: number, width = 6, length = 10): Shape => ({
+    ...shapesTable.rows()[0], id: `shape-${p.id}`, part_id: p.id, thickness_in: thickness, width_in: width, length_in: length,
+  })
+
+  it('proposes the plates the parts need, one per material and thickness, with a code of its own', () => {
+    const gusset = madePart('Gusset', 'Aluminum - 6061')
+    const bracket = madePart('Bracket', 'Aluminum - 6061')
+    const plate = madePart('Side plate', 'Aluminum - 6061')
+    const cover = madePart('Cover', 'Polycarbonate')
+    const shapes = [shapeOf(gusset, 0.188), shapeOf(bracket, 0.188), shapeOf(plate, 0.25), shapeOf(cover, 0.0625)]
+    const stocks = stockTable.rows().filter((s) => s.code !== 'AL250')
+    const plan = planStockImport([gusset, bracket, plate, cover], shapes, [...stocks, { ...stocks[0], code: 'AL188', name: 'Something else', kind: 'bar' }])
+    expect(plan.add.map((a) => [a.stock.name, a.stock.code, a.stock.material, a.stock.thickness_in, a.parts.map((p) => p.name)])).toEqual([
+      ['3/16 in aluminum plate', 'AL188B', 'Aluminum - 6061', 0.1875, ['Gusset', 'Bracket']],
+      ['1/4 in aluminum plate', 'AL250', 'Aluminum - 6061', 0.25, ['Side plate']],
+      ['1/16 in polycarbonate plate', 'PC063', 'Polycarbonate', 0.0625, ['Cover']],
+    ])
+    expect(plan.add[0].stock).toMatchObject({ kind: 'plate', sheet_width_in: null, bit_in: null })
+  })
+
+  it('knows the plates already in the stock list, however the material is written', () => {
+    const plate = madePart('Side plate', 'Aluminum - 6061')
+    const plan = planStockImport([plate], [shapeOf(plate, 0.25)], stockTable.rows())
+    expect(plan.add).toEqual([])
+    expect(plan.have.map((h) => [h.stock.code, h.parts.map((p) => p.name)])).toEqual([['AL250', ['Side plate']]])
+  })
+
+  it("leaves out parts that aren't plates, have no material, or haven't been read", () => {
+    const shaft = madePart('Shaft', 'Aluminum - 6061')
+    const mystery = madePart('Mystery plate', null)
+    const unread = madePart('Unread plate', 'Polycarbonate')
+    const plan = planStockImport([shaft, mystery, unread], [shapeOf(shaft, 0.5, 0.5, 12), shapeOf(mystery, 0.25)], stockTable.rows())
+    expect(plan.notPlates.map((p) => p.name)).toEqual(['Shaft'])
+    expect(plan.noMaterial.map((p) => p.name)).toEqual(['Mystery plate'])
+    expect(plan.unread.map((p) => p.name)).toEqual(['Unread plate'])
+  })
+
+  it('only looks at made parts from Onshape, and counts the API calls to read them', () => {
+    const fromOnshape = onshapeMadeParts(partsTable.rows())
+    expect(fromOnshape.map((p) => p.part_number)).toEqual(['4096-26-INT-001', '4096-26-INT-002', '4096-26-INT-003'])
+    // One Part Studio, plus one call per part.
+    expect(shapeReadCalls(fromOnshape)).toBe(4)
+  })
+
+  it('adds the plates picked, which anyone can do', async () => {
+    const cover = madePart('Cover', 'Polycarbonate')
+    const plan = planStockImport([cover], [shapeOf(cover, 0.0625)], stockTable.rows())
+    expect(await addStockFromOnshape(plan.add)).toMatchObject({ ok: true })
+    expect(stockTable.rows().find((s) => s.code === 'PC063')).toMatchObject({ name: '1/16 in polycarbonate plate', created_by: '00000000-0000-4000-8000-00000000a1e7' })
+    expect(await addStockFromOnshape([])).toMatchObject({ ok: false })
+  })
+
+  it('works with the example data: the side plate is already here, and the shaft and spacer are not plates', async () => {
+    const plan = planStockImport(partsTable.rows(), shapesTable.rows(), stockTable.rows())
+    expect(plan.unread.map((p) => p.name)).toEqual(['Roller shaft', 'Pivot spacer'])
+    await readShapes(plan.unread)
+    const after = planStockImport(partsTable.rows(), shapesTable.rows(), stockTable.rows())
+    expect(after).toMatchObject({ add: [], unread: [], noMaterial: [] })
+    expect(after.have.map((h) => h.stock.code)).toEqual(['AL250'])
+    expect(after.notPlates.map((p) => p.name)).toEqual(['Roller shaft', 'Pivot spacer'])
+  })
+})
+
+describe('flagging parts ready to CAM', () => {
+  it('picks aluminum or polycarbonate and a thickness from the material, or the shape from Onshape', () => {
+    const stocks = stockTable.rows()
+    const shape = shapesTable.rows()[0]
+    expect(camStockFor(part(SIDE_PLATE), shape, stocks)).toEqual({ plate: 'aluminum', thickness: 0.25 })
+    expect(camStockFor(part(SIDE_PLATE), undefined, stocks)).toEqual({ plate: 'aluminum', thickness: 0.25 })
+    expect(camStockFor(part('4096-26-DRV-001'), undefined, stocks)).toEqual({ plate: 'polycarbonate', thickness: 0.125 })
+    expect(camStockFor({ ...part(SIDE_PLATE), material: 'Aluminum' }, undefined, stocks)).toEqual({ plate: 'aluminum', thickness: 0 })
+  })
+
+  it('picks other stock for tubes and bars, and anything not aluminum or polycarbonate', () => {
+    const stocks = stockTable.rows()
+    expect(camStockFor(part('4096-26-DRV-002'), undefined, stocks)).toEqual({ stockId: stockByCode('AT2X1').id })
+    expect(camStockFor(part('4096-26-INT-003'), undefined, stocks)).toEqual({ stockId: null })
+  })
+
+  it('uses the plate already in the stock list', async () => {
+    const result = await markReadyToCam(part(SIDE_PLATE), 2, { plate: 'aluminum', thickness: 0.25 })
+    expect(result).toMatchObject({ ok: true, value: { added: true, stock: { code: 'AL250' }, job: { status: 'cam', stock_id: stockByCode('AL250').id } } })
+  })
+
+  it("adds a plate that isn't in the stock list yet, with a typed-in thickness", async () => {
+    expect(plateStock('aluminum', 0.375, stockTable.rows())).toBeUndefined()
+    const result = await markReadyToCam(part(SIDE_PLATE), 1, { plate: 'aluminum', thickness: 0.375 })
+    expect(result).toMatchObject({ ok: true, value: { stock: { name: '3/8 in aluminum plate', code: 'AL375', material: 'Aluminum', thickness_in: 0.375 } } })
+    // Flagging another part on it uses the same stock.
+    await markReadyToCam(part('4096-26-INT-002'), 1, { plate: 'aluminum', thickness: 0.375 })
+    expect(stockTable.rows().filter((s) => s.name === '3/8 in aluminum plate')).toHaveLength(1)
+  })
+
+  it('needs a thickness, and takes other stock or none', async () => {
+    expect(await markReadyToCam(part(SIDE_PLATE), 1, { plate: 'polycarbonate', thickness: 0 })).toMatchObject({ ok: false, error: expect.stringContaining('thickness') })
+    expect(await markReadyToCam(part('4096-26-DRV-002'), 4, { stockId: stockByCode('AT2X1').id })).toMatchObject({ ok: true, value: { stock: { code: 'AT2X1' } } })
+    expect(await markReadyToCam(part('4096-26-INT-003'), 4, { stockId: null })).toMatchObject({ ok: true, value: { stock: null, job: { stock_id: null } } })
+    expect(await markReadyToCam(part('4096-26-INT-004'), 1, { stockId: null })).toMatchObject({ ok: false, error: expect.stringContaining('bought') })
   })
 })

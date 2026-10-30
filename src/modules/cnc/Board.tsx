@@ -7,10 +7,11 @@ import { toast } from '../../core/toast'
 import { Panel, Pill, Stepper } from '../../core/ui'
 import { systemsTable } from '../bom/data'
 import {
-  STATUS_LABEL, STATUS_TONE, addJob, canReadShape, changeJob, cutsTable, readShapes, removeJob, setJobStatus, sheetsTable, sheetsWithRoom,
-  stockTable, useBoard, useMadeParts, type BoardJob, type JobStatus,
+  STATUS_LABEL, STATUS_TONE, camStockFor, canReadShape, markReadyToCam, shapesTable, changeJob, cutsTable, readShapes, removeJob, setJobStatus, sheetsTable, sheetsWithRoom,
+  stockTable, useBoard, useMadeParts, type BoardJob, type CamStock, type JobStatus,
 } from './data'
-import { designChecks, guessStock, inches, minutesText, routerMinutes, sizeText } from './geometry'
+import { CamStockPicker } from './CamStockPicker'
+import { designChecks, inches, minutesText, routerMinutes, sizeText } from './geometry'
 
 /**
  * The CNC board: parts waiting to be cut, grouped by the stock they're cut
@@ -36,27 +37,27 @@ export function Board(props: { onOpenSheet: (id: string) => void }) {
   return (
     <>
       <div className="toolbar">
-        {!adding && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>Add parts</button>}
+        {!adding && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>Flag parts ready to CAM</button>}
         {readable.length > 0 && (
           <button type="button" className="btn btn-sm" disabled={reading} onClick={() => void updateSizes()}>
             {reading ? 'Reading Onshape…' : 'Update sizes from Onshape'}
           </button>
         )}
-        <span className="note">Add made parts here, or from the BOM. Sizes, outlines and checks come from Onshape.</span>
+        <span className="note">Flag made parts here, or with Ready to CAM in the BOM. Sizes, outlines and checks come from Onshape.</span>
       </div>
 
       {adding && <AddJobForm onDone={() => setAdding(false)} />}
 
       {groups.length === 0 && (
         <Panel>
-          <p className="panel-body muted">Nothing waiting to cut. Add parts above, or with "Add to CNC board" on a made part in the BOM.</p>
+          <p className="panel-body muted">Nothing waiting to cut. Flag parts ready to CAM above, or with "Ready to CAM" on a made part in the BOM.</p>
         </Panel>
       )}
 
       {groups.map((group) => {
         const count = (status: JobStatus) => group.jobs.filter((b) => b.job.status === status).reduce((total, b) => total + b.job.quantity, 0)
         const minutes = group.jobs.reduce((total, b) => total + (b.shape && b.stock ? (routerMinutes(b.shape, b.stock) ?? 0) * b.job.quantity : 0), 0)
-        const counts = [count('to_cut') && `${count('to_cut')} to cut`, count('cutting') && `${count('cutting')} cutting`, minutes >= 1 && `${minutesText(minutes)} on the router`]
+        const counts = [count('cam') && `${count('cam')} ready to CAM`, count('to_cut') && `${count('to_cut')} to cut`, count('cutting') && `${count('cutting')} cutting`, minutes >= 1 && `${minutesText(minutes)} on the router`]
         return (
           <Panel
             key={group.stock?.id ?? 'none'}
@@ -115,7 +116,7 @@ function JobRow(props: { item: BoardJob; onEdit: () => void; onOpenSheet: (id: s
   const [reading, setReading] = useState(false)
   const minutes = shape && stock ? routerMinutes(shape, stock) : null
   const checks = shape && stock ? designChecks(shape, stock, sheets.filter((s) => s.stock_id === stock.id && s.status !== 'scrap')) : []
-  const roomOn = job.status === 'to_cut' ? sheetsWithRoom(shape, stock, sheets, cuts) : []
+  const roomOn = job.status === 'cam' || job.status === 'to_cut' ? sheetsWithRoom(shape, stock, sheets, cuts) : []
   const planned = cuts.filter((c) => c.job_id === job.id)
 
   async function move(status: JobStatus) {
@@ -189,6 +190,7 @@ function JobRow(props: { item: BoardJob; onEdit: () => void; onOpenSheet: (id: s
         )}
       </span>
       <span className="toolbar" style={{ marginLeft: 'auto' }}>
+        {job.status === 'cam' && <button type="button" className="btn btn-sm" onClick={() => void move('to_cut')}>CAM done</button>}
         {job.status === 'to_cut' && <button type="button" className="btn btn-sm" onClick={() => void move('cutting')}>Start cutting</button>}
         {job.status === 'cutting' && (
           <>
@@ -266,27 +268,31 @@ function StockSelect(props: { id: string; value: string; onChange: (id: string) 
   )
 }
 
-/** Put made parts on the board: pick a system and part, how many, and the stock (guessed from the part's material). */
+/**
+ * Flag made parts ready to CAM: pick a system and part, how many, and what
+ * it's cut from (aluminum or polycarbonate and a thickness, or other stock),
+ * guessed from the part's material and its shape in Onshape.
+ */
 function AddJobForm(props: { onDone: () => void }) {
   const parts = useMadeParts()
   const systems = systemsTable.useRows().filter((s) => parts.some((p) => p.system_id === s.id))
   const stocks = stockTable.useRows()
+  const shapes = shapesTable.useRows()
   const [systemId, setSystemId] = useState(systems[0]?.id ?? '')
   const inSystem = parts.filter((p) => p.system_id === systemId)
   const [partId, setPartId] = useState('')
   const part = inSystem.find((p) => p.id === partId)
   const [quantity, setQuantity] = useState(1)
-  // Null until someone picks one: until then, the stock guessed from the part's material.
-  const [stockId, setStockId] = useState<string | null>(null)
-  const shownStock = stockId ?? guessStock(part?.material ?? null, stocks)?.id ?? ''
+  const [cutFrom, setCutFrom] = useState<CamStock>({ plate: 'aluminum', thickness: 0 })
   const [saving, setSaving] = useState(false)
   const ref = useRef<HTMLFormElement>(null)
   useEffect(() => ref.current?.querySelector('select')?.focus(), [])
 
   function pickPart(id: string) {
     setPartId(id)
-    setQuantity(inSystem.find((p) => p.id === id)?.quantity ?? 1)
-    setStockId(null)
+    const picked = inSystem.find((p) => p.id === id)
+    setQuantity(picked?.quantity ?? 1)
+    if (picked) setCutFrom(camStockFor(picked, shapes.find((s) => s.part_id === picked.id), stocks))
   }
 
   async function add(event: FormEvent) {
@@ -296,19 +302,18 @@ function AddJobForm(props: { onDone: () => void }) {
       return
     }
     setSaving(true)
-    const result = await addJob(part, quantity, shownStock || null)
+    const result = await markReadyToCam(part, quantity, cutFrom)
     setSaving(false)
     if (!result.ok) {
       toast(result.error)
       return
     }
-    toast(result.value.added ? `Added ${part.name} ×${quantity}.` : `${part.name} was already waiting: now ${result.value.job.quantity} to cut.`)
+    toast(result.value.added ? `Flagged ${part.name} ×${quantity} ready to CAM.` : `${part.name} was already waiting for CAM: now ${result.value.job.quantity}.`)
     setPartId('')
-    setStockId(null)
   }
 
   return (
-    <Panel title="Add parts to the board">
+    <Panel title="Flag parts ready to CAM">
       <form ref={ref} className="panel-body" onSubmit={add}>
         {parts.length === 0 ? (
           <p className="muted">There are no made parts in the BOM yet. Add them there first, or import them from Onshape.</p>
@@ -330,20 +335,16 @@ function AddJobForm(props: { onDone: () => void }) {
               </label>
             </div>
             {part && <p className="note">{part.material ? `${part.material}.` : 'No material in the BOM yet.'} The BOM says {part.quantity} on the robot.</p>}
-            <div className="toolbar">
-              <div className="field">
-                How many
-                <Stepper id="job-quantity" label="How many" min={1} value={quantity} onChange={setQuantity} />
-              </div>
-              <StockSelect id="job-stock" value={shownStock} onChange={setStockId} stocks={stocks} />
+            <div className="field">
+              How many
+              <Stepper id="job-quantity" label="How many" min={1} value={quantity} onChange={setQuantity} />
             </div>
-            {part && !stockId && shownStock && <p className="note">Stock guessed from the material in the BOM. Change it if it's wrong.</p>}
+            <CamStockPicker id="job-cut-from" value={cutFrom} onChange={setCutFrom} />
           </>
         )}
         <div className="toolbar">
-          {parts.length > 0 && <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Adding…' : 'Add to board'}</button>}
+          {parts.length > 0 && <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Flagging…' : 'Ready to CAM'}</button>}
           <button type="button" className="btn" onClick={props.onDone}>Done</button>
-          {stocks.length === 0 && <span className="note">No stock yet: a mentor adds it under Stock.</span>}
         </div>
       </form>
     </Panel>

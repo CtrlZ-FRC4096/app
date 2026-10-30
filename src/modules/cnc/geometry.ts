@@ -411,6 +411,30 @@ export function guessStock<S extends { id: string; name: string; material: strin
   return first.stock
 }
 
+const FORMS = new Set(['plate', 'tube', 'bar', 'mm'])
+
+/**
+ * Just the material from a material's name, for naming stock: "Aluminum -
+ * 6061" and "6061 aluminum, 1/4 in plate" are both "aluminum". Null if
+ * there's no material in it.
+ */
+export function materialName(text: string | null): string | null {
+  if (!text) return null
+  const words = [...materialWords(text)].filter((w) => !/\d/.test(w) && !FORMS.has(w))
+  return words.length ? words.join(' ') : null
+}
+
+/** A size from Onshape (3 decimal places) back to the fraction it was drawn as, if it's within a hair of one: 0.188 → 0.1875. */
+export function snapInches(n: number): number {
+  const fraction = Math.round(n * 64) / 64
+  return Math.abs(n - fraction) <= 0.0015 ? fraction : n
+}
+
+/** Is a part's shape a flat plate the router cuts from sheet: an outline, at most 1 in thick, and at least 3 times as wide as it is thick? */
+export function isPlate(shape: Pick<ShapeGeometry, 'outline' | 'thickness_in' | 'width_in'>): boolean {
+  return shape.outline.length > 0 && shape.thickness_in > 0 && shape.thickness_in <= 1 && shape.width_in >= 3 * shape.thickness_in
+}
+
 const CODE_START: [RegExp, string][] = [
   [/alumin/, 'AL'], [/poly ?carb|lexan|\bpc\b/, 'PC'], [/steel/, 'ST'], [/delrin|acetal|pom/, 'DL'], [/hdpe|polyethylene/, 'HD'],
   [/carbon/, 'CF'], [/g10|fr4|garolite/, 'GL'], [/ply|wood|birch/, 'PW'], [/acrylic/, 'AC'], [/nylon/, 'NY'], [/abs/, 'AB'],
