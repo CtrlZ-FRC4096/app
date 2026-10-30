@@ -47,11 +47,12 @@ function Gate() {
   return <Shell user={access.user} />
 }
 
-/** The logo, which is the whole of the top bar on the left. It goes home. */
+/** The team's logo, which is the whole of the top bar on the left. It goes home. */
 function Brand() {
   return (
     <a className="brand" href="#/" aria-label="Ctrl-Z, home">
-      <span className="keys" aria-hidden="true"><span className="key">Ctrl</span><span className="key">Z</span></span>
+      {/* The mark from the team wiki. styles.css paints it, so it works on a light or a dark page. */}
+      <span className="logo" aria-hidden="true" />
     </a>
   )
 }

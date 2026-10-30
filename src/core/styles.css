@@ -96,8 +96,13 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .app-header { position: sticky; top: 0; z-index: 20; background: var(--header-bg); color: var(--header-ink); border-bottom: 1px solid var(--line); }
 .topbar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; padding-block: 9px; }
 .brand { display: flex; align-items: center; text-decoration: none; color: inherit; margin-right: auto; padding: 2px; border-radius: var(--radius); }
-.keys { display: flex; gap: 4px; }
-.key { display: inline-grid; place-items: center; min-width: 34px; height: 30px; padding: 0 7px; border-radius: 6px; background: var(--blue); color: var(--on-blue); font-family: var(--mono); font-weight: 500; font-size: 13px; box-shadow: inset 0 -3px 0 var(--orange); }
+/*
+ * The team's logo (src/core/logo.png), the same mark as the wiki. The file is
+ * one flat shape, so the page paints it through a mask: it takes the colour
+ * below rather than carrying its own, and stays sharp on any screen.
+ */
+.logo { width: 40px; height: 39px; background-color: var(--blue); -webkit-mask: url('./logo.png') center / contain no-repeat; mask: url('./logo.png') center / contain no-repeat; }
+.brand:hover .logo { background-color: var(--orange); }
 /* On a phone the logo and the account share the first line, the menus go below. */
 .topbar .account { order: 2; }
 .nav { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; flex-basis: 100%; order: 3; }
