@@ -10,6 +10,7 @@ import {
   type BomSystem, type Part, type PartFilter, type PartKind, type Robot,
 } from './data'
 import { planImport, type OnshapeImportPlan } from './onshape'
+import { addJob, likelyStock, useOnBoard, useStock } from '../cnc/data'
 
 // The form open at the top of the page, if any. A null robot, system or
 // part means adding a new one; otherwise it's the one being changed.
@@ -17,6 +18,7 @@ type Editing =
   | { form: 'robot'; robot: Robot | null }
   | { form: 'system'; system: BomSystem | null }
   | { form: 'part'; part: Part | null }
+  | { form: 'cnc'; part: Part }
 
 const INTRO = 'The parts in each system of the robot: what we make in the shop, and what we buy (COTS).'
 
@@ -40,6 +42,7 @@ export default function BomPage() {
   // An import from Onshape waiting to be confirmed, and whether Onshape is being read.
   const [importing, setImporting] = useState<{ system: BomSystem; plan: OnshapeImportPlan } | null>(null)
   const [reading, setReading] = useState(false)
+  const onBoard = useOnBoard()
 
   async function readOnshape(s: BomSystem) {
     setReading(true)
@@ -113,6 +116,7 @@ export default function BomPage() {
       {editing?.form === 'part' && system && (
         <PartForm key={editing.part?.id ?? `new-${system.id}`} system={system} parts={parts} part={editing.part} onDone={close} />
       )}
+      {editing?.form === 'cnc' && <CncForm key={editing.part.id} part={editing.part} onDone={close} />}
       {importing && importing.system.id === system?.id && (
         <ImportPreview system={importing.system} plan={importing.plan} onDone={() => setImporting(null)} />
       )}
@@ -191,6 +195,15 @@ export default function BomPage() {
                           {/* The database only accepts https:// links here, so it's safe to open. */}
                           {p.onshape_url && <>{(p.material || p.vendor || p.vendor_part_number) && ' · '}<a href={p.onshape_url} target="_blank" rel="noopener noreferrer">CAD</a></>}
                         </span>
+                        {p.kind === 'made' && !p.removed_in_onshape && (
+                          <>
+                            <br />
+                            <span className="note">
+                              {onBoard.get(p.id) ? `${onBoard.get(p.id)} on the CNC board · ` : ''}
+                              <button type="button" className="link-btn" onClick={() => setEditing({ form: 'cnc', part: p })}>Add to CNC board</button>
+                            </span>
+                          </>
+                        )}
                       </td>
                       <td className="num">{p.quantity}</td>
                     </tr>
@@ -471,6 +484,57 @@ function PartForm(props: { system: BomSystem; parts: Part[]; part: Part | null; 
           <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : part ? 'Save' : 'Add part'}</button>
           <button type="button" className="btn" onClick={props.onDone}>{part ? 'Cancel' : 'Done'}</button>
           {part && <button type="button" className="btn" style={{ marginLeft: 'auto' }} onClick={() => void remove()}>Delete part</button>}
+        </div>
+      </form>
+    </Panel>
+  )
+}
+
+/** Put a made part on the CNC board, with how many and the stock it's cut from (guessed from its material). */
+function CncForm(props: { part: Part; onDone: () => void }) {
+  const { part } = props
+  const stocks = useStock()
+  const [quantity, setQuantity] = useState(part.quantity)
+  // Null until someone picks one: until then, the stock guessed from the material.
+  const [stockId, setStockId] = useState<string | null>(null)
+  const shownStock = stockId ?? likelyStock(part, stocks)?.id ?? ''
+  const [saving, setSaving] = useState(false)
+  const form = useFocusOnOpen()
+
+  async function add(event: FormEvent) {
+    event.preventDefault()
+    setSaving(true)
+    const result = await addJob(part, quantity, shownStock || null)
+    setSaving(false)
+    if (!result.ok) {
+      toast(result.error)
+      return
+    }
+    toast(result.value.added ? `Added ${part.name} ×${quantity} to the CNC board.` : `${part.name} was already on the CNC board: now ${result.value.job.quantity} to cut.`)
+    props.onDone()
+  }
+
+  return (
+    <Panel title={`Add ${part.name} to the CNC board`}>
+      <form ref={form} className="panel-body" onSubmit={add}>
+        <p className="note">{part.material ? `${part.material}.` : 'No material in the BOM yet.'} The robot needs {part.quantity}.</p>
+        <div className="toolbar">
+          <div className="field">
+            How many to cut
+            <Stepper id="cnc-quantity" label="How many to cut" min={1} value={quantity} onChange={setQuantity} />
+          </div>
+          <label className="field" htmlFor="cnc-stock">
+            Cut from
+            <select id="cnc-stock" className="input" value={shownStock} onChange={(e) => setStockId(e.target.value)}>
+              <option value="">Not picked yet</option>
+              {stocks.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </label>
+        </div>
+        {!stockId && shownStock && <p className="note">Stock guessed from the material. Change it if it's wrong.</p>}
+        <div className="toolbar">
+          <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Adding…' : 'Add to CNC board'}</button>
+          <button type="button" className="btn" onClick={props.onDone}>Cancel</button>
         </div>
       </form>
     </Panel>
