@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { advanceStage, STAGES, SUBSYSTEMS, type StageState, MAX_ITEM_LENGTH, addPitItem, assignPitItem, movePitItem, reorderPitItem, renamePitItem, setPitItemSubgroup, checklistStore, setPitItemCompleted, subgroupMembersStore, setSubgroupMembers, belongsToSubgroup, pitChecklistSummary } from './data'
+import { advanceStage, STAGES, SUBSYSTEMS, type StageState, MAX_ITEM_LENGTH, addPitItem, assignPitItem, movePitItem, reorderPitItem, renamePitItem, setPitItemSubgroup, checklistStore, setPitItemCompleted, subgroupMembersStore, setSubgroupMembers, belongsToSubgroup, pitChecklistSummary, searchPeople } from './data'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import { membersTable } from '../../core/members'
 
@@ -275,5 +275,34 @@ describe('pit checklist', () => {
     vi.resetModules()
     const reloaded = await import('./data')
     expect(reloaded.checklistStore.get().at(-2)).toEqual({ ...result.value, completed: true })
+  })
+})
+
+describe('searchPeople', () => {
+  const people = [{ name: 'Alex Rivera' }, { name: 'Pat Okafor' }, { name: 'Zoë Lin' }, { name: 'Sam O\'Neil-Park' }]
+
+  it('shows everyone when the search is empty or only spaces', () => {
+    expect(searchPeople(people, '')).toEqual(people)
+    expect(searchPeople(people, '   ')).toEqual(people)
+  })
+
+  it('matches the start of first or last names, ignoring capitals', () => {
+    expect(searchPeople(people, 'AL')).toEqual([{ name: 'Alex Rivera' }])
+    expect(searchPeople(people, 'oka')).toEqual([{ name: 'Pat Okafor' }])
+  })
+
+  it('needs every word typed to match', () => {
+    expect(searchPeople(people, 'al ri')).toEqual([{ name: 'Alex Rivera' }])
+    expect(searchPeople(people, 'al ok')).toEqual([])
+  })
+
+  it('ignores accents and splits names on hyphens and apostrophes', () => {
+    expect(searchPeople(people, 'zoe')).toEqual([{ name: 'Zoë Lin' }])
+    expect(searchPeople(people, 'park')).toEqual([{ name: 'Sam O\'Neil-Park' }])
+    expect(searchPeople(people, 'neil')).toEqual([{ name: 'Sam O\'Neil-Park' }])
+  })
+
+  it('does not match the middle of a word', () => {
+    expect(searchPeople(people, 'lex')).toEqual([])
   })
 })

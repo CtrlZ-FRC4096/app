@@ -15,7 +15,7 @@ export default function StatusPage() {
 
   return (
     <>
-      <PageHead title="Robot status">
+      <PageHead title="Robot Status">
         Where each subsystem stands, and the pit checklist to work through at events.
       </PageHead>
       <Panel title="Subsystem progress" className="status-panel">

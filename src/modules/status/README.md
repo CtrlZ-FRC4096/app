@@ -32,7 +32,9 @@ removing a subgroup member removes incompatible assignments and clears completio
 if an assigned person was removed. Membership edits apply to every matching item
 in this browser and persist across reloads.
 Choose one or more active team members when
-adding an item. Only assigned people can check or uncheck it; mentors and admins
+adding an item. Every people list has a search box: type part of a first or last
+name to narrow the list. Searching only hides names; people already chosen stay
+chosen. Only assigned people can check or uncheck it; mentors and admins
 can reassign existing items, which marks them incomplete. Older saved items are
 preserved as unassigned until a mentor assigns them. The demo View as switch lets
 you try Alex (Student), Pat (Mentor), and Morgan (Admin). These are browser-only

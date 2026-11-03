@@ -214,3 +214,19 @@ export function movePitItem(id: string, direction: -1 | 1): Result {
   checklistStore.set(items)
   return ok(null)
 }
+
+/**
+ * The people whose names match a search, for the assignment pickers.
+ * Ignores capitals, accents and extra spaces, and every word typed must
+ * match the start of a word in the name ("al ri" finds "Alex Rivera").
+ * An empty search shows everyone.
+ */
+export function searchPeople<T extends { name: string }>(people: T[], query: string): T[] {
+  const simplify = (text: string) => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  const words = simplify(query).split(/\s+/).filter(Boolean)
+  if (!words.length) return people
+  return people.filter((person) => {
+    const nameWords = simplify(person.name).split(/[\s'-]+/)
+    return words.every((word) => nameWords.some((nameWord) => nameWord.startsWith(word)))
+  })
+}
