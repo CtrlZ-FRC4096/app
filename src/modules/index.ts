@@ -13,6 +13,7 @@
 import type { ModuleDefinition } from '../core/registry'
 import { inventory } from './inventory'
 import { bom } from './bom'
+import { purchasing } from './purchasing'
 import { cnc } from './cnc'
 import { scouting } from './scouting'
 import { status } from './status'
@@ -23,4 +24,4 @@ import { training } from './training'
 import { feedback } from './feedback'
 import { example } from './example'
 
-export const modules: ModuleDefinition[] = [inventory, bom, cnc, scouting, status, calendar, attendance, members, training, feedback, example]
+export const modules: ModuleDefinition[] = [inventory, bom, purchasing, cnc, scouting, status, calendar, attendance, members, training, feedback, example]
