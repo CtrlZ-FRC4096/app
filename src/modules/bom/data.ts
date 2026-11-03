@@ -363,8 +363,8 @@ export async function removePart(part: Part): Promise<Result> {
 
 // ---------------------------------------------------------------------------
 // Stages: what a made part goes through before it's on the robot (#15).
-// Made by ..._bom_steps.sql. Anyone on the team can move a stage along and
-// count parts through it; mentors add and remove stages.
+// Made by ..._bom_steps.sql. Anyone on the team can add and remove stages,
+// move a stage along and count parts through it.
 
 export type Stage = 'design' | 'pre' | 'process1' | 'process2' | 'post'
 /** In order. A part only has the stages it needs. */
@@ -506,19 +506,15 @@ export function checkStep(part: Part, stage: Stage, machine: Machine | null, ste
   return null
 }
 
-/** Give a made part a stage. Mentors only: the database enforces this too. */
+/** Give a made part a stage. */
 export async function addStep(part: Part, stage: Stage, machine: Machine | null): Promise<Result<Step>> {
-  const user = currentUser()
-  if (!user || !isMentor(user.role)) return fail('Only a mentor can add stages.')
   const problem = checkStep(part, stage, machine, stepsFor(part, stepsTable.rows()))
   if (problem) return fail(problem)
   return stepsTable.insert({ part_id: part.id, stage, machine: isProcess(stage) ? machine : null, status: 'todo', quantity_done: 0 })
 }
 
-/** Take a stage off a part, with its progress. Mentors only: the database enforces this too. */
+/** Take a stage off a part, with its progress. */
 export async function removeStep(step: Step): Promise<Result> {
-  const user = currentUser()
-  if (!user || !isMentor(user.role)) return fail('Only a mentor can remove stages.')
   return stepsTable.remove(step.id)
 }
 

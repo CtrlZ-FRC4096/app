@@ -1,6 +1,6 @@
-// Permission rules for the BOM's stages (bom_steps): members can read them,
-// and change a stage's status and how many are done. Mentors add and remove
-// stages.
+// Permission rules for the BOM's stages (bom_steps): anyone on the team can
+// read stages, add and remove them, and change a stage's status and how
+// many are done. Nobody else can do anything.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
@@ -31,13 +31,17 @@ const addStep = (person: string, stage = 'process1', machine: string | null = 'c
   db.as<Step>(person, 'insert into public.bom_steps (part_id, stage, machine) values ($1, $2, $3) returning *', [partId, stage, machine])
 
 describe('BOM stages', () => {
-  it('can be added by a mentor, signed with their own id, starting at to do with none done', async () => {
-    const [step] = await addStep(mentor)
-    expect(step).toMatchObject({ created_by: mentor, status: 'todo', quantity_done: 0 })
+  it('can be added by a student or a mentor, signed with their own id, starting at to do with none done', async () => {
+    const [step] = await addStep(student)
+    expect(step).toMatchObject({ created_by: student, status: 'todo', quantity_done: 0 })
+    const [other] = await addStep(mentor, 'post', null)
+    expect(other.created_by).toBe(mentor)
   })
 
-  it("can't be added by a student", async () => {
-    await expect(addStep(student)).rejects.toThrow(PERMISSION_DENIED)
+  it("can't be added as someone else", async () => {
+    await expect(
+      db.as(student, "insert into public.bom_steps (part_id, stage, created_by) values ($1, 'design', $2)", [partId, mentor]),
+    ).rejects.toThrow(PERMISSION_DENIED)
   })
 
   it('can be read by a student', async () => {
@@ -63,10 +67,9 @@ describe('BOM stages', () => {
     }
   })
 
-  it('can be removed by a mentor but not by a student', async () => {
+  it('can be removed by a student', async () => {
     const [step] = await addStep(mentor)
-    expect(await db.as(student, 'delete from public.bom_steps where id = $1 returning id', [step.id])).toEqual([])
-    expect(await db.as(mentor, 'delete from public.bom_steps where id = $1 returning id', [step.id])).toEqual([{ id: step.id }])
+    expect(await db.as(student, 'delete from public.bom_steps where id = $1 returning id', [step.id])).toEqual([{ id: step.id }])
   })
 
   it("can't be read or changed by someone who isn't signed in, or whose access is off", async () => {
@@ -75,6 +78,8 @@ describe('BOM stages', () => {
     await db.switchOff(student)
     expect(await db.as(student, 'select * from public.bom_steps')).toEqual([])
     expect(await db.as(student, 'update public.bom_steps set quantity_done = 1 where id = $1 returning id', [step.id])).toEqual([])
+    expect(await db.as(student, 'delete from public.bom_steps where id = $1 returning id', [step.id])).toEqual([])
+    await expect(addStep(student, 'post', null)).rejects.toThrow(PERMISSION_DENIED)
   })
 
   it('needs a machine for the process stages, and only for them', async () => {

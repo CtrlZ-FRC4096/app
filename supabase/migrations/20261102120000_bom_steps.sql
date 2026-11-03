@@ -6,8 +6,9 @@
 --   Process 1, 2   the machines, such as the CNC router, then the lathe
 --   Post-process   deburring, tapping, finishing
 --
--- Anyone on the team can move a stage along and count parts through it.
--- Mentors add and remove stages. Deleting a part deletes its stages.
+-- Anyone on the team can add and remove a part's stages, move a stage along
+-- and count parts through it, like the rest of the BOM. Deleting a part
+-- deletes its stages.
 
 create table public.bom_steps (
   id uuid primary key default gen_random_uuid(),
@@ -32,7 +33,8 @@ alter table public.bom_steps enable row level security;
 
 -- Signed-out visitors get nothing. Signed-in people get what the rules allow.
 -- Changing a stage can only change its status and how many are done: which
--- part, stage and machine it is stay as a mentor set them.
+-- part, stage and machine it is stay as they were added. (To change them,
+-- remove the stage and add it again.)
 revoke all on table public.bom_steps from anon, authenticated;
 grant select, insert, delete on table public.bom_steps to authenticated;
 grant update (status, quantity_done) on table public.bom_steps to authenticated;
@@ -44,15 +46,15 @@ create policy "Members can read stages"
   on public.bom_steps for select to authenticated
   using ((select private.is_member()));
 
-create policy "Mentors can add stages"
+create policy "Members can add stages as themselves"
   on public.bom_steps for insert to authenticated
-  with check ((select private.is_mentor()) and created_by = (select auth.uid()));
+  with check ((select private.is_member()) and created_by = (select auth.uid()));
 
 create policy "Members can move stages along"
   on public.bom_steps for update to authenticated
   using ((select private.is_member()))
   with check ((select private.is_member()));
 
-create policy "Mentors can remove stages"
+create policy "Members can remove stages"
   on public.bom_steps for delete to authenticated
-  using ((select private.is_mentor()));
+  using ((select private.is_member()));

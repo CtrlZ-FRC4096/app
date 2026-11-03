@@ -316,14 +316,17 @@ describe('checkStep', () => {
 })
 
 describe('addStep and removeStep', () => {
-  it('are for mentors only', async () => {
-    expect(await addStep(part('Roller shaft'), 'post', null)).toEqual({ ok: false, error: 'Only a mentor can add stages.' })
-    expect(await removeStep(stage('Roller shaft', 'pre'))).toEqual({ ok: false, error: 'Only a mentor can remove stages.' })
-    expect(stepsOf('Roller shaft')).toHaveLength(3)
+  it('work for a student too', async () => {
+    expect((await addStep(part('Roller shaft'), 'post', null)).ok).toBe(true)
+    expect((await removeStep(stage('Roller shaft', 'pre'))).ok).toBe(true)
+    expect(stepsOf('Roller shaft').map((s) => s.stage)).toEqual(['design', 'process1', 'post'])
+  })
+
+  it("won't add a stage checkStep refuses, and says why", async () => {
+    expect(await addStep(part('Roller shaft'), 'process2', null)).toEqual({ ok: false, error: 'Pick the machine for Process 2.' })
   })
 
   it('add a stage at to do with none done, in its place in the order', async () => {
-    setDemoRole('mentor')
     expect((await addStep(part('Roller shaft'), 'post', null)).ok).toBe(true)
     expect(stage('Roller shaft', 'post')).toMatchObject({ status: 'todo', quantity_done: 0, machine: null })
     expect((await addStep(part('Roller shaft'), 'process2', 'mill')).ok).toBe(true)
@@ -331,13 +334,11 @@ describe('addStep and removeStep', () => {
   })
 
   it('keep a machine off stages that are not process stages', async () => {
-    setDemoRole('mentor')
     await addStep(part('Roller shaft'), 'post', 'lathe')
     expect(stage('Roller shaft', 'post').machine).toBeNull()
   })
 
   it('remove a stage', async () => {
-    setDemoRole('mentor')
     expect((await removeStep(stage('Roller shaft', 'pre'))).ok).toBe(true)
     expect(stepsOf('Roller shaft').map((s) => s.stage)).toEqual(['design', 'process1'])
   })

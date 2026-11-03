@@ -32,8 +32,8 @@ const INTRO = 'The parts in each system of the robot: what we make in the shop, 
 // The page reads rows with hooks from data.ts and saves through its
 // functions (addPart, changeSystem, ...). It never saves anything itself.
 // Anyone on the team can add and change robots, systems and parts, and
-// delete parts, and move stages along. Only mentors see Delete system (it
-// deletes every part in it) and Change stages.
+// delete parts, and add, remove and move along stages. Only mentors see
+// Delete system: it deletes every part in it.
 export default function BomPage() {
   const user = useSession()
   const robots = useRobots()
@@ -237,7 +237,7 @@ export default function BomPage() {
                               <StageList
                                 part={p}
                                 steps={stagesShown(p)}
-                                canChange={isMentor(user.role) && station.kind === 'all'}
+                                canChange={station.kind === 'all'}
                                 onChange={() => setEditing({ form: 'stages', part: p })}
                               />
                             </td>
@@ -620,7 +620,7 @@ function StageList(props: { part: Part; steps: Step[]; canChange: boolean; onCha
         </div>
       ))}
       <span className="note">
-        {props.steps.length === 0 && `No stages yet. ${props.canChange ? '' : 'A mentor can add them.'} `}
+        {props.steps.length === 0 && 'No stages yet. '}
         {props.canChange && (
           <button type="button" className="link-btn" onClick={props.onChange}>{props.steps.length ? 'Change stages' : 'Add stages'}</button>
         )}
@@ -629,7 +629,7 @@ function StageList(props: { part: Part; steps: Step[]; canChange: boolean; onCha
   )
 }
 
-/** Mentors: choose which stages a made part goes through, and the machine for each process stage. */
+/** Choose which stages a made part goes through, and the machine for each process stage. */
 function StagesForm(props: { part: Part; steps: Step[]; onDone: () => void }) {
   const { part, steps } = props
   const has = (stage: Stage) => steps.find((s) => s.stage === stage)
