@@ -1,7 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react'
 import { plural, shortDate } from '../../core/format'
-import { isMentor } from '../../core/roles'
-import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
 import {
@@ -32,10 +30,8 @@ const INTRO = 'The parts in each system of the robot: what we make in the shop, 
 // The page reads rows with hooks from data.ts and saves through its
 // functions (addPart, changeSystem, ...). It never saves anything itself.
 // Anyone on the team can add and change robots, systems and parts, and
-// delete parts, and add, remove and move along stages. Only mentors see
-// Delete system: it deletes every part in it.
+// delete them, and add, remove and move along stages.
 export default function BomPage() {
-  const user = useSession()
   const robots = useRobots()
   const [robotId, setRobotId] = useState<string>()
   const robot = robots.find((r) => r.id === robotId) ?? robots[0]
@@ -119,7 +115,6 @@ export default function BomPage() {
           system={editing?.form === 'system' ? editing.system : null}
           partCount={editing?.form === 'system' && editing.system ? parts.length : 0}
           canCancel={editing?.form === 'system'}
-          canDelete={isMentor(user.role)}
           onDone={(saved) => {
             if (saved) setSystemId(saved.id)
             close()
@@ -357,13 +352,12 @@ function RobotForm(props: { robot: Robot | null; intro?: string; onDone: (saved:
   )
 }
 
-/** Add a system to a robot, or change one. Mentors can also delete it, with its parts. */
+/** Add a system to a robot, or change one, or delete it with its parts. */
 function SystemForm(props: {
   robot: Robot
   system: BomSystem | null
   partCount: number
   canCancel: boolean
-  canDelete: boolean
   onDone: (saved: BomSystem | null) => void
 }) {
   const { system } = props
@@ -414,7 +408,7 @@ function SystemForm(props: {
         <div className="toolbar">
           <button type="submit" className="btn btn-primary" disabled={saving}>{system ? 'Save' : 'Add system'}</button>
           {props.canCancel && <button type="button" className="btn" onClick={() => props.onDone(null)}>Cancel</button>}
-          {system && props.canDelete && (
+          {system && (
             <button type="button" className="btn" style={{ marginLeft: 'auto' }} onClick={() => void remove()}>Delete system</button>
           )}
         </div>

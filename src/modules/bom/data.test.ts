@@ -231,11 +231,11 @@ describe('robots and systems', () => {
     expect(result.ok && result.value.onshape_url).toBe('https://cad.onshape.com/documents/0123456789abcdef01234567/w/0123456789abcdef01234567/e/0123456789abcdef01234567')
   })
 
-  it('only lets a mentor delete a system, which deletes its parts too', async () => {
+  it('lets anyone delete a system, which deletes its parts and their stages too', async () => {
     const intake = systemsTable.rows().find((s) => s.code === 'INT')!
-    expect((await removeSystem(intake)).ok).toBe(false)
-    setDemoRole('mentor')
+    const intakeParts = parts().filter((p) => p.system_id === intake.id).map((p) => p.id)
     expect((await removeSystem(intake)).ok).toBe(true)
+    expect(stepsTable.rows().some((s) => intakeParts.includes(s.part_id))).toBe(false)
     expect(systemsTable.rows().some((s) => s.id === intake.id)).toBe(false)
     expect(parts().some((p) => p.system_id === intake.id)).toBe(false)
     expect(parts()).toHaveLength(6)

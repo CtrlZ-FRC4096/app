@@ -1,6 +1,6 @@
-// Permission rules for the BOM module's tables: members can read and add
-// robots, systems and parts, change them, and delete parts. Only mentors
-// can delete robots and systems, because that deletes every part in them.
+// Permission rules for the BOM module's tables: members can read, add,
+// change and delete robots, systems and parts. People who aren't signed in,
+// or whose access is off, can't do anything.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
@@ -99,13 +99,25 @@ describe('BOM robots, systems and parts', () => {
     expect(await db.as(student, 'delete from public.bom_parts where id = $1 returning id', [part.id])).toEqual([])
   })
 
-  it('lets a student delete parts, but only mentors delete robots and systems', async () => {
+  it('lets a student delete parts, systems and robots', async () => {
     const [part] = await addMadePart(mentor)
     expect(await db.as(student, 'delete from public.bom_parts where id = $1 returning id', [part.id])).toEqual([{ id: part.id }])
+    expect(await db.as(student, 'delete from public.bom_systems returning id')).toEqual([{ id: systemId }])
+    expect(await db.as(student, 'delete from public.bom_robots returning id')).toEqual([{ id: robotId }])
+  })
+
+  it("doesn't let someone whose access is off delete a system or robot", async () => {
+    await db.switchOff(student)
     expect(await db.as(student, 'delete from public.bom_systems returning id')).toEqual([])
     expect(await db.as(student, 'delete from public.bom_robots returning id')).toEqual([])
-    expect(await db.as(mentor, 'delete from public.bom_systems returning id')).toEqual([{ id: systemId }])
-    expect(await db.as(mentor, 'delete from public.bom_robots returning id')).toEqual([{ id: robotId }])
+    expect(await db.sql('select id from public.bom_robots')).toHaveLength(1)
+  })
+
+  it('deletes the systems, parts and stages in a robot when the robot is deleted', async () => {
+    const [part] = await addMadePart(mentor)
+    await db.as(mentor, "insert into public.bom_steps (part_id, stage) values ($1, 'design')", [part.id])
+    await db.as(student, 'delete from public.bom_robots where id = $1', [robotId])
+    for (const table of ['bom_systems', 'bom_parts', 'bom_steps']) expect(await db.sql(`select id from public.${table}`)).toEqual([])
   })
 
   it("can't be read or added by someone who isn't signed in", async () => {

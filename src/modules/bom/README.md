@@ -12,7 +12,7 @@ The bill of materials for each robot, checked against Inventory, so the team can
 | `data.test.ts`, `onshape.test.ts` | Tests for both. |
 | `BomPage.tsx` | Pick a system, then see its parts in a table with their stages, change them, and import from Onshape. |
 
-The tables are made by `supabase/migrations/20261027150000_bom.sql`, and their permission rules are tested in `supabase/tests/bom.test.ts`. Anyone on the team can add and change robots, systems and parts, and delete parts (`supabase/migrations/20261027170000_bom_members_edit.sql`). Only mentors can delete a system, because that deletes every part in it too.
+The tables are made by `supabase/migrations/20261027150000_bom.sql`, and their permission rules are tested in `supabase/tests/bom.test.ts`. Anyone on the team can add, change and delete robots, systems and parts (`supabase/migrations/20261027170000_bom_members_edit.sql` and `20261102130000_bom_members_delete.sql`). Deleting a system deletes every part in it, so the page asks first.
 
 **Part numbers.** Every part gets a team number like `4096-26-INT-001`: team, year, system code, then a number. Made parts also have a material, such as "6061 aluminum, 1/4 in plate". COTS (bought) parts have a vendor and the vendor's part number.
 

@@ -8,9 +8,8 @@
  *
  * The tables are made in the team database by
  * supabase/migrations/..._bom.sql. Anyone on the team can add and change
- * robots, systems and parts, delete parts, and import from Onshape. Only
- * mentors can delete a system, because that deletes every part in it too
- * (..._bom_members_edit.sql).
+ * robots, systems and parts, delete them, and import from Onshape
+ * (..._bom_members_edit.sql, ..._bom_members_delete.sql).
  *
  * Made parts have stages (Design, Pre-process, Process 1 and 2,
  * Post-process), each with a status and how many are through it
@@ -19,8 +18,6 @@
 import { callFunction } from '../../core/functions'
 import { createTable, fail, ok, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
-import { isMentor } from '../../core/roles'
-import { currentUser } from '../../core/session'
 import { isLive } from '../../core/supabase'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
@@ -275,14 +272,15 @@ export async function changeSystem(system: BomSystem, changes: NewSystem): Promi
   return systemsTable.update(system.id, systemFields(changes))
 }
 
-/** Delete a system and every part in it. Mentors only: the database enforces this too. */
+/** Delete a system and every part in it, with their stages. */
 export async function removeSystem(system: BomSystem): Promise<Result> {
-  const user = currentUser()
-  if (!user || !isMentor(user.role)) return fail('Only a mentor can delete a system, because it deletes every part in it.')
   const result = await systemsTable.remove(system.id)
-  // The database deletes the parts with the system. Example data has to do it here.
+  // The database deletes the parts and stages with the system. Example data has to do it here.
   if (result.ok && !isLive) {
-    for (const part of partsTable.rows().filter((p) => p.system_id === system.id)) await partsTable.remove(part.id)
+    for (const part of partsTable.rows().filter((p) => p.system_id === system.id)) {
+      for (const step of stepsTable.rows().filter((s) => s.part_id === part.id)) await stepsTable.remove(step.id)
+      await partsTable.remove(part.id)
+    }
   }
   return result
 }
