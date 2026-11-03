@@ -1,6 +1,6 @@
 // Tests for data.ts. Run them with `npm test`.
 // Who is allowed to do what is the database's job: that's tested in
-// supabase/tests/bom.test.ts.
+// supabase/tests/bom.test.ts and bom-steps.test.ts.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { setDemoRole } from '../../core/demo'
 import {
@@ -8,12 +8,16 @@ import {
   nextPartNumber, partCountText, partsTable, removePart, removeSystem, renameRobot, robotsTable, systemsTable,
   type NewPart, type Part,
 } from './data'
+import {
+  addStep, advance, changeDone, checkStep, moveBack, removeStep, stationName, stationQueue, stepName, stepsFor, stepsTable, type Step,
+} from './data'
 
 beforeEach(() => {
   setDemoRole('student')
   partsTable.reset()
   systemsTable.reset()
   robotsTable.reset()
+  stepsTable.reset()
 })
 
 const parts = () => partsTable.rows()
@@ -235,5 +239,133 @@ describe('robots and systems', () => {
     expect(systemsTable.rows().some((s) => s.id === intake.id)).toBe(false)
     expect(parts().some((p) => p.system_id === intake.id)).toBe(false)
     expect(parts()).toHaveLength(6)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Stages
+
+const part = (name: string) => parts().find((p) => p.name === name)!
+const stepsOf = (name: string) => stepsFor(part(name), stepsTable.rows())
+const stage = (name: string, which: Step['stage']) => stepsOf(name).find((s) => s.stage === which)!
+
+describe('stepsFor', () => {
+  it("gives a part's stages in order, and only the ones it has", () => {
+    expect(stepsOf('Roller shaft').map((s) => s.stage)).toEqual(['design', 'pre', 'process1'])
+    expect(stepsOf('Frame rail').map((s) => s.stage)).toEqual(['design', 'pre', 'process1', 'process2', 'post'])
+    expect(stepsOf('Brushless motor')).toEqual([])
+  })
+})
+
+describe('stepName', () => {
+  it('names process stages by their machine', () => {
+    expect(stepName(stage('Roller shaft', 'process1'))).toBe('Lathe')
+    expect(stepName(stage('Roller shaft', 'pre'))).toBe('Pre-process')
+  })
+})
+
+describe('changeDone', () => {
+  it('counts one more or one fewer through a stage', async () => {
+    const routing = stage('Intake side plate', 'process1')
+    expect(routing.quantity_done).toBe(1)
+    expect((await changeDone(routing, 1)).ok).toBe(true)
+    expect(stage('Intake side plate', 'process1').quantity_done).toBe(2)
+    expect((await changeDone(stage('Intake side plate', 'process1'), -1)).ok).toBe(true)
+    expect(stage('Intake side plate', 'process1').quantity_done).toBe(1)
+  })
+
+  it("won't go above the part's quantity, and says why", async () => {
+    // The side plate's quantity is 2, and both are designed.
+    expect(await changeDone(stage('Intake side plate', 'design'), 1)).toEqual({
+      ok: false,
+      error: 'All 2 are already through Design. The robot needs 2.',
+    })
+    expect(stage('Intake side plate', 'design').quantity_done).toBe(2)
+  })
+
+  it("won't go below 0", async () => {
+    expect(await changeDone(stage('Intake side plate', 'post'), -1)).toEqual({ ok: false, error: 'None are through Post-process yet.' })
+  })
+})
+
+describe('advance and moveBack', () => {
+  it('go to do → in progress → done, and back', async () => {
+    const id = stage('Intake side plate', 'post').id
+    const now = () => stepsTable.rows().find((s) => s.id === id)!
+    expect(now().status).toBe('todo')
+    await advance(now())
+    expect(now().status).toBe('in_progress')
+    await advance(now())
+    expect(now().status).toBe('done')
+    expect(await advance(now())).toEqual({ ok: false, error: 'Post-process is already done.' })
+    await moveBack(now())
+    expect(now().status).toBe('in_progress')
+    await moveBack(now())
+    expect(await moveBack(now())).toEqual({ ok: false, error: "Post-process hasn't started yet." })
+  })
+})
+
+describe('checkStep', () => {
+  it('needs a made part, a stage it doesn\'t have yet, and a machine for process stages', () => {
+    expect(checkStep(part('Brushless motor'), 'design', null, [])).toMatch(/Only made parts/)
+    expect(checkStep(part('Roller shaft'), 'pre', null, stepsOf('Roller shaft'))).toBe('Roller shaft already has Pre-process.')
+    expect(checkStep(part('Roller shaft'), 'process2', null, stepsOf('Roller shaft'))).toBe('Pick the machine for Process 2.')
+    expect(checkStep(part('Roller shaft'), 'process2', 'mill', stepsOf('Roller shaft'))).toBeNull()
+    expect(checkStep(part('Roller shaft'), 'post', null, stepsOf('Roller shaft'))).toBeNull()
+  })
+})
+
+describe('addStep and removeStep', () => {
+  it('are for mentors only', async () => {
+    expect(await addStep(part('Roller shaft'), 'post', null)).toEqual({ ok: false, error: 'Only a mentor can add stages.' })
+    expect(await removeStep(stage('Roller shaft', 'pre'))).toEqual({ ok: false, error: 'Only a mentor can remove stages.' })
+    expect(stepsOf('Roller shaft')).toHaveLength(3)
+  })
+
+  it('add a stage at to do with none done, in its place in the order', async () => {
+    setDemoRole('mentor')
+    expect((await addStep(part('Roller shaft'), 'post', null)).ok).toBe(true)
+    expect(stage('Roller shaft', 'post')).toMatchObject({ status: 'todo', quantity_done: 0, machine: null })
+    expect((await addStep(part('Roller shaft'), 'process2', 'mill')).ok).toBe(true)
+    expect(stepsOf('Roller shaft').map((s) => s.stage)).toEqual(['design', 'pre', 'process1', 'process2', 'post'])
+  })
+
+  it('keep a machine off stages that are not process stages', async () => {
+    setDemoRole('mentor')
+    await addStep(part('Roller shaft'), 'post', 'lathe')
+    expect(stage('Roller shaft', 'post').machine).toBeNull()
+  })
+
+  it('remove a stage', async () => {
+    setDemoRole('mentor')
+    expect((await removeStep(stage('Roller shaft', 'pre'))).ok).toBe(true)
+    expect(stepsOf('Roller shaft').map((s) => s.stage)).toEqual(['design', 'process1'])
+  })
+})
+
+describe('stationQueue', () => {
+  const names = (queue: ReturnType<typeof stationQueue>) => queue.map((q) => q.part.name)
+
+  it('shows every made part, by part number, with all its stages, for Every stage', () => {
+    const queue = stationQueue(parts(), stepsTable.rows(), { kind: 'all' })
+    expect(names(queue)).toEqual(['Bellypan', 'Frame rail', 'Intake side plate', 'Roller shaft', 'Pivot spacer'])
+    expect(queue.find((q) => q.part.name === 'Frame rail')!.steps).toHaveLength(5)
+  })
+
+  it("shows one machine's queue: parts with a stage on it that isn't done", () => {
+    // The pivot spacer's print is done, so the 3D printer has nothing waiting.
+    expect(names(stationQueue(parts(), stepsTable.rows(), { kind: 'machine', machine: '3d_printer' }))).toEqual([])
+    const router = stationQueue(parts(), stepsTable.rows(), { kind: 'machine', machine: 'cnc_router' })
+    expect(names(router)).toEqual(['Bellypan', 'Frame rail', 'Intake side plate'])
+    expect(router.every((q) => q.steps.every((s) => s.machine === 'cnc_router'))).toBe(true)
+  })
+
+  it('shows the parts waiting for one stage', () => {
+    expect(names(stationQueue(parts(), stepsTable.rows(), { kind: 'stage', stage: 'post' }))).toEqual(['Frame rail', 'Intake side plate', 'Pivot spacer'])
+  })
+
+  it('names stations the way the filter shows them', () => {
+    expect(stationName({ kind: 'machine', machine: '3d_printer' })).toBe('3D printer only')
+    expect(stationName({ kind: 'stage', stage: 'post' })).toBe('Waiting for post-process')
   })
 })

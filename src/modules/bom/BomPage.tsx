@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react'
 import { plural, shortDate } from '../../core/format'
 import { isMentor } from '../../core/roles'
 import { useSession } from '../../core/session'
@@ -8,6 +8,10 @@ import {
   PART_FILTERS, addPart, addRobot, addSystem, applyOnshapeImport, changePart, changeSystem, filterParts, getOnshapeBom, kindLabel,
   nextPartNumber, partCountText, removePart, removeSystem, renameRobot, useParts, useRobots, useSystems,
   type BomSystem, type Part, type PartFilter, type PartKind, type Robot,
+} from './data'
+import {
+  MACHINES, MACHINE_NAMES, STAGES, STAGE_HINTS, STAGE_NAMES, STATUS_NAMES, addStep, advance, changeDone, isProcess, moveBack, removeStep,
+  stationName, stationQueue, stepName, stepsFor, useSteps, type Machine, type Stage, type Station, type Step,
 } from './data'
 import { planImport, type OnshapeImportPlan } from './onshape'
 import { camStockFor, markReadyToCam, shapesTable, useOnBoard, useStock, type CamStock } from '../cnc/data'
@@ -21,13 +25,15 @@ type Editing =
   | { form: 'system'; system: BomSystem | null }
   | { form: 'part'; part: Part | null }
   | { form: 'cnc'; part: Part }
+  | { form: 'stages'; part: Part }
 
 const INTRO = 'The parts in each system of the robot: what we make in the shop, and what we buy (COTS).'
 
 // The page reads rows with hooks from data.ts and saves through its
 // functions (addPart, changeSystem, ...). It never saves anything itself.
 // Anyone on the team can add and change robots, systems and parts, and
-// delete parts. Only mentors see Delete system: it deletes every part in it.
+// delete parts, and move stages along. Only mentors see Delete system (it
+// deletes every part in it) and Change stages.
 export default function BomPage() {
   const user = useSession()
   const robots = useRobots()
@@ -38,7 +44,12 @@ export default function BomPage() {
   const system = systems.find((s) => s.id === systemId) ?? systems[0]
   const parts = useParts(system?.id)
   const [filter, setFilter] = useState<PartFilter>('All')
-  const shown = filterParts(parts, filter)
+  const steps = useSteps()
+  const [station, setStation] = useState<Station>({ kind: 'all' })
+  const queue = stationQueue(parts, steps, station)
+  // At one station, only the parts waiting there, with only their stages there.
+  const shown = station.kind === 'all' ? filterParts(parts, filter) : queue.map((q) => q.part)
+  const stagesShown = (p: Part) => (station.kind === 'all' ? stepsFor(p, steps) : (queue.find((q) => q.part.id === p.id)?.steps ?? []))
   const [editing, setEditing] = useState<Editing | null>(null)
   const close = () => setEditing(null)
   // An import from Onshape waiting to be confirmed, and whether Onshape is being read.
@@ -119,6 +130,7 @@ export default function BomPage() {
         <PartForm key={editing.part?.id ?? `new-${system.id}`} system={system} parts={parts} part={editing.part} onDone={close} />
       )}
       {editing?.form === 'cnc' && <CncForm key={editing.part.id} part={editing.part} onDone={close} />}
+      {editing?.form === 'stages' && <StagesForm key={editing.part.id} part={editing.part} steps={stepsFor(editing.part, steps)} onDone={close} />}
       {importing && importing.system.id === system?.id && (
         <ImportPreview system={importing.system} plan={importing.plan} onDone={() => setImporting(null)} />
       )}
@@ -140,7 +152,8 @@ export default function BomPage() {
               }}
             />
             <div className="toolbar">
-              <Pick label="Show" options={[...PART_FILTERS]} value={filter} onChange={setFilter} />
+              {station.kind === 'all' && <Pick label="Show" options={[...PART_FILTERS]} value={filter} onChange={setFilter} />}
+              <StationPicker value={station} onChange={setStation} />
               <button type="button" className="btn btn-sm" onClick={() => setEditing({ form: 'system', system })}>Change system</button>
               {system.onshape_url && (
                 <button type="button" className="btn btn-sm" disabled={reading} onClick={() => void readOnshape(system)}>
@@ -164,7 +177,11 @@ export default function BomPage() {
           </div>
           {shown.length === 0 ? (
             <p className="panel-body muted">
-              {parts.length === 0 ? `No parts in ${system.name} yet.` : `No ${kindLabel(filter === 'Made' ? 'made' : 'cots')} parts in ${system.name}. Pick All to see every part.`}
+              {parts.length === 0
+                ? `No parts in ${system.name} yet.`
+                : station.kind !== 'all'
+                  ? `Nothing in ${system.name} is waiting for ${station.kind === 'machine' ? `the ${MACHINE_NAMES[station.machine]}` : STAGE_NAMES[station.stage].toLowerCase()}. Pick Every stage to see every part.`
+                  : `No ${kindLabel(filter === 'Made' ? 'made' : 'cots')} parts in ${system.name}. Pick All to see every part.`}
             </p>
           ) : (
             // Three columns, so the table fits on a phone. The revision and
@@ -180,36 +197,55 @@ export default function BomPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {shown.map((p) => (
-                    <tr key={p.id} aria-selected={editing?.form === 'part' && editing.part?.id === p.id}>
-                      <td>
-                        <span className="mono" style={{ whiteSpace: 'nowrap' }}>{p.part_number}</span>
-                        <br />
-                        <Pill tone={p.kind === 'made' ? 'info' : 'plain'}>{kindLabel(p.kind)}</Pill>
-                        {p.revision && <span className="note"> Rev {p.revision}</span>}
-                      </td>
-                      <td>
-                        <button type="button" className="name-btn" onClick={() => setEditing({ form: 'part', part: p })}>{p.name}</button>
-                        {p.removed_in_onshape && <> <Pill tone="warn">Removed in Onshape</Pill></>}
-                        <br />
-                        <span className="note">
-                          {p.kind === 'made' ? p.material : [p.vendor, p.vendor_part_number].filter(Boolean).join(' · ')}
-                          {/* The database only accepts https:// links here, so it's safe to open. */}
-                          {p.onshape_url && <>{(p.material || p.vendor || p.vendor_part_number) && ' · '}<a href={p.onshape_url} target="_blank" rel="noopener noreferrer">CAD</a></>}
-                        </span>
-                        {p.kind === 'made' && !p.removed_in_onshape && (
-                          <>
+                  {shown.map((p) => {
+                    // Made parts get a second row with their stages, the table's full width.
+                    const hasStages = p.kind === 'made' && !p.removed_in_onshape
+                    const under = hasStages ? { borderBottom: 0 } : undefined
+                    return (
+                      <Fragment key={p.id}>
+                        <tr aria-selected={editing?.form === 'part' && editing.part?.id === p.id}>
+                          <td style={under}>
+                            <span className="mono" style={{ whiteSpace: 'nowrap' }}>{p.part_number}</span>
+                            <br />
+                            <Pill tone={p.kind === 'made' ? 'info' : 'plain'}>{kindLabel(p.kind)}</Pill>
+                            {p.revision && <span className="note"> Rev {p.revision}</span>}
+                          </td>
+                          <td style={under}>
+                            <button type="button" className="name-btn" onClick={() => setEditing({ form: 'part', part: p })}>{p.name}</button>
+                            {p.removed_in_onshape && <> <Pill tone="warn">Removed in Onshape</Pill></>}
                             <br />
                             <span className="note">
-                              {onBoard.get(p.id) ? `${onBoard.get(p.id)} on the CNC board · ` : ''}
-                              <button type="button" className="link-btn" onClick={() => setEditing({ form: 'cnc', part: p })}>Ready to CAM</button>
+                              {p.kind === 'made' ? p.material : [p.vendor, p.vendor_part_number].filter(Boolean).join(' · ')}
+                              {/* The database only accepts https:// links here, so it's safe to open. */}
+                              {p.onshape_url && <>{(p.material || p.vendor || p.vendor_part_number) && ' · '}<a href={p.onshape_url} target="_blank" rel="noopener noreferrer">CAD</a></>}
                             </span>
-                          </>
+                            {p.kind === 'made' && !p.removed_in_onshape && (
+                              <>
+                                <br />
+                                <span className="note">
+                                  {onBoard.get(p.id) ? `${onBoard.get(p.id)} on the CNC board · ` : ''}
+                                  <button type="button" className="link-btn" onClick={() => setEditing({ form: 'cnc', part: p })}>Ready to CAM</button>
+                                </span>
+                              </>
+                            )}
+                          </td>
+                          <td className="num" style={under}>{p.quantity}</td>
+                        </tr>
+                        {hasStages && (
+                          <tr>
+                            <td colSpan={3} style={{ paddingTop: 0 }}>
+                              <StageList
+                                part={p}
+                                steps={stagesShown(p)}
+                                canChange={isMentor(user.role) && station.kind === 'all'}
+                                onChange={() => setEditing({ form: 'stages', part: p })}
+                              />
+                            </td>
+                          </tr>
                         )}
-                      </td>
-                      <td className="num">{p.quantity}</td>
-                    </tr>
-                  ))}
+                      </Fragment>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -526,6 +562,143 @@ function CncForm(props: { part: Part; onDone: () => void }) {
         <CamStockPicker id="cnc-cut-from" value={cutFrom} onChange={setCutFrom} />
         <div className="toolbar">
           <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Flagging…' : 'Ready to CAM'}</button>
+          <button type="button" className="btn" onClick={props.onDone}>Cancel</button>
+        </div>
+      </form>
+    </Panel>
+  )
+}
+
+const STATUS_TONES = { todo: 'plain', in_progress: 'info', done: 'ok' } as const
+
+/** The station filter: every stage, or one stage's or one machine's queue. */
+function StationPicker(props: { value: Station; onChange: (station: Station) => void }) {
+  const encode = (s: Station) => (s.kind === 'stage' ? `stage:${s.stage}` : s.kind === 'machine' ? `machine:${s.machine}` : 'all')
+  const stations: Station[] = [
+    { kind: 'all' },
+    ...STAGES.filter((stage) => !isProcess(stage)).map((stage): Station => ({ kind: 'stage', stage })),
+    ...MACHINES.map((machine): Station => ({ kind: 'machine', machine })),
+  ]
+  return (
+    <select
+      className="input"
+      aria-label="Station"
+      value={encode(props.value)}
+      onChange={(e) => props.onChange(stations.find((s) => encode(s) === e.target.value) ?? { kind: 'all' })}
+    >
+      {stations.map((s) => <option key={encode(s)} value={encode(s)}>{stationName(s)}</option>)}
+    </select>
+  )
+}
+
+/** A made part's stages: each one's status, how many are through it, and buttons to move it along. */
+function StageList(props: { part: Part; steps: Step[]; canChange: boolean; onChange: () => void }) {
+  const { part } = props
+
+  async function run(action: Promise<{ ok: true } | { ok: false; error: string }>) {
+    const result = await action
+    if (!result.ok) toast(result.error)
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      {/* Two columns, so the buttons line up and fit on a phone: the stage on the left, its buttons on the right. */}
+      {props.steps.map((s) => (
+        <div key={s.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center', gap: 8 }}>
+          <span>
+            <Pill tone={STATUS_TONES[s.status]}>{stepName(s)}</Pill>
+            <br />
+            <span className="note">{STATUS_NAMES[s.status]} · {Math.min(s.quantity_done, part.quantity)} of {part.quantity}</span>
+          </span>
+          <span style={{ display: 'flex', gap: 6 }}>
+            <button type="button" className="btn" style={{ minWidth: 40 }} aria-label={`${stepName(s)}: one fewer done`} onClick={() => void run(changeDone(s, -1))}>−</button>
+            <button type="button" className="btn" style={{ minWidth: 40 }} aria-label={`${stepName(s)}: one more done`} onClick={() => void run(changeDone(s, 1))}>+</button>
+            <button type="button" className="btn" style={{ minWidth: 96 }} onClick={() => void run(s.status === 'done' ? moveBack(s) : advance(s))}>
+              {s.status === 'todo' ? 'Start' : s.status === 'in_progress' ? 'Mark done' : 'Undo'}
+            </button>
+          </span>
+        </div>
+      ))}
+      <span className="note">
+        {props.steps.length === 0 && `No stages yet. ${props.canChange ? '' : 'A mentor can add them.'} `}
+        {props.canChange && (
+          <button type="button" className="link-btn" onClick={props.onChange}>{props.steps.length ? 'Change stages' : 'Add stages'}</button>
+        )}
+      </span>
+    </div>
+  )
+}
+
+/** Mentors: choose which stages a made part goes through, and the machine for each process stage. */
+function StagesForm(props: { part: Part; steps: Step[]; onDone: () => void }) {
+  const { part, steps } = props
+  const has = (stage: Stage) => steps.find((s) => s.stage === stage)
+  const [chosen, setChosen] = useState<Set<Stage>>(() => new Set(steps.map((s) => s.stage)))
+  const [machines, setMachines] = useState<Record<string, Machine>>(() =>
+    Object.fromEntries(steps.filter((s) => s.machine).map((s) => [s.stage, s.machine!])),
+  )
+  const [saving, setSaving] = useState(false)
+
+  function toggle(stage: Stage) {
+    const next = new Set(chosen)
+    if (next.has(stage)) next.delete(stage)
+    else next.add(stage)
+    setChosen(next)
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    const noMachine = STAGES.find((stage) => isProcess(stage) && chosen.has(stage) && !machines[stage])
+    if (noMachine) return toast(`Pick the machine for ${STAGE_NAMES[noMachine]}.`)
+    // A stage whose machine changed is removed and added again, starting over.
+    const keep = (s: Step) => chosen.has(s.stage) && (!s.machine || s.machine === machines[s.stage])
+    const removing = steps.filter((s) => !keep(s))
+    const adding = STAGES.filter((stage) => chosen.has(stage) && !steps.some((s) => keep(s) && s.stage === stage))
+    const losing = removing.filter((s) => s.quantity_done > 0 || s.status !== 'todo')
+    if (losing.length && !window.confirm(`This clears the progress on ${losing.map(stepName).join(', ')}. Go ahead?`)) return
+    setSaving(true)
+    for (const s of removing) {
+      const result = await removeStep(s)
+      if (!result.ok) return finish(result.error)
+    }
+    for (const stage of adding) {
+      const result = await addStep(part, stage, isProcess(stage) ? (machines[stage] ?? null) : null)
+      if (!result.ok) return finish(result.error)
+    }
+    finish(`Saved ${part.name}'s stages.`, true)
+  }
+
+  function finish(message: string, done = false) {
+    setSaving(false)
+    toast(message)
+    if (done) props.onDone()
+  }
+
+  return (
+    <Panel title={`${part.name}: stages`}>
+      <form className="panel-body" onSubmit={save}>
+        <p className="note">Tick the stages this part goes through. A part only needs the ones it has.</p>
+        {STAGES.map((stage) => (
+          <div key={stage} className="field">
+            <label className="check">
+              <input type="checkbox" checked={chosen.has(stage)} onChange={() => toggle(stage)} />
+              {STAGE_NAMES[stage]} <span className="note">({STAGE_HINTS[stage]}{has(stage) ? `, ${STATUS_NAMES[has(stage)!.status].toLowerCase()}` : ''})</span>
+            </label>
+            {isProcess(stage) && chosen.has(stage) && (
+              <select
+                className="input"
+                aria-label={`Machine for ${STAGE_NAMES[stage]}`}
+                value={machines[stage] ?? ''}
+                onChange={(e) => setMachines({ ...machines, [stage]: e.target.value as Machine })}
+              >
+                <option value="" disabled>Pick the machine</option>
+                {MACHINES.map((m) => <option key={m} value={m}>{MACHINE_NAMES[m]}</option>)}
+              </select>
+            )}
+          </div>
+        ))}
+        <div className="toolbar">
+          <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save stages'}</button>
           <button type="button" className="btn" onClick={props.onDone}>Cancel</button>
         </div>
       </form>
