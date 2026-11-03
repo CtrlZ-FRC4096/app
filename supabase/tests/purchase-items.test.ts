@@ -31,13 +31,22 @@ describe('purchase items', () => {
     expect(item).toMatchObject({ created_by: student, requested_by: student, status: 'order' })
   })
 
-  it('lets a member say someone else asked for it', async () => {
-    const [item] = await db.as<Item>(
-      student,
-      "insert into public.purchase_items (name, vendor, type, quantity, requested_by) values ('Belt', 'WCP', 'Drive Base', 2, $1) returning *",
-      [other],
-    )
-    expect(item).toMatchObject({ created_by: student, requested_by: other })
+  it("doesn't let anyone say someone else asked for it, not even a mentor", async () => {
+    for (const [person, someoneElse] of [[student, other], [mentor, student]]) {
+      await expect(
+        db.as(person, "insert into public.purchase_items (name, vendor, type, quantity, requested_by) values ('Belt', 'WCP', 'Drive Base', 2, $1)", [someoneElse]),
+      ).rejects.toThrow(PERMISSION_DENIED)
+    }
+  })
+
+  it("doesn't let anyone change who asked for an item later, not even a mentor", async () => {
+    const [item] = await add(student)
+    for (const person of [student, other, mentor]) {
+      await expect(
+        db.as(person, 'update public.purchase_items set requested_by = $2 where id = $1', [item.id, person === student ? other : person]),
+      ).rejects.toThrow(PERMISSION_DENIED)
+    }
+    expect(await db.sql('select requested_by from public.purchase_items where id = $1', [item.id])).toEqual([{ requested_by: student }])
   })
 
   it("doesn't let anyone add an item as if someone else added it", async () => {

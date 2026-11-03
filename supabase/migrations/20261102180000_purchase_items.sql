@@ -30,8 +30,8 @@ create table public.purchase_items (
   link text check (link like 'https://%' and char_length(link) <= 2000),
   part_number text check (char_length(part_number) between 1 and 100),
   quantity integer not null check (quantity between 1 and 10000),
-  -- Who asked for it. Usually whoever added it; an import from Slack can
-  -- set someone else.
+  -- Who asked for it: always whoever filled in the form (everyone signs in
+  -- with Slack). Nobody can pick someone else or change it later.
   requested_by uuid default auth.uid() references public.members (id) on delete set null,
   notes text check (char_length(notes) between 1 and 1000),
   created_at timestamptz not null default now(),
@@ -43,10 +43,10 @@ create index on public.purchase_items (status);
 alter table public.purchase_items enable row level security;
 
 -- Signed-out visitors get nothing. Signed-in people can't change who added
--- an item or when.
+-- an item, who asked for it, or when.
 revoke all on table public.purchase_items from anon, authenticated;
 grant select, insert, delete on table public.purchase_items to authenticated;
-grant update (name, status, vendor, type, link, part_number, quantity, requested_by, notes) on table public.purchase_items to authenticated;
+grant update (name, status, vendor, type, link, part_number, quantity, notes) on table public.purchase_items to authenticated;
 
 -- Changes from other people show up in the app straight away.
 alter publication supabase_realtime add table public.purchase_items;
@@ -58,9 +58,15 @@ create policy "Members can read purchase items"
   on public.purchase_items for select to authenticated
   using ((select private.is_member()));
 
+-- Whoever adds an item is who asked for it. (Importing the Slack list,
+-- step 3 of #66, will need a mentors-only way to keep its names.)
 create policy "Members can add purchase items as themselves"
   on public.purchase_items for insert to authenticated
-  with check ((select private.is_member()) and created_by = (select auth.uid()));
+  with check (
+    (select private.is_member())
+    and created_by = (select auth.uid())
+    and requested_by = (select auth.uid())
+  );
 
 create policy "Members can change purchase items"
   on public.purchase_items for update to authenticated

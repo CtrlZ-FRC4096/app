@@ -108,7 +108,11 @@ export interface PurchaseItem extends Row {
   part_number: string | null
   /** How many are needed. */
   quantity: number
-  /** Who asked for it. Show their name with useMemberNames(). */
+  /**
+   * Who asked for it: always whoever filled in the form. The database
+   * refuses anyone else, and nobody can change it. Show their name with
+   * useMemberNames().
+   */
   requested_by: string | null
   notes: string | null
   /** Who added it to the app. */

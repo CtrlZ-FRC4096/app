@@ -1,5 +1,6 @@
-import { useState, type FormEvent, type MouseEvent } from 'react'
+import { useState, type CSSProperties, type FormEvent, type MouseEvent } from 'react'
 import { useMemberNames } from '../../core/members'
+import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { shortDate } from '../../core/format'
 import { PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
@@ -22,6 +23,12 @@ import {
   type PurchaseItem,
   type View,
 } from './data'
+
+// Fields and their boxes may shrink to the screen's width. Without this, a
+// dropdown grows to fit its longest choice and the page scrolls sideways
+// on a phone.
+const FIELD: CSSProperties = { minWidth: 0 }
+const BOX: CSSProperties = { minWidth: 0, width: '100%' }
 
 const EMPTY_TEXT: Record<View, string> = {
   Current: 'Nothing in progress. Ask for something above, or look at All.',
@@ -86,7 +93,10 @@ export default function PurchasingPage() {
   )
 }
 
-/** One item in a list. Tapping it (anywhere but its link) opens it for changing. */
+/**
+ * One item in a list. Tapping it opens it for changing, except on its
+ * Open link button, which sits apart so it's easy to hit on a phone.
+ */
 function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () => void }) {
   const { item } = props
   const nameOf = useMemberNames()
@@ -105,14 +115,14 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
         {' '}× {item.quantity}
         {props.showStatus && <>{' '}<Pill tone={status.tone}>{status.label}</Pill></>}
         <br />
-        <span className="muted">
-          {details.join(' · ')}
-          {item.link && <>{' · '}<a href={item.link} target="_blank" rel="noopener noreferrer">Open link</a></>}
-        </span>
+        <span className="muted">{details.join(' · ')}</span>
         {item.notes && <><br /><span className="muted">{item.notes}</span></>}
         <br />
         <span className="note">Requested by {nameOf(item.requested_by)} · {shortDate(item.created_at)}</span>
       </span>
+      {item.link && (
+        <a className="btn btn-sm" href={item.link} target="_blank" rel="noopener noreferrer">Open link</a>
+      )}
     </div>
   )
 }
@@ -121,6 +131,7 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
 function ItemForm(props: { item: PurchaseItem | null; onDone: () => void }) {
   const { item } = props
   const nameOf = useMemberNames()
+  const me = useSession()
   const [form, setForm] = useState<NewItem>(item ? itemToForm(item) : EMPTY_ITEM)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -155,16 +166,16 @@ function ItemForm(props: { item: PurchaseItem | null; onDone: () => void }) {
   }
 
   const text = (field: 'name' | 'link' | 'part_number', label: string, placeholder = '') => (
-    <label className="field" htmlFor={id(field)}>
+    <label className="field" style={FIELD} htmlFor={id(field)}>
       {label}
-      <input id={id(field)} className="input" value={form[field]} placeholder={placeholder} onChange={(e) => set({ [field]: e.target.value })} />
+      <input id={id(field)} className="input" style={BOX} value={form[field]} placeholder={placeholder} onChange={(e) => set({ [field]: e.target.value })} />
     </label>
   )
 
   const select = (field: 'vendor' | 'type', label: string, list: string[]) => (
-    <label className="field" htmlFor={id(field)}>
+    <label className="field" style={FIELD} htmlFor={id(field)}>
       {label}
-      <select id={id(field)} className="input" value={form[field]} onChange={(e) => set({ [field]: e.target.value })}>
+      <select id={id(field)} className="input" style={BOX} value={form[field]} onChange={(e) => set({ [field]: e.target.value })}>
         <option value="" disabled>Pick one</option>
         {choices(list, form[field]).map((choice) => <option key={choice} value={choice}>{choice}</option>)}
       </select>
@@ -172,16 +183,18 @@ function ItemForm(props: { item: PurchaseItem | null; onDone: () => void }) {
   )
 
   return (
-    <form className="panel-body" style={{ maxWidth: '70ch' }} onSubmit={save}>
-      {item && (
-        <p className="note" style={{ margin: 0 }}>Requested by {nameOf(item.requested_by)} · {shortDate(item.created_at)}</p>
-      )}
+    <form className="panel-body" style={{ maxWidth: '70ch', minWidth: 0 }} onSubmit={save}>
+      {/* Always whoever filled in the form: it can't be picked or changed. */}
+      <p className="note" style={{ margin: 0 }}>
+        {item ? `Requested by ${nameOf(item.requested_by)} · ${shortDate(item.created_at)}` : `Requested by ${me.name}`}
+      </p>
       {text('name', 'What to buy', 'Like "Ethernet cables, 5 ft (10 pack)"')}
-      <label className="field" htmlFor={id('status')}>
+      <label className="field" style={FIELD} htmlFor={id('status')}>
         {item ? 'Status' : 'Priority'}
-        <select id={id('status')} className="input" value={form.status} onChange={(e) => set({ status: e.target.value as NewItem['status'] })}>
-          {statuses.map((s) => <option key={s.key} value={s.key}>{s.label}: {s.hint.toLowerCase()}</option>)}
+        <select id={id('status')} className="input" style={BOX} value={form.status} onChange={(e) => set({ status: e.target.value as NewItem['status'] })}>
+          {statuses.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
         </select>
+        <span className="note">{statusOf(form.status).hint}.</span>
       </label>
       {select('vendor', 'Vendor', VENDORS)}
       {select('type', 'Type', TYPES)}
@@ -191,9 +204,9 @@ function ItemForm(props: { item: PurchaseItem | null; onDone: () => void }) {
       </div>
       {text('link', 'Link to the product', 'https://…')}
       {text('part_number', 'Part or item number (if there is one)')}
-      <label className="field" htmlFor={id('notes')}>
+      <label className="field" style={FIELD} htmlFor={id('notes')}>
         Notes
-        <textarea id={id('notes')} className="input" rows={2} value={form.notes} onChange={(e) => set({ notes: e.target.value })} />
+        <textarea id={id('notes')} className="input" style={BOX} rows={2} value={form.notes} onChange={(e) => set({ notes: e.target.value })} />
       </label>
       <div className="toolbar">
         <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : item ? 'Save' : 'Add to the list'}</button>

@@ -12,6 +12,7 @@ This list is typed in by hand. It's **separate from the BOM**, which comes from 
 - **Asking for something:** the form at the top. You pick its priority (one of the four "Order" statuses).
 - **Changing an item:** tap it to open it, then change its status or anything else. Delete takes two presses.
 - **Who can do what:** like the Slack list, anyone on the team can add, change and delete any item.
+- **Requested by** is always whoever filled in the form (everyone signs in with Slack). Nobody can pick someone else or change it later, not even a mentor. Importing the Slack list (step 3) will need a mentors-only way to keep its names.
 - The home page tile shows "3 to order now (1 high priority)".
 
 The statuses, vendors and types are lists at the top of `data.ts`, so they're easy to change. Vendors and types can change freely. A new status also needs a migration, because the database checks them.
