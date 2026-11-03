@@ -1,8 +1,29 @@
 // Tests for data.ts. Run them with `npm test`.
 // Who is allowed to do what is the database's job: that's tested in
 // supabase/tests/inventory-items.test.ts.
+import { createElement } from 'react'
+import { renderToString } from 'react-dom/server'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { addItem, checkItem, itemsTable, type NewItem } from './data'
+import { addItem, checkItem, isLow, itemsTable, useLowItems, useLowStockAttention, useLowStockSummary, type NewItem } from './data'
+
+/** Runs a hook the way a page would, and gives back what it returned. */
+function runHook<T>(hook: () => T): T {
+  let value: T | undefined
+  function Component() {
+    value = hook()
+    return null
+  }
+  renderToString(createElement(Component))
+  return value as T
+}
+
+/** An example part with the given quantity and low-stock level. */
+const part = (quantity: number, low_stock_level: number) => ({ ...itemsTable.rows()[0], quantity, low_stock_level })
+
+/** Puts every example part well above its low-stock level. */
+async function stockEverything() {
+  for (const item of itemsTable.rows()) await itemsTable.update(item.id, { quantity: item.low_stock_level + 1 })
+}
 
 beforeEach(() => {
   itemsTable.reset()
@@ -40,6 +61,59 @@ describe('itemsTable', () => {
   it('lists parts in order by name', () => {
     const names = itemsTable.rows().map((item) => item.name)
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)))
+  })
+})
+
+describe('isLow', () => {
+  it('is true below the low-stock level', () => {
+    expect(isLow(part(1, 2))).toBe(true)
+  })
+
+  it('is true exactly at the low-stock level', () => {
+    expect(isLow(part(2, 2))).toBe(true)
+  })
+
+  it('is false above the low-stock level', () => {
+    expect(isLow(part(3, 2))).toBe(false)
+  })
+})
+
+describe('useLowItems', () => {
+  it('gives only the low parts, in order by name', () => {
+    expect(runHook(useLowItems).map((item) => item.name)).toEqual(['CANivore', 'Main breaker, 120A', 'roboRIO 2.0'])
+  })
+
+  it('gives nothing when no parts are low', async () => {
+    await stockEverything()
+    expect(runHook(useLowItems)).toEqual([])
+  })
+})
+
+describe('useLowStockSummary', () => {
+  it('says how many parts are low', () => {
+    expect(runHook(useLowStockSummary)).toEqual({ tone: 'warn', text: '3 parts low' })
+  })
+
+  it('says "1 part" when only one is low', async () => {
+    await stockEverything()
+    await itemsTable.update(itemsTable.rows()[0].id, { quantity: 0 })
+    expect(runHook(useLowStockSummary)).toEqual({ tone: 'warn', text: '1 part low' })
+  })
+
+  it('says so when no parts are low', async () => {
+    await stockEverything()
+    expect(runHook(useLowStockSummary)).toEqual({ tone: 'ok', text: 'No parts low' })
+  })
+})
+
+describe('useLowStockAttention', () => {
+  it('adds one line when parts are low', () => {
+    expect(runHook(useLowStockAttention)).toEqual([{ tone: 'warn', text: '3 parts low on stock.' }])
+  })
+
+  it('adds nothing when no parts are low', async () => {
+    await stockEverything()
+    expect(runHook(useLowStockAttention)).toEqual([])
   })
 })
 

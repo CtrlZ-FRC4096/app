@@ -9,6 +9,8 @@
  */
 import { createTable, fail, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
+import { plural } from '../../core/format'
+import type { Notice } from '../../core/registry'
 
 /** One row of the inventory_items table. The fields match its columns. */
 export interface Item extends Row {
@@ -64,6 +66,30 @@ export const itemsTable = createTable<Item>('inventory_items', {
 /** Every part, in order by name. */
 export function useItems(): Item[] {
   return itemsTable.useRows()
+}
+
+/** True when the quantity is at or below the part's low-stock level. */
+export function isLow(item: Item): boolean {
+  return item.quantity <= item.low_stock_level
+}
+
+/** Every low part, in order by name. */
+export function useLowItems(): Item[] {
+  return useItems().filter(isLow)
+}
+
+/** The home page tile's status. */
+export function useLowStockSummary(): Notice {
+  const low = useLowItems()
+  if (low.length === 0) return { tone: 'ok', text: 'No parts low' }
+  return { tone: 'warn', text: `${plural(low.length, 'part', 'parts')} low` }
+}
+
+/** One line under "Needs attention" on the home page when any parts are low. */
+export function useLowStockAttention(): Notice[] {
+  const low = useLowItems()
+  if (low.length === 0) return []
+  return [{ tone: 'warn', text: `${plural(low.length, 'part', 'parts')} low on stock.` }]
 }
 
 /** What someone types in to add a part. */
