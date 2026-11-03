@@ -1,14 +1,17 @@
 import { useState, type FormEvent } from 'react'
 import { plural } from '../../core/format'
 import { toast } from '../../core/toast'
-import { PageHead, Panel, Stepper } from '../../core/ui'
-import { addItem, useItems } from './data'
+import { PageHead, Panel, Pill, Stepper } from '../../core/ui'
+import { addItem, isLow, useItems, useLowItems } from './data'
 
 // The page reads parts with a hook (useItems) and adds them with addItem().
 // It never saves anything itself.
 export default function InventoryPage() {
   const items = useItems()
+  const lowItems = useLowItems()
   const [adding, setAdding] = useState(false)
+  const [lowOnly, setLowOnly] = useState(false)
+  const shown = lowOnly ? lowItems : items
 
   return (
     <>
@@ -19,17 +22,18 @@ export default function InventoryPage() {
       {adding && <AddItemForm onDone={() => setAdding(false)} />}
       <Panel
         title="All parts"
-        aside={<span className="note">{plural(items.length, 'part', 'parts')}</span>}
+        aside={<span className="note">{plural(shown.length, 'part', 'parts')}</span>}
       >
-        {!adding && (
-          <div className="panel-body">
-            <div className="toolbar">
-              <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>Add a part</button>
-            </div>
+        <div className="panel-body">
+          <div className="toolbar">
+            {!adding && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>Add a part</button>}
+            <label className="check"><input type="checkbox" checked={lowOnly} onChange={(e) => setLowOnly(e.target.checked)} /> Low stock only</label>
           </div>
-        )}
+        </div>
         {items.length === 0 ? (
           <p className="panel-body muted">No parts yet. Add the first one with the Add a part button.</p>
+        ) : shown.length === 0 ? (
+          <p className="panel-body muted">No parts are low right now.</p>
         ) : (
           // table-wrap lets the table scroll sideways inside its box on a phone, so the page doesn't.
           <div className="table-wrap">
@@ -43,9 +47,9 @@ export default function InventoryPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((item) => (
+                {shown.map((item) => (
                   <tr key={item.id}>
-                    <td>{item.name}</td>
+                    <td>{item.name} {isLow(item) && <Pill tone="warn">Low</Pill>}</td>
                     <td><span className="note">{item.vendor}</span><br />{item.vendor_part_number}</td>
                     <td>{item.location}</td>
                     <td className="num">{item.quantity}</td>

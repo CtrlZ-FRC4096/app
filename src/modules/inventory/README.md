@@ -2,7 +2,7 @@
 
 Parts, where they live, and how many are left, with a record of who took or added stock.
 
-**So far:** the `inventory_items` table with example parts, and a page that lists them.
+**So far:** the `inventory_items` table with example parts, a page that lists them, and a low-stock flag and filter that also show on the home page.
 
 ## What it needs to do
 
@@ -23,7 +23,7 @@ Parts, where they live, and how many are left, with a record of who took or adde
 1. ~~Create `data.ts` with an `Item` type and example parts.~~ Done.
 2. ~~Show the parts in a table on the page.~~ Done.
 3. Add `changeStock()` with tests: it should refuse to take more than are on the shelf.
-4. Add the low-stock flag and filter.
+4. ~~Add the low-stock flag and filter.~~ Done.
 
 Copy the pattern from the [Example module](../example/README.md): a table
 and rules in `data.ts`, tests in `data.test.ts`, and the page calling
