@@ -2,19 +2,35 @@
 
 The bill of materials for each robot, checked against Inventory, so the team can see what to make and what to order.
 
-**Built so far:** a robot is made of systems (Intake, Drivetrain, …), and each system has a list of parts. The page shows one system's parts with an All / Made / COTS filter. Anyone on the team can add, change and delete parts, and import a system's parts from Onshape.
+**Built so far:** a robot is made of systems (Intake, Drivetrain, …), and each system has a list of parts. The page shows one system's parts with an All / Made / COTS filter. Anyone on the team can add, change and delete parts, and import a system's parts from Onshape. Made parts show their stages (see below).
 
 | File | What it does |
 |:--|:--|
 | `index.ts` | Tells the app about the module, and puts "2 systems · 12 parts" on the home page tile. |
-| `data.ts` | The three tables (`bom_robots`, `bom_systems`, `bom_parts`), their example rows, adding and changing them, and reading a system from Onshape. |
+| `data.ts` | The four tables (`bom_robots`, `bom_systems`, `bom_parts`, `bom_steps`), their example rows, adding and changing them, moving stages along, and reading a system from Onshape. |
 | `onshape.ts` | Works out what an import from Onshape changes: `planOnshapeImport()`. |
 | `data.test.ts`, `onshape.test.ts` | Tests for both. |
-| `BomPage.tsx` | Pick a system, then see its parts in a table, change them, and import from Onshape. |
+| `BomPage.tsx` | Pick a system, then see its parts in a table with their stages, change them, and import from Onshape. |
 
 The tables are made by `supabase/migrations/20261027150000_bom.sql`, and their permission rules are tested in `supabase/tests/bom.test.ts`. Anyone on the team can add and change robots, systems and parts, and delete parts (`supabase/migrations/20261027170000_bom_members_edit.sql`). Only mentors can delete a system, because that deletes every part in it too.
 
 **Part numbers.** Every part gets a team number like `4096-26-INT-001`: team, year, system code, then a number. Made parts also have a material, such as "6061 aluminum, 1/4 in plate". COTS (bought) parts have a vendor and the vendor's part number.
+
+## Stages
+
+Every made part goes through stages before it's on the robot (#15): **Design → Pre-process → Process 1 → Process 2 → Post-process**. A part only has the stages it needs.
+
+- **Pre-process:** cutting stock to size, or CAM.
+- **Process 1 and 2:** a machine each: CNC router, lathe, mill, 3D printer, laser or hand tools. On the page they're shown by their machine, like "Lathe".
+- **Post-process:** deburring, tapping, finishing.
+
+Under each made part, each stage shows its status (To do, In progress, Done) and how many of the part's quantity are through it ("1 of 3"). Anyone can count parts through with − and +, which never goes below 0 or above the part's quantity, and move a stage along with **Start** and **Mark done** (**Undo** goes back one). Anyone can choose a part's stages with **Change stages**.
+
+The **station filter** shows one station's queue: "Lathe only" lists the parts with a lathe stage that isn't done, and "Waiting for post-process" the parts whose post-process isn't done.
+
+The table is made by `supabase/migrations/20261102120000_bom_steps.sql`, with its rules tested in `supabase/tests/bom-steps.test.ts`: anyone on the team can read, add and remove stages, and change their status and how many are done. Deleting a part deletes its stages.
+
+The CNC board tracks routing separately (Ready to CAM → To cut → Cutting → Cut), so for now a part's CNC router stage is moved along by hand here too.
 
 ## Importing from Onshape
 
@@ -33,7 +49,8 @@ The example Intake in demo mode is linked to a made-up assembly, so **Import fro
 
 - Write team part numbers into Onshape (#21)
 - For bought parts: how many are on the shelf (from Inventory), and whether we're short
-- For made parts: whether they have been made yet
+- Assign stages to people, with due dates (#16)
+- Move a part's CNC router stage along when the CNC board marks it cut
 - Mentors mark short parts as ordered
 - Costs, visible only to mentors and admins
 

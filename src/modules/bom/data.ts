@@ -11,6 +11,10 @@
  * robots, systems and parts, delete parts, and import from Onshape. Only
  * mentors can delete a system, because that deletes every part in it too
  * (..._bom_members_edit.sql).
+ *
+ * Made parts have stages (Design, Pre-process, Process 1 and 2,
+ * Post-process), each with a status and how many are through it
+ * (..._bom_steps.sql).
  */
 import { callFunction } from '../../core/functions'
 import { createTable, fail, ok, type Result, type Row } from '../../core/table'
@@ -355,6 +359,191 @@ export async function changePart(part: Part, changes: NewPart): Promise<Result<P
 
 export async function removePart(part: Part): Promise<Result> {
   return partsTable.remove(part.id)
+}
+
+// ---------------------------------------------------------------------------
+// Stages: what a made part goes through before it's on the robot (#15).
+// Made by ..._bom_steps.sql. Anyone on the team can add and remove stages,
+// move a stage along and count parts through it.
+
+export type Stage = 'design' | 'pre' | 'process1' | 'process2' | 'post'
+/** In order. A part only has the stages it needs. */
+export const STAGES: Stage[] = ['design', 'pre', 'process1', 'process2', 'post']
+export const STAGE_NAMES: Record<Stage, string> = {
+  design: 'Design',
+  pre: 'Pre-process',
+  process1: 'Process 1',
+  process2: 'Process 2',
+  post: 'Post-process',
+}
+/** What each stage is for, to show when choosing them. */
+export const STAGE_HINTS: Record<Stage, string> = {
+  design: 'CAD',
+  pre: 'Cutting stock to size, or CAM',
+  process1: 'A machine',
+  process2: 'A second machine',
+  post: 'Deburring, tapping, finishing',
+}
+
+export type Machine = 'cnc_router' | 'lathe' | 'mill' | '3d_printer' | 'laser' | 'hand_tools'
+export const MACHINES: Machine[] = ['cnc_router', 'lathe', 'mill', '3d_printer', 'laser', 'hand_tools']
+export const MACHINE_NAMES: Record<Machine, string> = {
+  cnc_router: 'CNC router',
+  lathe: 'Lathe',
+  mill: 'Mill',
+  '3d_printer': '3D printer',
+  laser: 'Laser',
+  hand_tools: 'Hand tools',
+}
+
+/** Only the process stages use a machine. The database checks the same. */
+export const isProcess = (stage: Stage) => stage === 'process1' || stage === 'process2'
+
+export type StepStatus = 'todo' | 'in_progress' | 'done'
+const STATUSES: StepStatus[] = ['todo', 'in_progress', 'done']
+export const STATUS_NAMES: Record<StepStatus, string> = { todo: 'To do', in_progress: 'In progress', done: 'Done' }
+
+/** One row of bom_steps: one stage of one made part. */
+export interface Step extends Row {
+  part_id: string
+  stage: Stage
+  /** For the process stages only. */
+  machine: Machine | null
+  status: StepStatus
+  /** How many of the part's quantity are through this stage. */
+  quantity_done: number
+  created_by: string | null
+}
+
+// Example stages for the example made parts (ids from made() above).
+const SIDE_PLATE = '00000000-0000-4000-8000-0000000b1001'
+const ROLLER_SHAFT = '00000000-0000-4000-8000-0000000b1002'
+const PIVOT_SPACER = '00000000-0000-4000-8000-0000000b1003'
+const BELLYPAN = '00000000-0000-4000-8000-0000000b1007'
+const FRAME_RAIL = '00000000-0000-4000-8000-0000000b1008'
+
+let stepCount = 0
+function step(part_id: string, stage: Stage, status: StepStatus, quantity_done: number, machine: Machine | null = null): Step {
+  stepCount += 1
+  return { id: `00000000-0000-4000-8000-0000000b2${String(stepCount).padStart(3, '0')}`, part_id, stage, machine, status, quantity_done, ...CREATED }
+}
+
+const EXAMPLE_STEPS: Step[] = [
+  // Intake side plate (2): designed and CAMed, one routed so far.
+  step(SIDE_PLATE, 'design', 'done', 2),
+  step(SIDE_PLATE, 'pre', 'done', 2),
+  step(SIDE_PLATE, 'process1', 'in_progress', 1, 'cnc_router'),
+  step(SIDE_PLATE, 'post', 'todo', 0),
+  // Roller shaft (3): cut to length, then turned on the lathe.
+  step(ROLLER_SHAFT, 'design', 'done', 3),
+  step(ROLLER_SHAFT, 'pre', 'done', 3),
+  step(ROLLER_SHAFT, 'process1', 'in_progress', 1, 'lathe'),
+  // Pivot spacer (4): printed, then reamed by hand.
+  step(PIVOT_SPACER, 'design', 'done', 4),
+  step(PIVOT_SPACER, 'process1', 'done', 4, '3d_printer'),
+  step(PIVOT_SPACER, 'post', 'in_progress', 2),
+  // Bellypan (1): still being designed.
+  step(BELLYPAN, 'design', 'in_progress', 0),
+  step(BELLYPAN, 'process1', 'todo', 0, 'cnc_router'),
+  // Frame rail (4): milled, then holes routed.
+  step(FRAME_RAIL, 'design', 'done', 4),
+  step(FRAME_RAIL, 'pre', 'done', 4),
+  step(FRAME_RAIL, 'process1', 'done', 4, 'mill'),
+  step(FRAME_RAIL, 'process2', 'in_progress', 2, 'cnc_router'),
+  step(FRAME_RAIL, 'post', 'todo', 0),
+]
+
+const byStage = (a: { stage: Stage }, b: { stage: Stage }) => STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage)
+
+export const stepsTable = createTable<Step>('bom_steps', { demo: EXAMPLE_STEPS, sort: byStage })
+
+/** Every stage of every part, in stage order. */
+export function useSteps(): Step[] {
+  return stepsTable.useRows()
+}
+
+/** One part's stages, in order. */
+export function stepsFor(part: Part, steps: Step[]): Step[] {
+  return steps.filter((s) => s.part_id === part.id)
+}
+
+/** How a stage is written on the page: its machine for the process stages, like "CNC router". */
+export function stepName(step: Step): string {
+  return step.machine ? MACHINE_NAMES[step.machine] : STAGE_NAMES[step.stage]
+}
+
+const partOf = (step: Step) => partsTable.rows().find((p) => p.id === step.part_id)
+
+/** Count one more (+1) or one fewer (−1) through a stage: never below 0 or above the part's quantity. */
+export async function changeDone(step: Step, by: 1 | -1): Promise<Result<Step>> {
+  const part = partOf(step)
+  if (!part) return fail('That part has been deleted.')
+  const next = step.quantity_done + by
+  if (next < 0) return fail(`None are through ${stepName(step)} yet.`)
+  if (next > part.quantity) return fail(`All ${part.quantity} are already through ${stepName(step)}. The robot needs ${part.quantity}.`)
+  return stepsTable.update(step.id, { quantity_done: next })
+}
+
+/** Move a stage on: to do → in progress → done. */
+export async function advance(step: Step): Promise<Result<Step>> {
+  const at = STATUSES.indexOf(step.status)
+  if (at === STATUSES.length - 1) return fail(`${stepName(step)} is already done.`)
+  return stepsTable.update(step.id, { status: STATUSES[at + 1] })
+}
+
+/** Move a stage back one, to undo a mistake: done → in progress → to do. */
+export async function moveBack(step: Step): Promise<Result<Step>> {
+  const at = STATUSES.indexOf(step.status)
+  if (at === 0) return fail(`${stepName(step)} hasn't started yet.`)
+  return stepsTable.update(step.id, { status: STATUSES[at - 1] })
+}
+
+/** Why a part can't be given this stage, or null if it can. `steps` are the part's stages. */
+export function checkStep(part: Part, stage: Stage, machine: Machine | null, steps: Step[]): string | null {
+  if (part.kind !== 'made') return 'Only made parts have stages. COTS parts are bought ready.'
+  if (steps.some((s) => s.stage === stage)) return `${part.name} already has ${STAGE_NAMES[stage]}.`
+  if (isProcess(stage) && !machine) return `Pick the machine for ${STAGE_NAMES[stage]}.`
+  return null
+}
+
+/** Give a made part a stage. */
+export async function addStep(part: Part, stage: Stage, machine: Machine | null): Promise<Result<Step>> {
+  const problem = checkStep(part, stage, machine, stepsFor(part, stepsTable.rows()))
+  if (problem) return fail(problem)
+  return stepsTable.insert({ part_id: part.id, stage, machine: isProcess(stage) ? machine : null, status: 'todo', quantity_done: 0 })
+}
+
+/** Take a stage off a part, with its progress. */
+export async function removeStep(step: Step): Promise<Result> {
+  return stepsTable.remove(step.id)
+}
+
+/**
+ * The page's station filter: every made part, the parts still waiting for
+ * one stage, or still waiting for one machine. "Waiting" means that stage
+ * isn't done yet.
+ */
+export type Station = { kind: 'all' } | { kind: 'stage'; stage: Stage } | { kind: 'machine'; machine: Machine }
+
+export function stationName(station: Station): string {
+  if (station.kind === 'stage') return `Waiting for ${STAGE_NAMES[station.stage].toLowerCase()}`
+  if (station.kind === 'machine') return `${MACHINE_NAMES[station.machine]} only`
+  return 'Every stage'
+}
+
+/** The parts with a stage at this station that isn't done, and those stages. */
+export function stationQueue(parts: Part[], steps: Step[], station: Station): { part: Part; steps: Step[] }[] {
+  return parts
+    .filter((p) => p.kind === 'made')
+    .map((part) => {
+      const own = stepsFor(part, steps)
+      if (station.kind === 'all') return { part, steps: own }
+      const waiting = own.filter((s) =>
+        s.status !== 'done' && (station.kind === 'stage' ? s.stage === station.stage : s.machine === station.machine),
+      )
+      return { part, steps: waiting }
+    })
+    .filter((q) => station.kind === 'all' || q.steps.length > 0)
 }
 
 // ---------------------------------------------------------------------------
