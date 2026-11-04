@@ -14,3 +14,13 @@ export function shortDate(iso: string, today: Date = new Date()): string {
   if (date.toDateString() === today.toDateString()) return 'Today'
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
+
+/**
+ * The whole number typed into a Stepper, raised to the minimum, or null if
+ * nothing usable is typed (an empty box, or not a number).
+ */
+export function parseCount(text: string, min: number): number | null {
+  const value = Number(text)
+  if (text.trim() === '' || !Number.isFinite(value)) return null
+  return Math.max(min, Math.round(value))
+}

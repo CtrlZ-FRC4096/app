@@ -6,17 +6,21 @@
  * statuses, vendors and types. It's typed in by hand, separate from the BOM
  * (which comes from Onshape).
  *
- * Like the Slack list, anyone on the team can add, change and delete any
- * item. The database's rules are in
- * supabase/migrations/..._purchase_items.sql.
+ * Anyone on the team asks for things, and changes the priority of what's
+ * being asked for. Placing, cancelling and following up orders, and saying
+ * who they ship to, is for mentors and the team's purchasers (#78). The
+ * database's rules are in supabase/migrations/..._purchase_items.sql and
+ * ..._purchasing_orders.sql; the checks here only give a clearer message.
  *
- * Order details (dates, tracking, who ordered), prices, importing the Slack
- * list and receipts come in later steps: see issue #66.
+ * Dates, tracking, prices, importing the Slack list and receipts come in
+ * later steps: see issue #66.
  */
 import { createTable, fail, newestFirst, type Fields, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
-import { currentUser } from '../../core/session'
+import { currentUser, isMentor, useSession, type User } from '../../core/session'
+import { isLive } from '../../core/supabase'
 import type { Notice, Tone } from '../../core/registry'
+import type { BomSystem, Part } from '../bom/data'
 
 // ---------------------------------------------------------------------------
 // The lists. Change these to change the choices on the page.
@@ -115,6 +119,16 @@ export interface PurchaseItem extends Row {
    */
   requested_by: string | null
   notes: string | null
+  /**
+   * Who placed the order: filled in by the database with whoever moves it
+   * to Order Placed, unless they pick someone else. Mentors and purchasers
+   * can change it.
+   */
+  ordered_by: string | null
+  /** Who the package goes to. Set by mentors and purchasers. */
+  shipped_to: string | null
+  /** The BOM part it's for, when it was asked for from the BOM page. */
+  bom_part_id: string | null
   /** Who added it to the app. */
   created_by: string | null
 }
@@ -128,7 +142,8 @@ export const MAX_NOTES_LENGTH = 1000
 
 let exampleCount = 0
 function example(
-  fields: Omit<PurchaseItem, 'id' | 'created_at' | 'created_by' | 'link' | 'notes'> & { notes?: string },
+  fields: Omit<PurchaseItem, 'id' | 'created_at' | 'created_by' | 'link' | 'notes' | 'ordered_by' | 'shipped_to' | 'bom_part_id'> &
+    Partial<Pick<PurchaseItem, 'ordered_by' | 'shipped_to' | 'bom_part_id'>> & { notes?: string },
   created_at: string,
 ): PurchaseItem {
   exampleCount += 1
@@ -136,30 +151,107 @@ function example(
     id: `00000000-0000-4000-8000-0000000c00${String(exampleCount).padStart(2, '0')}`,
     link: fields.part_number ? `https://example.com/parts/${fields.part_number}` : null,
     notes: null,
+    ordered_by: null,
+    shipped_to: null,
+    bom_part_id: null,
     ...fields,
     created_at,
     created_by: fields.requested_by,
   }
 }
 
+// The example BOM parts (src/modules/bom/data.ts) two of these were asked for from.
+const BOM_BRUSHLESS_MOTOR = '00000000-0000-4000-8000-0000000b1004'
+const BOM_COMPLIANT_WHEEL = '00000000-0000-4000-8000-0000000b1005'
+// Ordered by a made-up mentor, and shipped to the shop through them.
+const ORDERED = { ordered_by: DEMO_PEOPLE.pat, shipped_to: DEMO_PEOPLE.pat }
+
 // Made up. Part numbers start EXAMPLE- so nobody orders them.
 const EXAMPLE_ITEMS: PurchaseItem[] = [
-  example({ name: 'Compliant wheel, 2 in', status: 'order', vendor: 'Andy Mark', type: 'Intake', part_number: 'EXAMPLE-CW-2', quantity: 8, requested_by: DEMO_PEOPLE.alex, notes: 'Spares for the intake rollers.' }, '2026-10-31T21:10:00Z'),
-  example({ name: 'Brushless motor', status: 'order_high', vendor: 'REV Robotics', type: 'Shooter', part_number: 'EXAMPLE-NEO-01', quantity: 2, requested_by: DEMO_PEOPLE.sam, notes: 'Needed before Saturday build day.' }, '2026-10-30T22:00:00Z'),
+  example({ name: 'Compliant wheel, 2 in', status: 'order', vendor: 'Andy Mark', type: 'Intake', part_number: 'EXAMPLE-CW-2', quantity: 8, requested_by: DEMO_PEOPLE.alex, notes: 'Spares for the intake rollers.', bom_part_id: BOM_COMPLIANT_WHEEL }, '2026-10-31T21:10:00Z'),
+  example({ name: 'Brushless motor', status: 'order_high', vendor: 'REV Robotics', type: 'Intake', part_number: 'EXAMPLE-NEO-01', quantity: 2, requested_by: DEMO_PEOPLE.sam, notes: 'Needed before Saturday build day.', bom_part_id: BOM_BRUSHLESS_MOTOR }, '2026-10-30T22:00:00Z'),
   example({ name: 'Zip ties, 8 in (pack of 100)', status: 'order_low', vendor: 'Amazon', type: 'Miscellaneous', part_number: null, quantity: 2, requested_by: DEMO_PEOPLE.jordan }, '2026-10-30T19:45:00Z'),
   example({ name: 'Ethernet cables, 5 ft (10 pack)', status: 'wait', vendor: 'Amazon', type: 'Electrical', part_number: null, quantity: 1, requested_by: DEMO_PEOPLE.jordan }, '2026-10-29T18:20:00Z'),
-  example({ name: 'Timing belt, 60T', status: 'placed', vendor: 'West Coast Products', type: 'Drive Base', part_number: 'EXAMPLE-TB-60', quantity: 4, requested_by: DEMO_PEOPLE.sam }, '2026-10-24T20:00:00Z'),
-  example({ name: 'Hex bearing, 1/2 in', status: 'backordered', vendor: 'Andy Mark', type: 'Hardware', part_number: 'EXAMPLE-HB-12', quantity: 12, requested_by: DEMO_PEOPLE.alex }, '2026-10-22T23:15:00Z'),
-  example({ name: 'Motor controller', status: 'received', vendor: 'CTRE', type: 'Electrical', part_number: 'EXAMPLE-MC-1', quantity: 1, requested_by: DEMO_PEOPLE.pat }, '2026-10-21T17:00:00Z'),
-  example({ name: 'Polycarbonate sheet, 1/8 in', status: 'in_shop', vendor: 'McMaster', type: 'Mechanical', part_number: 'EXAMPLE-PC-18', quantity: 1, requested_by: DEMO_PEOPLE.jordan }, '2026-10-20T18:30:00Z'),
+  example({ name: 'Timing belt, 60T', status: 'placed', vendor: 'West Coast Products', type: 'Drive Base', part_number: 'EXAMPLE-TB-60', quantity: 4, requested_by: DEMO_PEOPLE.sam, ...ORDERED }, '2026-10-24T20:00:00Z'),
+  example({ name: 'Hex bearing, 1/2 in', status: 'backordered', vendor: 'Andy Mark', type: 'Hardware', part_number: 'EXAMPLE-HB-12', quantity: 12, requested_by: DEMO_PEOPLE.alex, ...ORDERED }, '2026-10-22T23:15:00Z'),
+  example({ name: 'Motor controller', status: 'received', vendor: 'CTRE', type: 'Electrical', part_number: 'EXAMPLE-MC-1', quantity: 1, requested_by: DEMO_PEOPLE.pat, ...ORDERED }, '2026-10-21T17:00:00Z'),
+  example({ name: 'Polycarbonate sheet, 1/8 in', status: 'in_shop', vendor: 'McMaster', type: 'Mechanical', part_number: 'EXAMPLE-PC-18', quantity: 1, requested_by: DEMO_PEOPLE.jordan, ...ORDERED }, '2026-10-20T18:30:00Z'),
   example({ name: 'Field tape, 2 in', status: 'cancelled', vendor: 'Other', type: 'Field', part_number: null, quantity: 3, requested_by: DEMO_PEOPLE.alex, notes: 'Found some in the storage room.' }, '2026-10-18T16:00:00Z'),
 ]
 
-export const itemsTable = createTable<PurchaseItem>('purchase_items', { demo: EXAMPLE_ITEMS, sort: newestFirst })
+// Version 2: items have Ordered by, Shipped to and their BOM part.
+export const itemsTable = createTable<PurchaseItem>('purchase_items', { demo: EXAMPLE_ITEMS, sort: newestFirst, version: 2 })
 
 /** Every item, newest first. */
 export function useItems(): PurchaseItem[] {
   return itemsTable.useRows()
+}
+
+// ---------------------------------------------------------------------------
+// Purchasers: who places orders, along with mentors and admins (#78).
+
+/** One row of the purchasing_buyers table: a member who is a purchaser. */
+export interface Buyer extends Row {
+  member_id: string
+  /** The mentor who added them. */
+  created_by: string | null
+}
+
+// Made up: one student is a purchaser in demo mode.
+const EXAMPLE_BUYERS: Buyer[] = [
+  { id: '00000000-0000-4000-8000-0000000c0201', member_id: DEMO_PEOPLE.jordan, created_at: '2026-10-15T18:00:00Z', created_by: DEMO_PEOPLE.pat },
+]
+
+export const buyersTable = createTable<Buyer>('purchasing_buyers', { demo: EXAMPLE_BUYERS })
+
+export function useBuyers(): Buyer[] {
+  return buyersTable.useRows()
+}
+
+/** Mentors, admins and purchasers place and change orders. */
+export function canOrder(user: Pick<User, 'id' | 'role'> | null, buyers: Buyer[]): boolean {
+  return !!user && (isMentor(user.role) || buyers.some((b) => b.member_id === user.id))
+}
+
+/** Whether the signed-in person can place and change orders. */
+export function useCanOrder(): boolean {
+  return canOrder(useSession(), useBuyers())
+}
+
+/** Still being asked for: Wait to Order, or one of the three Order priorities. */
+export function isAsking(status: StatusKey): boolean {
+  return statusOf(status).ask
+}
+
+/**
+ * Whether saving `changes` needs a mentor or purchaser: it moves an item
+ * into or out of an order status (Order Placed and after), or sets who
+ * ordered it or who it ships to. Changing between the asking statuses doesn't.
+ */
+export function isOrderChange(item: PurchaseItem | null, changes: NewItem): boolean {
+  const orderedBy = changes.ordered_by || null
+  const shippedTo = changes.shipped_to || null
+  if (!item) return !isAsking(changes.status) || orderedBy !== null || shippedTo !== null
+  const statusMoved = changes.status !== item.status && (!isAsking(item.status) || !isAsking(changes.status))
+  return statusMoved || orderedBy !== item.ordered_by || shippedTo !== item.shipped_to
+}
+
+const NOT_A_BUYER = 'Only mentors and purchasers place and change orders. Ask one of them: they\'re listed at the bottom of this page.'
+
+/** Make someone a purchaser. Mentors and admins only. */
+export async function addBuyer(memberId: string): Promise<Result<Buyer>> {
+  const me = currentUser()
+  if (!me || !isMentor(me.role)) return fail('Only mentors and admins choose the purchasers.')
+  if (!memberId) return fail('Pick someone first.')
+  if (buyersTable.rows().some((b) => b.member_id === memberId)) return fail("They're already a purchaser.")
+  return buyersTable.insert({ member_id: memberId })
+}
+
+/** Stop someone being a purchaser. Mentors and admins only. */
+export async function removeBuyer(buyer: Buyer): Promise<Result> {
+  const me = currentUser()
+  if (!me || !isMentor(me.role)) return fail('Only mentors and admins choose the purchasers.')
+  return buyersTable.remove(buyer.id)
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +293,20 @@ export function groupItems(items: PurchaseItem[], view: View): Group[] {
   return STATUSES.map((status) => ({ title: status.label, status, items: shown.filter((i) => i.status === status.key) })).filter((g) => g.items.length > 0)
 }
 
+/**
+ * The items that match a search: every word typed is in the item's name,
+ * vendor, type, part number or notes, ignoring capitals. An empty search
+ * matches everything.
+ */
+export function searchItems(items: PurchaseItem[], search: string): PurchaseItem[] {
+  const words = search.toLowerCase().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return items
+  return items.filter((item) => {
+    const text = [item.name, item.vendor, item.type, item.part_number, item.notes].filter(Boolean).join(' ').toLowerCase()
+    return words.every((word) => text.includes(word))
+  })
+}
+
 // ---------------------------------------------------------------------------
 // The home page.
 
@@ -223,7 +329,7 @@ export function usePurchasingSummary(): Notice {
 // ---------------------------------------------------------------------------
 // Adding, changing and deleting items.
 
-/** What someone types in. The link, part number and notes can be left empty. */
+/** What someone types in. The link, part number, notes, Ordered by and Shipped to can be left empty. */
 export interface NewItem {
   name: string
   status: StatusKey
@@ -233,9 +339,14 @@ export interface NewItem {
   part_number: string
   quantity: number
   notes: string
+  /** Members' ids, or empty for nobody yet. Mentors and purchasers only. */
+  ordered_by: string
+  shipped_to: string
 }
 
-export const EMPTY_ITEM: NewItem = { name: '', status: FIRST_STATUS, vendor: '', type: '', link: '', part_number: '', quantity: 1, notes: '' }
+export const EMPTY_ITEM: NewItem = {
+  name: '', status: FIRST_STATUS, vendor: '', type: '', link: '', part_number: '', quantity: 1, notes: '', ordered_by: '', shipped_to: '',
+}
 
 /** An item's fields, to fill in the form for changing it. */
 export function itemToForm(item: PurchaseItem): NewItem {
@@ -248,7 +359,17 @@ export function itemToForm(item: PurchaseItem): NewItem {
     part_number: item.part_number ?? '',
     quantity: item.quantity,
     notes: item.notes ?? '',
+    ordered_by: item.ordered_by ?? '',
+    shipped_to: item.shipped_to ?? '',
   }
+}
+
+/**
+ * A new request filled in from an item, to buy it again. It starts as
+ * Order, and whoever sends it is who asked for it, like any new request.
+ */
+export function duplicateItem(item: PurchaseItem): NewItem {
+  return { ...itemToForm(item), status: FIRST_STATUS, ordered_by: '', shipped_to: '' }
 }
 
 /** Why an item can't be saved, or null if it can. */
@@ -282,22 +403,107 @@ const itemFields = (item: NewItem) => ({
   part_number: item.part_number.trim() || null,
   quantity: item.quantity,
   notes: item.notes.trim() || null,
+  ordered_by: item.ordered_by || null,
+  shipped_to: item.shipped_to || null,
 })
 
-/** Ask for something, as the person who asked for it. */
-export async function addItem(item: NewItem): Promise<Result<PurchaseItem>> {
+/**
+ * Ask for something, as the person who asked for it. `bomPartId` is the
+ * BOM part it's for, when it's asked for from the BOM page.
+ */
+export async function addItem(item: NewItem, bomPartId: string | null = null): Promise<Result<PurchaseItem>> {
   const problem = checkItem(item)
   if (problem) return fail(problem)
-  const fields: Fields<PurchaseItem> = { ...itemFields(item), requested_by: currentUser()?.id ?? null }
+  if (isOrderChange(null, item) && !canOrder(currentUser(), buyersTable.rows())) return fail(NOT_A_BUYER)
+  const fields: Fields<PurchaseItem> = {
+    ...itemFields(item),
+    requested_by: currentUser()?.id ?? null,
+    bom_part_id: bomPartId,
+  }
   return itemsTable.insert(fields)
 }
 
 export async function changeItem(item: PurchaseItem, changes: NewItem): Promise<Result<PurchaseItem>> {
   const problem = checkItem(changes)
   if (problem) return fail(problem)
-  return itemsTable.update(item.id, itemFields(changes))
+  if (isOrderChange(item, changes) && !canOrder(currentUser(), buyersTable.rows())) return fail(NOT_A_BUYER)
+  const fields = itemFields(changes)
+  // Placing an order without picking who ordered it: it's whoever placed it.
+  // The team database fills that in itself; demo mode has no database, so
+  // it's done here instead.
+  const placing = changes.status === 'placed' && item.status !== 'placed' && fields.ordered_by === item.ordered_by
+  return itemsTable.update(item.id, !isLive && placing ? { ...fields, ordered_by: currentUser()?.id ?? null } : fields)
 }
 
+/** Anyone can delete a request; only mentors and purchasers can delete an order. */
 export async function removeItem(item: PurchaseItem): Promise<Result> {
+  if (!isAsking(item.status) && !canOrder(currentUser(), buyersTable.rows())) {
+    return fail('Only mentors and purchasers can delete an order. To stop it, ask one of them to cancel it.')
+  }
   return itemsTable.remove(item.id)
+}
+
+// ---------------------------------------------------------------------------
+// The BOM: asking for a COTS part from the BOM page, and its status there (#80).
+
+/** Spellings the BOM uses for vendors in the list above. */
+const VENDOR_NAMES: Record<string, string> = {
+  wcp: 'West Coast Products',
+  rev: 'REV Robotics',
+  ctrelectronics: 'CTRE',
+  mcmastercarr: 'McMaster',
+}
+
+/** Letters and digits only, lowercase, so "AndyMark" matches "Andy Mark". */
+const plain = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+/** The vendor from the list above that a BOM vendor means, or null if there isn't one. */
+export function vendorFor(bomVendor: string | null): string | null {
+  if (!bomVendor) return null
+  const key = plain(bomVendor)
+  return VENDORS.find((v) => plain(v) === key) ?? VENDOR_NAMES[key] ?? null
+}
+
+/** The type from the list above that a BOM system's name means, or empty if there isn't one. */
+function typeFor(systemName: string | undefined): string {
+  if (!systemName) return ''
+  const key = plain(systemName)
+  if (key === 'drivetrain') return 'Drive Base'
+  return TYPES.find((t) => plain(t) === key) ?? ''
+}
+
+/**
+ * A request filled in from a BOM part, for the person to finish: the name,
+ * vendor, vendor part number and quantity, and the system as the type when
+ * it's one of the types. A vendor that isn't in the list becomes Other,
+ * with the BOM's vendor in the notes.
+ */
+export function requestFromBomPart(part: Part, system: BomSystem | undefined): NewItem {
+  const vendor = vendorFor(part.vendor)
+  return {
+    ...EMPTY_ITEM,
+    name: part.name,
+    vendor: vendor ?? 'Other',
+    type: typeFor(system?.name),
+    part_number: part.vendor_part_number ?? '',
+    quantity: Math.min(Math.max(part.quantity, 1), MAX_QUANTITY),
+    notes: !vendor && part.vendor ? `Vendor in the BOM: ${part.vendor}` : '',
+  }
+}
+
+/**
+ * Each BOM part's request, by part id: its newest one that isn't cancelled.
+ * A part whose requests were all cancelled has none, so it can be asked for again.
+ */
+export function requestsByBomPart(items: PurchaseItem[]): Map<string, PurchaseItem> {
+  const byPart = new Map<string, PurchaseItem>()
+  for (const item of [...items].sort(newestFirst)) {
+    if (item.bom_part_id && item.status !== 'cancelled' && !byPart.has(item.bom_part_id)) byPart.set(item.bom_part_id, item)
+  }
+  return byPart
+}
+
+/** For the BOM page: each part's request, by part id. */
+export function useRequestsByBomPart(): Map<string, PurchaseItem> {
+  return requestsByBomPart(useItems())
 }

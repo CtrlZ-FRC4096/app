@@ -4,14 +4,18 @@ What the team needs to buy, from asking for it to it being in the shop. It repla
 
 This list is typed in by hand. It's **separate from the BOM**, which comes from Onshape: anything the team needs to order goes here, whether or not it's in a robot's CAD.
 
-## Built so far (step 1 of #66: the list)
+## Built so far
 
 - **The Slack list's columns:** name, status, vendor, type, link, part/item number, number needed, requested by and notes.
 - **Its 10 statuses, in order:** Wait to Order, Order Low Priority, Order, Order High Priority, Order Placed, Out of Stock, Backordered, Received, In Shop, Cancel Item.
 - **Its views:** **Current** (what's in progress, by status: the one people work from, and it includes Backordered), **All**, **By status** and **By vendor**.
-- **Asking for something:** the form at the top. You pick its priority (one of the four "Order" statuses).
-- **Changing an item:** tap it to open it, then change its status or anything else. Delete takes two presses.
-- **Who can do what:** like the Slack list, anyone on the team can add, change and delete any item.
+- **Search** (#75): narrows every view to items whose name, vendor, type, part number or notes contain every word typed.
+- **Asking for something:** the button at the end of the list (#77). You pick its priority (Wait to Order, or one of the three "Order" statuses).
+- **Duplicate** (#76) on an item opens Ask for something filled in from it, to buy it again.
+- **Changing an item:** tap it to open it. Delete takes two presses.
+- **Who can do what** (#78): anyone on the team asks for things, and changes anything about a request, including its priority. Only mentors, admins and **purchasers** place an order (Order Placed) or move it on (Out of Stock, Backordered, Received, In Shop, Cancel Item), set **Shipped to**, and delete an order. Students can still delete a request. Mentors add and remove purchasers at the bottom of the page.
+- **Ordered by** is filled in by the database with whoever moves an item to Order Placed. Nobody types it.
+- **From the BOM** (#80): a COTS part's **Purchase** button opens Ask for something filled in from the part (name, vendor, vendor part number, quantity, and its system as the type), linked to the part. The BOM then shows the request's status, with a link to it here. The BOM's vendor names are matched to the list in `vendorFor()`.
 - **Requested by** is always whoever filled in the form (everyone signs in with Slack). Nobody can pick someone else or change it later, not even a mentor. Importing the Slack list (step 3) will need a mentors-only way to keep its names.
 - The home page tile shows "3 to order now (1 high priority)".
 
@@ -22,16 +26,16 @@ The statuses, vendors and types are lists at the top of `data.ts`, so they're ea
 | `index.ts` | Tells the app about the module: it's in the Build menu, with the home page tile's status. |
 | `data.ts` | The lists, the `purchase_items` table and its example rows, the views, the checks, and adding, changing and deleting items. |
 | `data.test.ts` | Tests for `data.ts`. |
-| `PurchasingPage.tsx` | The view switch, the form, and the items under each heading. |
+| `PurchasingPage.tsx` | The view switch and search, the items under each heading, the form, and the purchasers. Its address can open a request from a BOM part (`#/purchasing/from-bom/<part id>`) or an item (`#/purchasing/item/<item id>`). |
 
-The table is made by `supabase/migrations/20261102180000_purchase_items.sql`, and its permission rules are tested in `supabase/tests/purchase-items.test.ts`.
+The tables are made by `supabase/migrations/20261102180000_purchase_items.sql`, `..._purchasing_orders.sql` (purchasers, Ordered by, Shipped to and who changes orders) and `..._purchase_items_bom_part.sql` (the link to a BOM part). Their permission rules are tested in `supabase/tests/purchase-items.test.ts` and `purchasing-orders.test.ts`.
 
 ## Still to do (#66)
 
-2. **Ordering details:** date ordered, estimated arrival, tracking number, ordered by, shipped to; **Copy as CSV** for one vendor's items; prices and totals.
+2. **Ordering details:** date ordered, estimated arrival, tracking number; **Copy as CSV** for one vendor's items; prices and totals. (Ordered by and Shipped to are done.)
 3. **Import from Slack:** a mentors-only import of the BOM List's JSON export. Don't commit the real export.
-4. **Receipts and files**, once a mentor sets up file storage.
-5. **Join it to the BOM:** requests from #17's shortages, and each BOM COTS line's purchase status.
+4. **Receipts and files** (#79), once a mentor sets up file storage.
+5. **The BOM:** asking for the parts #17 finds short, taking away what's already on the shelf. (The Purchase button and status are done.)
 6. **The home page:** "Needs attention" for High Priority items and items past their estimated arrival.
 
 ## Rules

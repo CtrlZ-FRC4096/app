@@ -2,7 +2,7 @@
 
 The bill of materials for each robot, checked against Inventory, so the team can see what to make and what to order.
 
-**Built so far:** a robot is made of systems (Intake, Drivetrain, …), and each system has a list of parts. The page shows one system's parts with an All / Made / COTS filter. Anyone on the team can add, change and delete parts, and import a system's parts from Onshape. Made parts show their stages (see below).
+**Built so far:** a robot is made of systems (Intake, Drivetrain, …), and each system has a list of parts. The page shows one system's parts with an All / Made / COTS filter. Anyone on the team can add, change and delete parts, and import a system's parts from Onshape. Made parts show their stages (see below). COTS parts show their order from Purchasing, or a **Purchase** button that opens a request there, filled in from the part.
 
 | File | What it does |
 |:--|:--|
