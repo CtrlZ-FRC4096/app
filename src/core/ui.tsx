@@ -3,8 +3,9 @@
  * If you need something that isn't here, ask a mentor before adding it: a
  * change here changes every module.
  */
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { Tone } from './registry'
+import { parseCount } from './format'
 
 export function PageHead(props: { title: string; eyebrow?: string; children?: ReactNode }) {
   return (
@@ -53,15 +54,49 @@ export function Callout(props: { title: string; children: ReactNode }) {
   )
 }
 
-/** A number with − and + buttons. */
+/**
+ * A number with − and + buttons.
+ *
+ * While someone types, the box can be empty or below the minimum, so they
+ * can delete the old number and type a new one. Whole numbers at or above
+ * the minimum count straight away; anything else is settled when they leave
+ * the box or press Enter: rounded and raised to the minimum, or the last
+ * good number if the box is empty.
+ */
 export function Stepper(props: { id: string; label: string; value: number; min?: number; onChange: (value: number) => void }) {
   const min = props.min ?? 0
-  const set = (value: number) => props.onChange(Math.max(min, Number.isFinite(value) ? Math.round(value) : min))
+  // What's typed in the box while someone types, or null to show props.value.
+  const [typed, setTyped] = useState<string | null>(null)
+  const step = (by: number) => {
+    setTyped(null)
+    props.onChange(Math.max(min, props.value + by))
+  }
+  const edit = (text: string) => {
+    setTyped(text)
+    const value = parseCount(text, min)
+    if (value !== null && String(value) === text.trim()) props.onChange(value)
+  }
+  const settle = () => {
+    if (typed === null) return
+    const value = parseCount(typed, min)
+    if (value !== null && value !== props.value) props.onChange(value)
+    setTyped(null)
+  }
   return (
     <div className="stepper">
-      <button type="button" aria-label={`${props.label}: one fewer`} onClick={() => set(props.value - 1)}>−</button>
-      <input id={props.id} type="number" inputMode="numeric" min={min} value={props.value} aria-label={props.label} onChange={(e) => set(Number(e.target.value))} />
-      <button type="button" aria-label={`${props.label}: one more`} onClick={() => set(props.value + 1)}>+</button>
+      <button type="button" aria-label={`${props.label}: one fewer`} onClick={() => step(-1)}>−</button>
+      <input
+        id={props.id}
+        type="number"
+        inputMode="numeric"
+        min={min}
+        value={typed ?? props.value}
+        aria-label={props.label}
+        onChange={(e) => edit(e.target.value)}
+        onBlur={settle}
+        onKeyDown={(e) => e.key === 'Enter' && settle()}
+      />
+      <button type="button" aria-label={`${props.label}: one more`} onClick={() => step(1)}>+</button>
     </div>
   )
 }

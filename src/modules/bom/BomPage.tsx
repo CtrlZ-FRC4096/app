@@ -14,6 +14,8 @@ import {
   stationName, stationQueue, stepName, stepsFor, useSteps, type Machine, type Stage, type Station, type Step,
 } from './data'
 import { planImport, type OnshapeImportPlan } from './onshape'
+import { href } from '../../core/router'
+import { statusOf, useRequestsByBomPart, type PurchaseItem } from '../purchasing/data'
 import { camStockFor, markReadyToCam, shapesTable, useOnBoard, useStock, type CamStock } from '../cnc/data'
 // The CNC module's material and thickness picker, so flagging a part looks the same here and on the CNC board.
 import { CamStockPicker } from '../cnc/CamStockPicker'
@@ -56,6 +58,8 @@ export default function BomPage() {
   const [importing, setImporting] = useState<{ system: BomSystem; plan: OnshapeImportPlan } | null>(null)
   const [reading, setReading] = useState(false)
   const onBoard = useOnBoard()
+  // Each COTS part's request in Purchasing, if it has one.
+  const requests = useRequestsByBomPart()
 
   async function readOnshape(s: BomSystem) {
     setReading(true)
@@ -228,6 +232,7 @@ export default function BomPage() {
                                 </span>
                               </>
                             )}
+                            {p.kind === 'cots' && !p.removed_in_onshape && <PurchaseStatus part={p} request={requests.get(p.id)} />}
                           </td>
                           <td className="num" style={under}>{p.quantity}</td>
                         </tr>
@@ -592,6 +597,27 @@ function StationPicker(props: { value: Station; onChange: (station: Station) => 
 }
 
 /** A made part's stages: each one's status, how many are through it, and buttons to move it along. */
+/**
+ * A COTS part's order, from Purchasing: its status, which opens the request
+ * there, or a Purchase button that opens a request filled in from the part.
+ */
+function PurchaseStatus(props: { part: Part; request: PurchaseItem | undefined }) {
+  const { request } = props
+  const status = request && statusOf(request.status)
+  return (
+    <span className="toolbar" style={{ marginTop: 6 }}>
+      {request && status ? (
+        <>
+          <Pill tone={status.tone}>{status.label}</Pill>
+          <a className="btn btn-sm" href={href('purchasing', 'item', request.id)}>Open in Purchasing</a>
+        </>
+      ) : (
+        <a className="btn btn-sm" href={href('purchasing', 'from-bom', props.part.id)}>Purchase</a>
+      )}
+    </span>
+  )
+}
+
 function StageList(props: { part: Part; steps: Step[]; canChange: boolean; onChange: () => void }) {
   const { part } = props
 

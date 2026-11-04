@@ -88,11 +88,11 @@ describe('purchase items', () => {
     expect(await db.as(student, 'delete from public.purchase_items where id = $1 returning id', [item.id])).toEqual([])
   })
 
-  it("lets any member change anyone's item, including its status", async () => {
+  it("lets any member change anyone's request, including its priority", async () => {
     const [item] = await add(student)
     expect(
-      await db.as(other, "update public.purchase_items set status = 'placed', quantity = 3 where id = $1 returning status, quantity", [item.id]),
-    ).toEqual([{ status: 'placed', quantity: 3 }])
+      await db.as(other, "update public.purchase_items set status = 'order_high', quantity = 3 where id = $1 returning status, quantity", [item.id]),
+    ).toEqual([{ status: 'order_high', quantity: 3 }])
   })
 
   it("doesn't let anyone change who added an item, or when", async () => {
@@ -104,5 +104,43 @@ describe('purchase items', () => {
   it("lets any member delete anyone's item", async () => {
     const [item] = await add(student)
     expect(await db.as(other, 'delete from public.purchase_items where id = $1 returning id', [item.id])).toEqual([{ id: item.id }])
+  })
+})
+
+describe('purchase items for a BOM part', () => {
+  const bomPart = async () => {
+    const [{ id: robot }] = await db.sql<{ id: string }>("insert into public.bom_robots (name) values ('Robot') returning id")
+    const [{ id: system }] = await db.sql<{ id: string }>("insert into public.bom_systems (robot_id, name, code) values ($1, 'Intake', 'INT') returning id", [robot])
+    const [{ id }] = await db.sql<{ id: string }>(
+      "insert into public.bom_parts (system_id, part_number, name, kind, vendor, quantity) values ($1, '4096-26-INT-004', 'Bearing', 'cots', 'WCP', 6) returning id",
+      [system],
+    )
+    return id
+  }
+
+  const askFor = (person: string, part: string) =>
+    db.as<{ id: string; bom_part_id: string | null }>(
+      person,
+      "insert into public.purchase_items (name, vendor, type, quantity, bom_part_id) values ('Bearing', 'West Coast Products', 'Intake', 6, $1) returning *",
+      [part],
+    )
+
+  it('lets a member ask for a BOM part, linked to it', async () => {
+    const part = await bomPart()
+    const [item] = await askFor(student, part)
+    expect(item.bom_part_id).toBe(part)
+  })
+
+  it("doesn't let anyone change which BOM part a request is for", async () => {
+    const part = await bomPart()
+    const [item] = await askFor(student, part)
+    await expect(db.as(mentor, 'update public.purchase_items set bom_part_id = null where id = $1', [item.id])).rejects.toThrow(PERMISSION_DENIED)
+  })
+
+  it('keeps the request, unlinked, when the BOM part is deleted', async () => {
+    const part = await bomPart()
+    const [item] = await askFor(student, part)
+    await db.sql('delete from public.bom_parts where id = $1', [part])
+    expect(await db.sql('select bom_part_id from public.purchase_items where id = $1', [item.id])).toEqual([{ bom_part_id: null }])
   })
 })

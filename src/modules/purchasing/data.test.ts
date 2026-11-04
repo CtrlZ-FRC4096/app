@@ -1,9 +1,9 @@
 // Tests for data.ts. Run them with `npm test`.
 // They run in demo mode, starting from the example items, as the made-up
 // student Alex. Who is allowed to do what is the database's job: that's
-// tested in supabase/tests/purchase-items.test.ts.
-import { beforeEach, describe, expect, it } from 'vitest'
-import { DEMO_PEOPLE } from '../../core/demo'
+// tested in supabase/tests/purchase-items.test.ts and purchasing-orders.test.ts.
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import {
   EMPTY_ITEM,
   MAX_NAME_LENGTH,
@@ -11,11 +11,21 @@ import {
   STATUSES,
   TYPES,
   VENDORS,
+  addBuyer,
   addItem,
+  buyersTable,
+  canOrder,
   changeItem,
   checkItem,
   choices,
+  duplicateItem,
   groupItems,
+  isOrderChange,
+  removeBuyer,
+  requestFromBomPart,
+  requestsByBomPart,
+  searchItems,
+  vendorFor,
   isCurrent,
   itemToForm,
   itemsTable,
@@ -27,7 +37,10 @@ import {
 
 beforeEach(() => {
   itemsTable.reset()
+  buyersTable.reset()
 })
+
+afterEach(() => setDemoRole('student'))
 
 const find = (name: string) => itemsTable.rows().find((i) => i.name === name)!
 const valid = { ...EMPTY_ITEM, name: 'Bolts', vendor: 'McMaster', type: 'Hardware' }
@@ -188,10 +201,10 @@ describe('addItem', () => {
 })
 
 describe('changeItem', () => {
-  it("changes anyone's item, including its status", async () => {
+  it("changes anyone's request, including its priority", async () => {
     const item = find('Zip ties, 8 in (pack of 100)')
-    expect((await changeItem(item, { ...itemToForm(item), status: 'placed', quantity: 3 })).ok).toBe(true)
-    expect(find('Zip ties, 8 in (pack of 100)')).toMatchObject({ status: 'placed', quantity: 3, requested_by: DEMO_PEOPLE.jordan })
+    expect((await changeItem(item, { ...itemToForm(item), status: 'order_high', quantity: 3 })).ok).toBe(true)
+    expect(find('Zip ties, 8 in (pack of 100)')).toMatchObject({ status: 'order_high', quantity: 3, requested_by: DEMO_PEOPLE.jordan })
   })
 
   it('keeps every field the same when nothing is changed in the form', async () => {
@@ -208,13 +221,191 @@ describe('changeItem', () => {
 
 describe('removeItem', () => {
   it('deletes only that item', async () => {
-    expect(await removeItem(find('Field tape, 2 in'))).toEqual({ ok: true, value: null })
+    expect(await removeItem(find('Ethernet cables, 5 ft (10 pack)'))).toEqual({ ok: true, value: null })
     expect(itemsTable.rows()).toHaveLength(8)
   })
 
   it('says so if the item is already gone', async () => {
-    const item = find('Field tape, 2 in')
+    const item = find('Ethernet cables, 5 ft (10 pack)')
     await removeItem(item)
     expect((await removeItem(item)).ok).toBe(false)
+  })
+})
+
+describe('searchItems', () => {
+  it('finds items by name, vendor, type, part number or notes, ignoring capitals', () => {
+    const names = (search: string) => searchItems(itemsTable.rows(), search).map((i) => i.name)
+    expect(names('BELT')).toEqual(['Timing belt, 60T'])
+    expect(names('mcmaster')).toEqual(['Polycarbonate sheet, 1/8 in'])
+    expect(names('example-neo')).toEqual(['Brushless motor'])
+    expect(names('storage room')).toEqual(['Field tape, 2 in'])
+  })
+
+  it('needs every word typed to match', () => {
+    expect(searchItems(itemsTable.rows(), 'amazon cables').map((i) => i.name)).toEqual(['Ethernet cables, 5 ft (10 pack)'])
+  })
+
+  it('matches everything when the search is empty, and nothing when nothing matches', () => {
+    expect(searchItems(itemsTable.rows(), '  ')).toHaveLength(9)
+    expect(searchItems(itemsTable.rows(), 'unobtainium')).toEqual([])
+  })
+})
+
+describe('duplicateItem', () => {
+  it('fills in a new request from an item, starting as Order, not ordered or shipped yet', () => {
+    const item = find('Timing belt, 60T')
+    expect(duplicateItem(item)).toEqual({ ...itemToForm(item), status: 'order', ordered_by: '', shipped_to: '' })
+  })
+
+  it('makes a new item requested by you when sent, leaving the old one as it was', async () => {
+    const item = find('Timing belt, 60T')
+    expect((await addItem(duplicateItem(item))).ok).toBe(true)
+    expect(itemsTable.rows()[0]).toMatchObject({ name: 'Timing belt, 60T', status: 'order', requested_by: DEMO_PEOPLE.alex, ordered_by: null })
+    expect(find('Timing belt, 60T')).toBeDefined()
+    expect(itemsTable.rows().filter((i) => i.name === 'Timing belt, 60T')).toHaveLength(2)
+  })
+})
+
+describe('placing orders', () => {
+  const student = { id: DEMO_PEOPLE.alex, role: 'student' as const }
+  const buyer = { id: DEMO_PEOPLE.jordan, role: 'student' as const }
+  const mentor = { id: DEMO_PEOPLE.pat, role: 'mentor' as const }
+
+  it('is for mentors, admins and purchasers', () => {
+    const buyers = buyersTable.rows()
+    expect(canOrder(student, buyers)).toBe(false)
+    expect(canOrder(buyer, buyers)).toBe(true)
+    expect(canOrder(mentor, buyers)).toBe(true)
+    expect(canOrder(null, buyers)).toBe(false)
+  })
+
+  it('counts moving into or out of an order status, or setting Shipped to, as an order change', () => {
+    const asked = find('Zip ties, 8 in (pack of 100)')
+    const ordered = find('Timing belt, 60T')
+    expect(isOrderChange(asked, { ...itemToForm(asked), status: 'order_high' })).toBe(false)
+    expect(isOrderChange(asked, { ...itemToForm(asked), status: 'placed' })).toBe(true)
+    expect(isOrderChange(asked, { ...itemToForm(asked), shipped_to: DEMO_PEOPLE.pat })).toBe(true)
+    expect(isOrderChange(ordered, { ...itemToForm(ordered), ordered_by: DEMO_PEOPLE.jordan })).toBe(true)
+    expect(isOrderChange(ordered, { ...itemToForm(ordered), status: 'order' })).toBe(true)
+    expect(isOrderChange(ordered, { ...itemToForm(ordered), quantity: 5 })).toBe(false)
+    expect(isOrderChange(null, valid)).toBe(false)
+    expect(isOrderChange(null, { ...valid, status: 'placed' })).toBe(true)
+  })
+
+  it("doesn't let a student place an order, and says who can", async () => {
+    const item = find('Zip ties, 8 in (pack of 100)')
+    const result = await changeItem(item, { ...itemToForm(item), status: 'placed' })
+    expect(result).toEqual({ ok: false, error: expect.stringMatching(/Only mentors and purchasers/) })
+    expect(find('Zip ties, 8 in (pack of 100)').status).toBe('order_low')
+  })
+
+  it('lets a mentor place an order, filling in Ordered by and Shipped to', async () => {
+    setDemoRole('mentor')
+    const item = find('Zip ties, 8 in (pack of 100)')
+    expect((await changeItem(item, { ...itemToForm(item), status: 'placed', shipped_to: DEMO_PEOPLE.jordan })).ok).toBe(true)
+    expect(find('Zip ties, 8 in (pack of 100)')).toMatchObject({ status: 'placed', ordered_by: DEMO_PEOPLE.pat, shipped_to: DEMO_PEOPLE.jordan })
+  })
+
+  it('uses who a mentor picks, when they place an order for someone else', async () => {
+    setDemoRole('mentor')
+    const item = find('Zip ties, 8 in (pack of 100)')
+    expect((await changeItem(item, { ...itemToForm(item), status: 'placed', ordered_by: DEMO_PEOPLE.jordan })).ok).toBe(true)
+    expect(find('Zip ties, 8 in (pack of 100)').ordered_by).toBe(DEMO_PEOPLE.jordan)
+  })
+
+  it('lets a mentor change who ordered something, but not a student', async () => {
+    const item = find('Timing belt, 60T')
+    const changed = { ...itemToForm(item), ordered_by: DEMO_PEOPLE.jordan }
+    expect((await changeItem(item, changed)).ok).toBe(false)
+    expect(find('Timing belt, 60T').ordered_by).toBe(DEMO_PEOPLE.pat)
+    setDemoRole('mentor')
+    expect((await changeItem(item, changed)).ok).toBe(true)
+    expect(find('Timing belt, 60T').ordered_by).toBe(DEMO_PEOPLE.jordan)
+  })
+
+  it("doesn't let a student delete an order, but lets a mentor", async () => {
+    const item = find('Timing belt, 60T')
+    expect((await removeItem(item)).ok).toBe(false)
+    setDemoRole('mentor')
+    expect((await removeItem(item)).ok).toBe(true)
+  })
+})
+
+describe('purchasers', () => {
+  it('are chosen by mentors', async () => {
+    expect((await addBuyer(DEMO_PEOPLE.alex)).ok).toBe(false)
+    setDemoRole('mentor')
+    expect((await addBuyer(DEMO_PEOPLE.alex)).ok).toBe(true)
+    expect(buyersTable.rows().map((b) => b.member_id)).toContain(DEMO_PEOPLE.alex)
+  })
+
+  it("won't add someone twice", async () => {
+    setDemoRole('mentor')
+    expect(await addBuyer(DEMO_PEOPLE.jordan)).toEqual({ ok: false, error: "They're already a purchaser." })
+  })
+
+  it('are removed by mentors only', async () => {
+    const [jordan] = buyersTable.rows()
+    expect((await removeBuyer(jordan)).ok).toBe(false)
+    setDemoRole('mentor')
+    expect((await removeBuyer(jordan)).ok).toBe(true)
+    expect(buyersTable.rows()).toEqual([])
+  })
+})
+
+describe('asking for a BOM part', () => {
+  const bomPart = {
+    id: 'part', system_id: 'system', part_number: '4096-26-INT-006', name: 'Flanged bearing, 1/2 in hex', revision: null, kind: 'cots' as const,
+    material: null, quantity: 6, vendor: 'WCP', vendor_part_number: 'EXAMPLE-BRG-12', onshape_url: null, onshape_id: null,
+    removed_in_onshape: false, created_at: '2026-10-20T18:00:00Z', created_by: null,
+  }
+  const intake = { id: 'system', robot_id: 'robot', name: 'Intake', code: 'INT', onshape_url: null, onshape_imported_at: null, created_at: '2026-10-20T18:00:00Z', created_by: null }
+
+  it("matches the BOM's vendor names to the list", () => {
+    expect(vendorFor('WCP')).toBe('West Coast Products')
+    expect(vendorFor('AndyMark')).toBe('Andy Mark')
+    expect(vendorFor('CTR Electronics')).toBe('CTRE')
+    expect(vendorFor('McMaster-Carr')).toBe('McMaster')
+    expect(vendorFor('REV Robotics')).toBe('REV Robotics')
+    expect(vendorFor('Swerve Drive Specialties')).toBeNull()
+    expect(vendorFor(null)).toBeNull()
+  })
+
+  it('fills in a request from the part, with its system as the type', () => {
+    expect(requestFromBomPart(bomPart, intake)).toEqual({
+      ...EMPTY_ITEM,
+      name: 'Flanged bearing, 1/2 in hex',
+      vendor: 'West Coast Products',
+      type: 'Intake',
+      part_number: 'EXAMPLE-BRG-12',
+      quantity: 6,
+      notes: '',
+    })
+  })
+
+  it('uses Other for a vendor not in the list, with the BOM vendor in the notes, and Drive Base for the Drivetrain', () => {
+    const request = requestFromBomPart({ ...bomPart, vendor: 'Swerve Drive Specialties' }, { ...intake, name: 'Drivetrain' })
+    expect(request).toMatchObject({ vendor: 'Other', type: 'Drive Base', notes: 'Vendor in the BOM: Swerve Drive Specialties' })
+  })
+
+  it('leaves the type to pick when the system is not one of the types', () => {
+    expect(requestFromBomPart(bomPart, { ...intake, name: 'Superstructure' }).type).toBe('')
+    expect(requestFromBomPart(bomPart, undefined).type).toBe('')
+  })
+
+  it('links the request to the BOM part when sent', async () => {
+    expect((await addItem({ ...requestFromBomPart(bomPart, intake), link: 'https://example.com/bearing' }, 'part')).ok).toBe(true)
+    expect(itemsTable.rows()[0]).toMatchObject({ bom_part_id: 'part', name: 'Flanged bearing, 1/2 in hex' })
+  })
+
+  it("gives each BOM part its newest request that isn't cancelled", () => {
+    const motor = find('Brushless motor')
+    const items = [
+      { ...motor, id: 'old', created_at: '2026-10-01T00:00:00Z', status: 'in_shop' as const },
+      { ...motor, id: 'cancelled', created_at: '2026-11-02T00:00:00Z', status: 'cancelled' as const },
+      motor,
+    ]
+    expect(requestsByBomPart(items).get(motor.bom_part_id!)?.id).toBe(motor.id)
+    expect(requestsByBomPart([{ ...motor, status: 'cancelled' }]).size).toBe(0)
   })
 })
