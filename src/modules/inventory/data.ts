@@ -11,6 +11,7 @@ import { createTable, fail, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
+import { currentUser, isMentor } from '../../core/session'
 
 /** One row of the inventory_items table. The fields match its columns. */
 export interface Item extends Row {
@@ -137,4 +138,37 @@ export async function addItem(item: NewItem): Promise<Result<Item>> {
     quantity: item.quantity,
     low_stock_level: item.low_stock_level,
   })
+}
+
+/** What the Edit button changes: how many are on the shelf, and where they live. */
+export interface ItemChanges {
+  quantity: number
+  location: string
+}
+
+/** Why a part's changes can't be saved, or null if they can. */
+export function checkChanges(changes: ItemChanges): string | null {
+  const location = changes.location.trim()
+  if (!location) return 'Add where it lives, like "Bin E2".'
+  if (location.length > LIMITS.location) return `Keep the location under ${LIMITS.location} characters. This one is ${location.length}.`
+  if (!Number.isInteger(changes.quantity) || changes.quantity < 0) return 'The quantity needs to be a whole number, 0 or more.'
+  return null
+}
+
+const MENTORS_ONLY = 'Only mentors and admins change or delete parts. Ask one of them.'
+
+/** Change a part's quantity and location. Mentors and admins only: the database refuses anyone else. */
+export async function changeItem(item: Item, changes: ItemChanges): Promise<Result<Item>> {
+  const me = currentUser()
+  if (!me || !isMentor(me.role)) return fail(MENTORS_ONLY)
+  const problem = checkChanges(changes)
+  if (problem) return fail(problem)
+  return itemsTable.update(item.id, { quantity: changes.quantity, location: changes.location.trim() })
+}
+
+/** Delete a part from the list. Mentors and admins only. */
+export async function removeItem(item: Item): Promise<Result> {
+  const me = currentUser()
+  if (!me || !isMentor(me.role)) return fail(MENTORS_ONLY)
+  return itemsTable.remove(item.id)
 }

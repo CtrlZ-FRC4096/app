@@ -3,8 +3,9 @@
 // supabase/tests/inventory-items.test.ts.
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
-import { beforeEach, describe, expect, it } from 'vitest'
-import { addItem, checkItem, isLow, itemsTable, useLowItems, useLowStockAttention, useLowStockSummary, type NewItem } from './data'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { setDemoRole } from '../../core/demo'
+import { addItem, changeItem, checkChanges, checkItem, removeItem, isLow, itemsTable, useLowItems, useLowStockAttention, useLowStockSummary, type NewItem } from './data'
 
 /** Runs a hook the way a page would, and gives back what it returned. */
 function runHook<T>(hook: () => T): T {
@@ -170,5 +171,37 @@ describe('addItem', () => {
     const before = itemsTable.rows().length
     expect(await addItem(newItem({ name: '' }))).toEqual({ ok: false, error: 'Add a name for the part.' })
     expect(itemsTable.rows()).toHaveLength(before)
+  })
+})
+
+describe('changing and deleting a part', () => {
+  afterEach(() => setDemoRole('student'))
+  const pdh = () => itemsTable.rows().find((i) => i.vendor_part_number === 'REV-11-1850')!
+
+  it('checks the location and quantity', () => {
+    expect(checkChanges({ quantity: 0, location: 'Bin E2' })).toBeNull()
+    expect(checkChanges({ quantity: 3, location: '  ' })).toMatch(/where it lives/)
+    expect(checkChanges({ quantity: -1, location: 'Bin E2' })).toMatch(/whole number/)
+    expect(checkChanges({ quantity: 1.5, location: 'Bin E2' })).toMatch(/whole number/)
+    expect(checkChanges({ quantity: 1, location: 'x'.repeat(61) })).toMatch(/under 60/)
+  })
+
+  it("lets a mentor change a part's quantity and location, trimmed", async () => {
+    setDemoRole('mentor')
+    expect((await changeItem(pdh(), { quantity: 7, location: ' Shelf E3 ' })).ok).toBe(true)
+    expect(pdh()).toMatchObject({ quantity: 7, location: 'Shelf E3' })
+  })
+
+  it("doesn't let a student change a part, and says who can", async () => {
+    expect(await changeItem(pdh(), { quantity: 7, location: 'Shelf E3' })).toEqual({ ok: false, error: expect.stringMatching(/Only mentors and admins/) })
+    expect(pdh().quantity).toBe(2)
+  })
+
+  it('lets a mentor delete a part, but not a student', async () => {
+    const count = itemsTable.rows().length
+    expect((await removeItem(pdh())).ok).toBe(false)
+    setDemoRole('mentor')
+    expect((await removeItem(pdh())).ok).toBe(true)
+    expect(itemsTable.rows()).toHaveLength(count - 1)
   })
 })

@@ -13,13 +13,16 @@ import {
   VENDORS,
   addBuyer,
   addItem,
+  arrivalText,
   buyersTable,
   canOrder,
   changeItem,
   checkItem,
   choices,
+  dayText,
   duplicateItem,
   groupItems,
+  isLate,
   isOrderChange,
   removeBuyer,
   requestFromBomPart,
@@ -32,6 +35,7 @@ import {
   removeItem,
   statusOf,
   summaryText,
+  today,
   type PurchaseItem,
 } from './data'
 
@@ -254,7 +258,7 @@ describe('searchItems', () => {
 describe('duplicateItem', () => {
   it('fills in a new request from an item, starting as Order, not ordered or shipped yet', () => {
     const item = find('Timing belt, 60T')
-    expect(duplicateItem(item)).toEqual({ ...itemToForm(item), status: 'order', ordered_by: '', shipped_to: '' })
+    expect(duplicateItem(item)).toEqual({ ...itemToForm(item), status: 'order', ordered_by: '', shipped_to: '', estimated_arrival: '' })
   })
 
   it('makes a new item requested by you when sent, leaving the old one as it was', async () => {
@@ -407,5 +411,45 @@ describe('asking for a BOM part', () => {
     ]
     expect(requestsByBomPart(items).get(motor.bom_part_id!)?.id).toBe(motor.id)
     expect(requestsByBomPart([{ ...motor, status: 'cancelled' }]).size).toBe(0)
+  })
+})
+
+describe('estimated arrival', () => {
+  const placed = () => find('Timing belt, 60T')
+
+  it('writes dates as the team reads them, without a time zone moving them a day', () => {
+    expect(dayText('2026-11-12')).toBe('Nov 12')
+    expect(dayText('2027-01-01')).toBe('Jan 1')
+    expect(today(new Date(2026, 10, 5, 23, 30))).toBe('2026-11-05')
+  })
+
+  it('says when an order on its way arrives, and nothing once it has', () => {
+    expect(arrivalText({ ...placed(), estimated_arrival: '2026-11-12' })).toBe('Arrives Nov 12')
+    expect(arrivalText({ ...placed(), estimated_arrival: null })).toBeNull()
+    expect(arrivalText({ ...placed(), status: 'received', estimated_arrival: '2026-11-12' })).toBeNull()
+  })
+
+  it('is late once the date has passed and it still is not received', () => {
+    const order = { ...placed(), estimated_arrival: '2026-11-12' }
+    expect(isLate(order, '2026-11-12')).toBe(false)
+    expect(isLate(order, '2026-11-13')).toBe(true)
+    expect(isLate({ ...order, status: 'backordered' }, '2026-11-13')).toBe(true)
+    expect(isLate({ ...order, status: 'received' }, '2026-11-13')).toBe(false)
+    expect(isLate({ ...order, estimated_arrival: null }, '2026-11-13')).toBe(false)
+  })
+
+  it('only takes a real date', () => {
+    expect(checkItem({ ...valid, estimated_arrival: '2026-11-12' })).toBeNull()
+    expect(checkItem({ ...valid, estimated_arrival: '2026-02-30' })).toMatch(/estimated arrival/)
+    expect(checkItem({ ...valid, estimated_arrival: 'next week' })).toMatch(/estimated arrival/)
+  })
+
+  it('is set by mentors and purchasers, not students', async () => {
+    const changed = { ...itemToForm(placed()), estimated_arrival: '2026-12-20' }
+    expect(isOrderChange(placed(), changed)).toBe(true)
+    expect((await changeItem(placed(), changed)).ok).toBe(false)
+    setDemoRole('mentor')
+    expect((await changeItem(placed(), changed)).ok).toBe(true)
+    expect(placed().estimated_arrival).toBe('2026-12-20')
   })
 })

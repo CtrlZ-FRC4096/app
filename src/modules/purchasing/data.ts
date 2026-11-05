@@ -127,6 +127,8 @@ export interface PurchaseItem extends Row {
   ordered_by: string | null
   /** Who the package goes to. Set by mentors and purchasers. */
   shipped_to: string | null
+  /** When the order should arrive, like "2026-11-12": set by whoever places it (mentors and purchasers). */
+  estimated_arrival: string | null
   /** The BOM part it's for, when it was asked for from the BOM page. */
   bom_part_id: string | null
   /** Who added it to the app. */
@@ -142,8 +144,8 @@ export const MAX_NOTES_LENGTH = 1000
 
 let exampleCount = 0
 function example(
-  fields: Omit<PurchaseItem, 'id' | 'created_at' | 'created_by' | 'link' | 'notes' | 'ordered_by' | 'shipped_to' | 'bom_part_id'> &
-    Partial<Pick<PurchaseItem, 'ordered_by' | 'shipped_to' | 'bom_part_id'>> & { notes?: string },
+  fields: Omit<PurchaseItem, 'id' | 'created_at' | 'created_by' | 'link' | 'notes' | 'ordered_by' | 'shipped_to' | 'estimated_arrival' | 'bom_part_id'> &
+    Partial<Pick<PurchaseItem, 'ordered_by' | 'shipped_to' | 'estimated_arrival' | 'bom_part_id'>> & { notes?: string },
   created_at: string,
 ): PurchaseItem {
   exampleCount += 1
@@ -153,6 +155,7 @@ function example(
     notes: null,
     ordered_by: null,
     shipped_to: null,
+    estimated_arrival: null,
     bom_part_id: null,
     ...fields,
     created_at,
@@ -172,15 +175,15 @@ const EXAMPLE_ITEMS: PurchaseItem[] = [
   example({ name: 'Brushless motor', status: 'order_high', vendor: 'REV Robotics', type: 'Intake', part_number: 'EXAMPLE-NEO-01', quantity: 2, requested_by: DEMO_PEOPLE.sam, notes: 'Needed before Saturday build day.', bom_part_id: BOM_BRUSHLESS_MOTOR }, '2026-10-30T22:00:00Z'),
   example({ name: 'Zip ties, 8 in (pack of 100)', status: 'order_low', vendor: 'Amazon', type: 'Miscellaneous', part_number: null, quantity: 2, requested_by: DEMO_PEOPLE.jordan }, '2026-10-30T19:45:00Z'),
   example({ name: 'Ethernet cables, 5 ft (10 pack)', status: 'wait', vendor: 'Amazon', type: 'Electrical', part_number: null, quantity: 1, requested_by: DEMO_PEOPLE.jordan }, '2026-10-29T18:20:00Z'),
-  example({ name: 'Timing belt, 60T', status: 'placed', vendor: 'West Coast Products', type: 'Drive Base', part_number: 'EXAMPLE-TB-60', quantity: 4, requested_by: DEMO_PEOPLE.sam, ...ORDERED }, '2026-10-24T20:00:00Z'),
-  example({ name: 'Hex bearing, 1/2 in', status: 'backordered', vendor: 'Andy Mark', type: 'Hardware', part_number: 'EXAMPLE-HB-12', quantity: 12, requested_by: DEMO_PEOPLE.alex, ...ORDERED }, '2026-10-22T23:15:00Z'),
+  example({ name: 'Timing belt, 60T', status: 'placed', vendor: 'West Coast Products', type: 'Drive Base', part_number: 'EXAMPLE-TB-60', quantity: 4, requested_by: DEMO_PEOPLE.sam, ...ORDERED, estimated_arrival: '2026-12-15' }, '2026-10-24T20:00:00Z'),
+  example({ name: 'Hex bearing, 1/2 in', status: 'backordered', vendor: 'Andy Mark', type: 'Hardware', part_number: 'EXAMPLE-HB-12', quantity: 12, requested_by: DEMO_PEOPLE.alex, ...ORDERED, estimated_arrival: '2026-11-01' }, '2026-10-22T23:15:00Z'),
   example({ name: 'Motor controller', status: 'received', vendor: 'CTRE', type: 'Electrical', part_number: 'EXAMPLE-MC-1', quantity: 1, requested_by: DEMO_PEOPLE.pat, ...ORDERED }, '2026-10-21T17:00:00Z'),
   example({ name: 'Polycarbonate sheet, 1/8 in', status: 'in_shop', vendor: 'McMaster', type: 'Mechanical', part_number: 'EXAMPLE-PC-18', quantity: 1, requested_by: DEMO_PEOPLE.jordan, ...ORDERED }, '2026-10-20T18:30:00Z'),
   example({ name: 'Field tape, 2 in', status: 'cancelled', vendor: 'Other', type: 'Field', part_number: null, quantity: 3, requested_by: DEMO_PEOPLE.alex, notes: 'Found some in the storage room.' }, '2026-10-18T16:00:00Z'),
 ]
 
-// Version 2: items have Ordered by, Shipped to and their BOM part.
-export const itemsTable = createTable<PurchaseItem>('purchase_items', { demo: EXAMPLE_ITEMS, sort: newestFirst, version: 2 })
+// Version 3: items have an estimated arrival.
+export const itemsTable = createTable<PurchaseItem>('purchase_items', { demo: EXAMPLE_ITEMS, sort: newestFirst, version: 3 })
 
 /** Every item, newest first. */
 export function useItems(): PurchaseItem[] {
@@ -226,14 +229,46 @@ export function isAsking(status: StatusKey): boolean {
 /**
  * Whether saving `changes` needs a mentor or purchaser: it moves an item
  * into or out of an order status (Order Placed and after), or sets who
- * ordered it or who it ships to. Changing between the asking statuses doesn't.
+ * ordered it, who it ships to or when it arrives. Changing between the
+ * asking statuses doesn't.
  */
 export function isOrderChange(item: PurchaseItem | null, changes: NewItem): boolean {
   const orderedBy = changes.ordered_by || null
   const shippedTo = changes.shipped_to || null
-  if (!item) return !isAsking(changes.status) || orderedBy !== null || shippedTo !== null
+  const arrival = changes.estimated_arrival || null
+  if (!item) return !isAsking(changes.status) || orderedBy !== null || shippedTo !== null || arrival !== null
   const statusMoved = changes.status !== item.status && (!isAsking(item.status) || !isAsking(changes.status))
-  return statusMoved || orderedBy !== item.ordered_by || shippedTo !== item.shipped_to
+  return statusMoved || orderedBy !== item.ordered_by || shippedTo !== item.shipped_to || arrival !== item.estimated_arrival
+}
+
+// ---------------------------------------------------------------------------
+// Estimated arrival.
+
+/** Today's date where the app is used, like "2026-11-05". */
+export function today(now: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
+/** "Nov 12" for "2026-11-12". (A plain date, so no time zone can move it a day.) */
+export function dayText(date: string): string {
+  const [year, month, day] = date.split('-').map(Number)
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+/** Ordered and on its way: placed, out of stock or backordered, but not received yet. */
+export function isOnItsWay(item: PurchaseItem): boolean {
+  return item.status === 'placed' || item.status === 'out_of_stock' || item.status === 'backordered'
+}
+
+/** On its way, and its estimated arrival has passed. */
+export function isLate(item: PurchaseItem, on: string = today()): boolean {
+  return isOnItsWay(item) && !!item.estimated_arrival && item.estimated_arrival < on
+}
+
+/** "Arrives Nov 12" while it's on its way, or nothing. */
+export function arrivalText(item: PurchaseItem): string | null {
+  return isOnItsWay(item) && item.estimated_arrival ? `Arrives ${dayText(item.estimated_arrival)}` : null
 }
 
 const NOT_A_BUYER = 'Only mentors and purchasers place and change orders. Ask one of them: they\'re listed at the bottom of this page.'
@@ -342,10 +377,12 @@ export interface NewItem {
   /** Members' ids, or empty for nobody yet. Mentors and purchasers only. */
   ordered_by: string
   shipped_to: string
+  /** A date like "2026-11-12", or empty. Mentors and purchasers only. */
+  estimated_arrival: string
 }
 
 export const EMPTY_ITEM: NewItem = {
-  name: '', status: FIRST_STATUS, vendor: '', type: '', link: '', part_number: '', quantity: 1, notes: '', ordered_by: '', shipped_to: '',
+  name: '', status: FIRST_STATUS, vendor: '', type: '', link: '', part_number: '', quantity: 1, notes: '', ordered_by: '', shipped_to: '', estimated_arrival: '',
 }
 
 /** An item's fields, to fill in the form for changing it. */
@@ -361,6 +398,7 @@ export function itemToForm(item: PurchaseItem): NewItem {
     notes: item.notes ?? '',
     ordered_by: item.ordered_by ?? '',
     shipped_to: item.shipped_to ?? '',
+    estimated_arrival: item.estimated_arrival ?? '',
   }
 }
 
@@ -369,7 +407,15 @@ export function itemToForm(item: PurchaseItem): NewItem {
  * Order, and whoever sends it is who asked for it, like any new request.
  */
 export function duplicateItem(item: PurchaseItem): NewItem {
-  return { ...itemToForm(item), status: FIRST_STATUS, ordered_by: '', shipped_to: '' }
+  return { ...itemToForm(item), status: FIRST_STATUS, ordered_by: '', shipped_to: '', estimated_arrival: '' }
+}
+
+/** A real calendar date written like "2026-11-12". */
+function isDate(text: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false
+  const [year, month, day] = text.split('-').map(Number)
+  const date = new Date(year, month - 1, day)
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
 }
 
 /** Why an item can't be saved, or null if it can. */
@@ -390,6 +436,7 @@ export function checkItem(item: NewItem): string | null {
   if (item.part_number.trim().length > MAX_PART_NUMBER_LENGTH) return `Keep the part number under ${MAX_PART_NUMBER_LENGTH} characters.`
   const notes = item.notes.trim()
   if (notes.length > MAX_NOTES_LENGTH) return `Keep the notes under ${MAX_NOTES_LENGTH} characters. These are ${notes.length}.`
+  if (item.estimated_arrival && !isDate(item.estimated_arrival)) return 'Pick the estimated arrival from the calendar, or leave it empty.'
   return null
 }
 
@@ -405,6 +452,7 @@ const itemFields = (item: NewItem) => ({
   notes: item.notes.trim() || null,
   ordered_by: item.ordered_by || null,
   shipped_to: item.shipped_to || null,
+  estimated_arrival: item.estimated_arrival || null,
 })
 
 /**

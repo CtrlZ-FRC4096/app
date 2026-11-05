@@ -15,7 +15,7 @@ import {
 } from './data'
 import { planImport, type OnshapeImportPlan } from './onshape'
 import { href } from '../../core/router'
-import { statusOf, useRequestsByBomPart, type PurchaseItem } from '../purchasing/data'
+import { arrivalText, isLate, statusOf, useRequestsByBomPart, type PurchaseItem } from '../purchasing/data'
 import { camStockFor, markReadyToCam, shapesTable, useOnBoard, useStock, type CamStock } from '../cnc/data'
 // The CNC module's material and thickness picker, so flagging a part looks the same here and on the CNC board.
 import { CamStockPicker } from '../cnc/CamStockPicker'
@@ -609,6 +609,8 @@ function PurchaseStatus(props: { part: Part; request: PurchaseItem | undefined }
       {request && status ? (
         <>
           <Pill tone={status.tone}>{status.label}</Pill>
+          {isLate(request) && <Pill tone="warn">Late</Pill>}
+          {arrivalText(request) && <span className="note">{arrivalText(request)}</span>}
           <a className="btn btn-sm" href={href('purchasing', 'item', request.id)}>Open in Purchasing</a>
         </>
       ) : (

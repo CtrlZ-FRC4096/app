@@ -22,6 +22,7 @@ interface Item {
   status: string
   ordered_by: string | null
   shipped_to: string | null
+  estimated_arrival: string | null
 }
 
 const ask = async (person: string, status = 'order') =>
@@ -112,6 +113,34 @@ describe('placing orders', () => {
     await db.as(mentor, 'insert into public.purchasing_buyers (member_id) values ($1)', [buyer])
     await db.switchOff(buyer)
     expect(await setStatus(buyer, item.id, 'placed')).toEqual([])
+  })
+})
+
+describe('estimated arrival', () => {
+  const setArrival = (person: string, id: string, date: string | null) =>
+    db.as<Item>(person, 'update public.purchase_items set estimated_arrival = $2 where id = $1 returning *', [id, date])
+
+  it('is set and changed by mentors and purchasers', async () => {
+    const item = await ask(student)
+    await setStatus(buyer, item.id, 'placed')
+    expect((await setArrival(buyer, item.id, '2026-11-12'))[0].estimated_arrival).toBeTruthy()
+    expect((await setArrival(mentor, item.id, null))[0].estimated_arrival).toBeNull()
+  })
+
+  it("can't be set or changed by a student", async () => {
+    const item = await ask(student)
+    await setStatus(buyer, item.id, 'placed')
+    await expect(setArrival(student, item.id, '2026-11-12')).rejects.toThrow(PERMISSION_DENIED)
+    await expect(
+      db.as(student, "insert into public.purchase_items (name, vendor, type, quantity, estimated_arrival) values ('Belt', 'Amazon', 'Drive Base', 1, '2026-11-12')"),
+    ).rejects.toThrow(PERMISSION_DENIED)
+  })
+
+  it("doesn't stop a student changing other things about an order that has one", async () => {
+    const item = await ask(student)
+    await setStatus(buyer, item.id, 'placed')
+    await setArrival(buyer, item.id, '2026-11-12')
+    expect((await db.as<Item & { notes: string }>(student, "update public.purchase_items set notes = 'Two boxes' where id = $1 returning *", [item.id]))[0].notes).toBe('Two boxes')
   })
 })
 

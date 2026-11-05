@@ -1,17 +1,22 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { plural } from '../../core/format'
+import { isMentor, useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pill, Stepper } from '../../core/ui'
-import { addItem, isLow, useItems, useLowItems } from './data'
+import { addItem, changeItem, isLow, removeItem, useItems, useLowItems, type Item } from './data'
 
-// The page reads parts with a hook (useItems) and adds them with addItem().
-// It never saves anything itself.
+// The page reads parts with a hook (useItems) and changes them with
+// functions from data.ts. It never saves anything itself.
 export default function InventoryPage() {
   const items = useItems()
   const lowItems = useLowItems()
+  const { role } = useSession()
+  const mentor = isMentor(role)
   const [adding, setAdding] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [lowOnly, setLowOnly] = useState(false)
   const shown = lowOnly ? lowItems : items
+  const editing = items.find((item) => item.id === editingId)
 
   return (
     <>
@@ -20,6 +25,7 @@ export default function InventoryPage() {
       </PageHead>
       {/* Anyone on the team can add parts. Changing and deleting them is for mentors. */}
       {adding && <AddItemForm onDone={() => setAdding(false)} />}
+      {editing && mentor && <EditItemForm key={editing.id} item={editing} onDone={() => setEditingId(null)} />}
       <Panel
         title="All parts"
         aside={<span className="note">{plural(shown.length, 'part', 'parts')}</span>}
@@ -44,6 +50,7 @@ export default function InventoryPage() {
                   <th>Part number</th>
                   <th>Location</th>
                   <th className="num">Qty</th>
+                  {mentor && <th aria-label="Change" />}
                 </tr>
               </thead>
               <tbody>
@@ -53,6 +60,11 @@ export default function InventoryPage() {
                     <td><span className="note">{item.vendor}</span><br />{item.vendor_part_number}</td>
                     <td>{item.location}</td>
                     <td className="num">{item.quantity}</td>
+                    {mentor && (
+                      <td className="num">
+                        <button type="button" className="btn btn-sm" aria-label={`Edit ${item.name}`} onClick={() => setEditingId(item.id)}>Edit</button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -126,5 +138,65 @@ function AddItemForm(props: { onDone: () => void }) {
         </div>
       </form>
     </Panel>
+  )
+}
+
+/** Change a part's quantity and location, or delete it. Mentors and admins only. */
+function EditItemForm(props: { item: Item; onDone: () => void }) {
+  const { item } = props
+  const [quantity, setQuantity] = useState(item.quantity)
+  const [location, setLocation] = useState(item.location)
+  const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  // Opened from a row further down the list: bring the form into view, clear of the top bar.
+  useEffect(() => {
+    ref.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }, [])
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    setSaving(true)
+    const result = await changeItem(item, { quantity, location })
+    setSaving(false)
+    toast(result.ok ? `Saved ${item.name}.` : result.error)
+    if (result.ok) props.onDone()
+  }
+
+  async function remove() {
+    // Deleting can't be undone, so it takes two presses.
+    if (!deleting) {
+      setDeleting(true)
+      return
+    }
+    const result = await removeItem(item)
+    toast(result.ok ? `Deleted ${item.name}.` : result.error)
+    if (result.ok) props.onDone()
+  }
+
+  return (
+    <div ref={ref} style={{ scrollMarginTop: 160 }}>
+      <Panel title={`Change ${item.name}`}>
+        <form className="panel-body" onSubmit={save}>
+          <p className="note" style={{ margin: 0 }}>{item.vendor} · {item.vendor_part_number}</p>
+          <label className="field" htmlFor="edit-item-location">
+            Location (bin or shelf)
+            <input id="edit-item-location" className="input" value={location} onChange={(e) => setLocation(e.target.value)} />
+          </label>
+          <div className="field">
+            Quantity on the shelf
+            <Stepper id="edit-item-quantity" label="Quantity" value={quantity} onChange={setQuantity} />
+          </div>
+          <div className="toolbar">
+            <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+            <button type="button" className="btn" onClick={props.onDone}>Cancel</button>
+            <button type="button" className="btn" style={{ marginLeft: 'auto' }} onClick={() => void remove()}>
+              {deleting ? 'Press again to delete' : 'Delete'}
+            </button>
+          </div>
+        </form>
+      </Panel>
+    </div>
   )
 }
