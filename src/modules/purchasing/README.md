@@ -10,11 +10,12 @@ This list is typed in by hand. It's **separate from the BOM**, which comes from 
 - **Its 10 statuses, in order:** Wait to Order, Order Low Priority, Order, Order High Priority, Order Placed, Out of Stock, Backordered, Received, In Shop, Cancel Item.
 - **Its views:** **Current** (what's in progress, by status: the one people work from, and it includes Backordered), **All**, **By status** and **By vendor**.
 - **Search** (#75): narrows every view to items whose name, vendor, type, part number or notes contain every word typed.
-- **Asking for something:** the button at the end of the list (#77). You pick its priority (Wait to Order, or one of the three "Order" statuses).
+- **Asking for something:** the button at the top, next to Search. You pick its priority (Wait to Order, or one of the three "Order" statuses).
 - **Duplicate** (#76) on an item opens Ask for something filled in from it, to buy it again.
 - **Changing an item:** tap it to open it. Delete takes two presses.
-- **Who can do what** (#78): anyone on the team asks for things, and changes anything about a request, including its priority. Only mentors, admins and **purchasers** place an order (Order Placed) or move it on (Out of Stock, Backordered, Received, In Shop, Cancel Item), set **Shipped to**, and delete an order. Students can still delete a request. Mentors add and remove purchasers at the bottom of the page.
-- **Ordered by** is filled in by the database with whoever moves an item to Order Placed. Nobody types it.
+- **Who can do what** (#78): anyone on the team asks for things, and changes anything about a request, including its priority. Only mentors, admins and **purchasers** place an order (Order Placed) or move it on (Out of Stock, Backordered, Received, In Shop, Cancel Item), fill in the order details, and delete an order. Students can still delete a request. Mentors add and remove purchasers at the bottom of the page.
+- **Order details**, at the bottom of an item's form: **Ordered by** (filled in by the database with whoever moves an item to Order Placed, unless they pick someone else), **Shipped to**, and **Estimated arrival**, set by whoever places the order. Only mentors and purchasers fill these in; everyone else sees them as text.
+- **Arrives and Late:** an order on its way shows "Arrives Nov 12", and a **Late** tag once that date has passed and it still isn't received. The BOM shows the same.
 - **From the BOM** (#80): a COTS part's **Purchase** button opens Ask for something filled in from the part (name, vendor, vendor part number, quantity, and its system as the type), linked to the part. The BOM then shows the request's status, with a link to it here. The BOM's vendor names are matched to the list in `vendorFor()`.
 - **Requested by** is always whoever filled in the form (everyone signs in with Slack). Nobody can pick someone else or change it later, not even a mentor. Importing the Slack list (step 3) will need a mentors-only way to keep its names.
 - The home page tile shows "3 to order now (1 high priority)".
@@ -28,11 +29,11 @@ The statuses, vendors and types are lists at the top of `data.ts`, so they're ea
 | `data.test.ts` | Tests for `data.ts`. |
 | `PurchasingPage.tsx` | The view switch and search, the items under each heading, the form, and the purchasers. Its address can open a request from a BOM part (`#/purchasing/from-bom/<part id>`) or an item (`#/purchasing/item/<item id>`). |
 
-The tables are made by `supabase/migrations/20261102180000_purchase_items.sql`, `..._purchasing_orders.sql` (purchasers, Ordered by, Shipped to and who changes orders) and `..._purchase_items_bom_part.sql` (the link to a BOM part). Their permission rules are tested in `supabase/tests/purchase-items.test.ts` and `purchasing-orders.test.ts`.
+The tables are made by `supabase/migrations/20261102180000_purchase_items.sql`, `..._purchasing_orders.sql` (purchasers, Ordered by, Shipped to and who changes orders), `..._purchase_items_bom_part.sql` (the link to a BOM part) and `..._purchase_items_estimated_arrival.sql`. Their permission rules are tested in `supabase/tests/purchase-items.test.ts` and `purchasing-orders.test.ts`.
 
 ## Still to do (#66)
 
-2. **Ordering details:** date ordered, estimated arrival, tracking number; **Copy as CSV** for one vendor's items; prices and totals. (Ordered by and Shipped to are done.)
+2. **Ordering details:** date ordered, tracking number; **Copy as CSV** for one vendor's items; prices and totals. (Ordered by, Shipped to and Estimated arrival are done.)
 3. **Import from Slack:** a mentors-only import of the BOM List's JSON export. Don't commit the real export.
 4. **Receipts and files** (#79), once a mentor sets up file storage.
 5. **The BOM:** asking for the parts #17 finds short, taking away what's already on the shelf. (The Purchase button and status are done.)

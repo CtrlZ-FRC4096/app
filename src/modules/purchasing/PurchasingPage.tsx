@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
-import { useMemberNames, useMembers } from '../../core/members'
+import { useMemberNames, useMembers, type Member } from '../../core/members'
 import { navigate, useRoute } from '../../core/router'
 import { isMentor, useSession } from '../../core/session'
 import { toast } from '../../core/toast'
@@ -14,11 +14,13 @@ import {
   VIEWS,
   addBuyer,
   addItem,
+  arrivalText,
   changeItem,
   choices,
   duplicateItem,
   groupItems,
   isAsking,
+  isLate,
   itemToForm,
   removeBuyer,
   removeItem,
@@ -41,10 +43,10 @@ const FIELD: CSSProperties = { minWidth: 0 }
 const BOX: CSSProperties = { minWidth: 0, width: '100%' }
 
 const EMPTY_TEXT: Record<View, string> = {
-  Current: 'Nothing in progress. Ask for something below, or look at All.',
-  All: 'Nothing on the list yet. Ask for the first thing below.',
-  'By status': 'Nothing on the list yet. Ask for the first thing below.',
-  'By vendor': 'Nothing on the list yet. Ask for the first thing below.',
+  Current: 'Nothing in progress. Ask for something above, or look at All.',
+  All: 'Nothing on the list yet. Ask for the first thing above.',
+  'By status': 'Nothing on the list yet. Ask for the first thing above.',
+  'By vendor': 'Nothing on the list yet. Ask for the first thing above.',
 }
 
 /** The Ask for something form, when it's open: what it starts with, and the BOM part it's for. */
@@ -108,7 +110,20 @@ export default function PurchasingPage() {
             placeholder="Name, vendor, type or part number"
           />
         </label>
+        {!form && (
+          <button type="button" className="btn btn-primary" onClick={() => setAsking({ start: EMPTY_ITEM, bomPartId: null, key: 'new' })}>
+            Ask for something
+          </button>
+        )}
       </div>
+
+      {form && (
+        <InView key={form.key}>
+          <Panel title="Ask for something">
+            <ItemForm item={null} start={form.start} bomPartId={form.bomPartId} onDone={closeForm} />
+          </Panel>
+        </InView>
+      )}
 
       {groups.length === 0 ? (
         <Panel>
@@ -149,21 +164,6 @@ export default function PurchasingPage() {
         ))
       )}
 
-      {/* At the end of the list, where you'd add a new row. */}
-      {form ? (
-        <InView key={form.key}>
-          <Panel title="Ask for something">
-            <ItemForm item={null} start={form.start} bomPartId={form.bomPartId} onDone={closeForm} />
-          </Panel>
-        </InView>
-      ) : (
-        <div className="toolbar">
-          <button type="button" className="btn btn-primary" onClick={() => setAsking({ start: EMPTY_ITEM, bomPartId: null, key: 'new' })}>
-            Ask for something
-          </button>
-        </div>
-      )}
-
       {items.length > 0 && <p className="note">{summaryText(items)}</p>}
 
       <Purchasers />
@@ -200,7 +200,11 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
   const status = statusOf(item.status)
   const details = [item.vendor, item.type, item.part_number].filter(Boolean)
   const bomPart = partsTable.useRows().find((p) => p.id === item.bom_part_id)
-  const order = [item.ordered_by && `Ordered by ${nameOf(item.ordered_by)}`, item.shipped_to && `Shipped to ${nameOf(item.shipped_to)}`].filter(Boolean)
+  const order = [
+    item.ordered_by && `Ordered by ${nameOf(item.ordered_by)}`,
+    item.shipped_to && `Shipped to ${nameOf(item.shipped_to)}`,
+    arrivalText(item),
+  ].filter(Boolean)
 
   function open(event: MouseEvent) {
     if ((event.target as HTMLElement).closest('a, button')) return
@@ -213,6 +217,7 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
         <button type="button" className="name-btn" onClick={props.onOpen}><strong>{item.name}</strong></button>
         {' '}× {item.quantity}
         {props.showStatus && <>{' '}<Pill tone={status.tone}>{status.label}</Pill></>}
+        {isLate(item) && <>{' '}<Pill tone="warn">Late</Pill></>}
         <br />
         <span className="muted">{details.join(' · ')}</span>
         {bomPart && <><br /><span className="note">For BOM part {bomPart.part_number}</span></>}
@@ -323,29 +328,6 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
           <span className="note">{statusOf(form.status).hint}.</span>
         </label>
       )}
-      {item && canOrder ? (
-        <label className="field" style={FIELD} htmlFor={id('ordered-by')}>
-          Ordered by
-          <select id={id('ordered-by')} className="input" style={BOX} value={form.ordered_by} onChange={(e) => set({ ordered_by: e.target.value })}>
-            <option value="">Nobody yet</option>
-            {orderers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
-          <span className="note">Marking it Order Placed makes this you, unless you pick someone else.</span>
-        </label>
-      ) : (
-        item?.ordered_by && <p className="note" style={{ margin: 0 }}>Ordered by {nameOf(item.ordered_by)}</p>
-      )}
-      {canOrder ? (
-        <label className="field" style={FIELD} htmlFor={id('shipped-to')}>
-          Shipped to
-          <select id={id('shipped-to')} className="input" style={BOX} value={form.shipped_to} onChange={(e) => set({ shipped_to: e.target.value })}>
-            <option value="">Nobody yet</option>
-            {people.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
-        </label>
-      ) : (
-        item?.shipped_to && <p className="note" style={{ margin: 0 }}>Shipped to {nameOf(item.shipped_to)}</p>
-      )}
       {select('vendor', 'Vendor', VENDORS)}
       {select('type', 'Type', TYPES)}
       <div className="field">
@@ -358,6 +340,7 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
         Notes
         <textarea id={id('notes')} className="input" style={BOX} rows={2} value={form.notes} onChange={(e) => set({ notes: e.target.value })} />
       </label>
+      {item && <OrderDetails item={item} form={form} canOrder={canOrder} set={set} id={id} people={people} orderers={orderers} />}
       <div className="toolbar">
         <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : item ? 'Save' : 'Add to the list'}</button>
         <button type="button" className="btn" onClick={props.onDone}>Cancel</button>
@@ -368,6 +351,72 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
         )}
       </div>
     </form>
+  )
+}
+
+/**
+ * The bottom of an item's form: who ordered it, who it ships to and when it
+ * should arrive. Mentors and purchasers fill these in; everyone else sees
+ * them as text.
+ */
+function OrderDetails(props: {
+  item: PurchaseItem
+  form: NewItem
+  canOrder: boolean
+  set: (changes: Partial<NewItem>) => void
+  id: (field: string) => string
+  people: Member[]
+  orderers: Member[]
+}) {
+  const { item, form, set, id } = props
+  const nameOf = useMemberNames()
+  const known = [
+    item.ordered_by && `Ordered by ${nameOf(item.ordered_by)}`,
+    item.shipped_to && `Shipped to ${nameOf(item.shipped_to)}`,
+    arrivalText(item),
+  ].filter(Boolean)
+  if (!props.canOrder && known.length === 0) return null
+
+  return (
+    <div style={{ display: 'grid', gap: 14, minWidth: 0, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
+      <strong>Order details</strong>
+      {!props.canOrder ? (
+        <p className="note" style={{ margin: 0 }}>{known.join(' · ')}</p>
+      ) : (
+        <>
+          <label className="field" style={FIELD} htmlFor={id('ordered-by')}>
+            Ordered by
+            <select id={id('ordered-by')} className="input" style={BOX} value={form.ordered_by} onChange={(e) => set({ ordered_by: e.target.value })}>
+              <option value="">Nobody yet</option>
+              {props.orderers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+            <span className="note">Marking it Order Placed makes this you, unless you pick someone else.</span>
+          </label>
+          <label className="field" style={FIELD} htmlFor={id('shipped-to')}>
+            Shipped to
+            <select id={id('shipped-to')} className="input" style={BOX} value={form.shipped_to} onChange={(e) => set({ shipped_to: e.target.value })}>
+              <option value="">Nobody yet</option>
+              {props.people.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          </label>
+          {/* Asked for once it's ordered. */}
+          {(!isAsking(form.status) || form.estimated_arrival) && (
+            <label className="field" style={FIELD} htmlFor={id('arrival')}>
+              Estimated arrival
+              <input
+                id={id('arrival')}
+                className="input"
+                style={BOX}
+                type="date"
+                value={form.estimated_arrival}
+                onChange={(e) => set({ estimated_arrival: e.target.value })}
+              />
+              <span className="note">When it should arrive. Leave it empty if you don't know yet.</span>
+            </label>
+          )}
+        </>
+      )}
+    </div>
   )
 }
 

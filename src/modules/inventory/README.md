@@ -2,7 +2,7 @@
 
 Parts, where they live, and how many are left, with a record of who took or added stock.
 
-**So far:** the `inventory_items` table with example parts, a page that lists them, and a low-stock flag and filter that also show on the home page.
+**So far:** the `inventory_items` table with example parts, a page that lists them, and a low-stock flag and filter that also show on the home page. Anyone can add a part; mentors and admins have an **Edit** button on each part to change its quantity and location, or delete it.
 
 ## What it needs to do
 
