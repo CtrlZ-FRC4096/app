@@ -25,6 +25,7 @@ import { isLive } from '../../core/supabase'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 import type { OnshapeBom, OnshapeImportPlan } from './onshape'
+import type { Item } from '../inventory/data'
 
 /** One row of bom_robots. */
 export interface Robot extends Row {
@@ -199,6 +200,39 @@ export function nextPartNumber(system: BomSystem, parts: Part[]): string {
     .filter(Number.isInteger)
   const next = Math.max(0, ...used) + 1
   return start + String(next).padStart(3, '0')
+}
+
+// ---------------------------------------------------------------------------
+// Stock on the shelf, from Inventory.
+
+/** How a part number is compared: without capitals or spaces, so "rev-11-1850" and "REV-11-1850" match. */
+const sameNumber = (number: string) => number.replace(/\s+/g, '').toLowerCase()
+
+/**
+ * The Inventory part a COTS part is, if Inventory has it: the one with the
+ * same vendor part number. Vendor names are matched only when more than one
+ * Inventory part has that number, since the team types them differently
+ * ("REV" and "REV Robotics"). Made parts, and COTS parts with no vendor part
+ * number, are never in Inventory.
+ */
+export function shelfItem(part: Part, items: Item[]): Item | undefined {
+  if (part.kind !== 'cots' || !part.vendor_part_number?.trim()) return undefined
+  const number = sameNumber(part.vendor_part_number)
+  const found = items.filter((item) => sameNumber(item.vendor_part_number) === number)
+  if (found.length <= 1) return found[0]
+  const vendor = (part.vendor ?? '').trim().toLowerCase()
+  return found.find((item) => item.vendor.trim().toLowerCase() === vendor)
+}
+
+/**
+ * What the BOM shows under a COTS part about the shelf: how many Inventory
+ * has and where, and how many short this line is. Null for made parts.
+ */
+export function shelfText(part: Part, items: Item[]): { text: string; short: number } | null {
+  if (part.kind !== 'cots') return null
+  const item = shelfItem(part, items)
+  if (!item) return { text: 'Not in Inventory', short: part.quantity }
+  return { text: `On the shelf: ${item.quantity} · ${item.location}`, short: Math.max(0, part.quantity - item.quantity) }
 }
 
 // ---------------------------------------------------------------------------

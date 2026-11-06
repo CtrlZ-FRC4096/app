@@ -43,6 +43,11 @@ const EXAMPLE_ITEMS: Item[] = [
   example('00000000-0000-4000-8000-00000001a006', 'CANivore', 'CTR Electronics', '21-678682', 'Bin E2', 1, 1),
   example('00000000-0000-4000-8000-00000001a007', 'Main breaker, 120A', 'AndyMark', 'am-0282a', 'Bin E4', 1, 2),
   example('00000000-0000-4000-8000-00000001a008', 'Voltage Regulator Module (VRM)', 'AndyMark', 'am-2857', 'Bin E3', 2, 1),
+  // Made up, with EXAMPLE- part numbers: these match parts in the BOM's
+  // example Intake, so the BOM can show what's on the shelf. There are
+  // enough wheels for the Intake, but not enough bearings.
+  example('00000000-0000-4000-8000-00000001a009', 'Compliant wheel, 2 in', 'AndyMark', 'EXAMPLE-CW-2', 'Bin M3', 12, 4),
+  example('00000000-0000-4000-8000-00000001a010', 'Flanged bearing, 1/2 in hex', 'WCP', 'EXAMPLE-BRG-12', 'Bin M1', 4, 2),
 ]
 
 function example(id: string, name: string, vendor: string, vendor_part_number: string, location: string, quantity: number, low_stock_level: number): Item {

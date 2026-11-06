@@ -2,7 +2,7 @@
 
 The bill of materials for each robot, checked against Inventory, so the team can see what to make and what to order.
 
-**Built so far:** a robot is made of systems (Intake, Drivetrain, …), and each system has a list of parts. The page shows one system's parts with an All / Made / COTS filter. Anyone on the team can add, change and delete parts, and import a system's parts from Onshape. Made parts show their stages (see below). COTS parts show their order from Purchasing, or a **Purchase** button that opens a request there, filled in from the part.
+**Built so far:** a robot is made of systems (Intake, Drivetrain, …), and each system has a list of parts. The page shows one system's parts with an All / Made / COTS filter. Anyone on the team can add, change and delete parts, and import a system's parts from Onshape. Made parts show their stages (see below). COTS parts show their order from Purchasing, or a **Purchase** button that opens a request there, filled in from the part. COTS parts also show how many Inventory has on the shelf and where, with **Enough** or **Short 2** for that line (see below).
 
 | File | What it does |
 |:--|:--|
@@ -32,6 +32,10 @@ The table is made by `supabase/migrations/20261102120000_bom_steps.sql`, with it
 
 The CNC board tracks routing separately (Ready to CAM → To cut → Cutting → Cut), so for now a part's CNC router stage is moved along by hand here too.
 
+## On the shelf
+
+Under each COTS part, the page shows what Inventory has: "On the shelf: 4 · Bin M1", or "Not in Inventory". `shelfItem()` in `data.ts` finds the Inventory part with the same **vendor part number**, ignoring capitals and spaces. Vendor names only decide when two Inventory parts have the same number, because the team writes them differently ("REV" and "REV Robotics"). **Enough** or **Short** compares the shelf with that one line's quantity. It doesn't yet add up the same part used in more than one system (#17).
+
 ## Importing from Onshape
 
 1. **Link the system.** Open the system's assembly (or Part Studio) in Onshape, copy the address, and paste it into **Change system > Onshape link**.
@@ -48,7 +52,7 @@ The example Intake in demo mode is linked to a made-up assembly, so **Import fro
 ## Still to do
 
 - Write team part numbers into Onshape (#21)
-- For bought parts: how many are on the shelf (from Inventory), and whether we're short
+- Add up a bought part used in more than one system, and a To order list (#17)
 - Assign stages to people, with due dates (#16)
 - Move a part's CNC router stage along when the CNC board marks it cut
 - Mentors mark short parts as ordered

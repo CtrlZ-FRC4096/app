@@ -5,9 +5,10 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { setDemoRole } from '../../core/demo'
 import {
   addPart, addRobot, addSystem, bomSummary, changePart, changeSystem, checkPart, checkSystem, countParts, filterParts, kindLabel,
-  nextPartNumber, partCountText, partsTable, removePart, removeSystem, renameRobot, robotsTable, systemsTable,
+  nextPartNumber, partCountText, partsTable, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, systemsTable,
   type NewPart, type Part,
 } from './data'
+import { itemsTable, type Item } from '../inventory/data'
 import {
   addStep, advance, changeDone, checkStep, moveBack, removeStep, stationName, stationQueue, stepName, stepsFor, stepsTable, type Step,
 } from './data'
@@ -368,5 +369,51 @@ describe('stationQueue', () => {
   it('names stations the way the filter shows them', () => {
     expect(stationName({ kind: 'machine', machine: '3d_printer' })).toBe('3D printer only')
     expect(stationName({ kind: 'stage', stage: 'post' })).toBe('Waiting for post-process')
+  })
+})
+
+describe('shelfItem and shelfText', () => {
+  const cotsPart = (fields: Partial<Part>) => ({ ...filterParts(parts(), 'COTS')[0], vendor: 'WCP', vendor_part_number: 'WCP-0001', quantity: 6, ...fields }) as Part
+  const item = (fields: Partial<Item>) => ({ ...itemsTable.rows()[0], vendor: 'WCP', vendor_part_number: 'WCP-0001', location: 'Bin M1', quantity: 4, ...fields }) as Item
+
+  it('finds the Inventory part with the same vendor part number, ignoring capitals and spaces', () => {
+    const shelf = item({})
+    expect(shelfItem(cotsPart({ vendor_part_number: ' wcp-0001 ' }), [item({ vendor_part_number: 'OTHER' }), shelf])).toBe(shelf)
+  })
+
+  it("matches even when the vendor is written differently, like REV and REV Robotics", () => {
+    const shelf = item({ vendor: 'REV' })
+    expect(shelfItem(cotsPart({ vendor: 'REV Robotics' }), [shelf])).toBe(shelf)
+  })
+
+  it('uses the vendor to choose when two Inventory parts have the same number', () => {
+    const fromWcp = item({ vendor: 'WCP' })
+    const fromRev = item({ vendor: 'REV' })
+    expect(shelfItem(cotsPart({ vendor: 'wcp' }), [fromRev, fromWcp])).toBe(fromWcp)
+  })
+
+  it('finds nothing for made parts, or COTS parts with no vendor part number', () => {
+    expect(shelfItem(filterParts(parts(), 'Made')[0], [item({})])).toBeUndefined()
+    expect(shelfItem(cotsPart({ vendor_part_number: null }), [item({ vendor_part_number: '' })])).toBeUndefined()
+  })
+
+  it('says how many are on the shelf, where, and how many short', () => {
+    expect(shelfText(cotsPart({ quantity: 6 }), [item({ quantity: 4 })])).toEqual({ text: 'On the shelf: 4 · Bin M1', short: 2 })
+    expect(shelfText(cotsPart({ quantity: 3 }), [item({ quantity: 4 })])).toEqual({ text: 'On the shelf: 4 · Bin M1', short: 0 })
+  })
+
+  it('counts a part not in Inventory as fully short', () => {
+    expect(shelfText(cotsPart({ quantity: 6 }), [])).toEqual({ text: 'Not in Inventory', short: 6 })
+  })
+
+  it('shows nothing for made parts', () => {
+    expect(shelfText(filterParts(parts(), 'Made')[0], [item({})])).toBeNull()
+  })
+
+  it('matches the example Intake to the example Inventory', () => {
+    const intake = parts().filter((p) => p.part_number.startsWith('4096-26-INT-'))
+    const text = (name: string) => shelfText(intake.find((p) => p.name === name)!, itemsTable.rows())
+    expect(text('Compliant wheel, 2 in')).toEqual({ text: 'On the shelf: 12 · Bin M3', short: 0 })
+    expect(text('Flanged bearing, 1/2 in hex')).toEqual({ text: 'On the shelf: 4 · Bin M1', short: 2 })
   })
 })
