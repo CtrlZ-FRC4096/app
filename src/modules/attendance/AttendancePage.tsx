@@ -30,6 +30,12 @@ export default function AttendancePage() {
   const { person } = useMyAttendance(range)
   // The day being asked about in Your attendance's request form, when it's open.
   const [asking, setAsking] = useState<string | null>(null)
+  // Counts taps on Request missing attendance, so each one brings the form into view, even when it's already open.
+  const [jumps, setJumps] = useState(0)
+  const request = () => {
+    setAsking((day) => day ?? today())
+    setJumps((n) => n + 1)
+  }
 
   return (
     <>
@@ -40,10 +46,10 @@ export default function AttendancePage() {
       </PageHead>
       <RangePicker range={range} />
       <RangeNote range={range} />
-      <MyAttendance range={range} rangeName={rangeName} asking={asking} onAsk={setAsking} />
+      <MyAttendance range={range} rangeName={rangeName} asking={asking} onAsk={setAsking} jumps={jumps} />
       {isMentor(role) && <TeamAttendance range={range} />}
       {/* No link for someone with no attendance yet: there's no form to open. */}
-      <PointsRules onRequest={person ? () => setAsking(today()) : undefined} />
+      <PointsRules onRequest={person ? request : undefined} />
       {isMentor(role) && <RequestsPanel />}
     </>
   )

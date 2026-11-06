@@ -17,6 +17,8 @@ export function MyAttendance(props: {
   /** The day being asked about, when the request form is open. The page keeps it, so How points work can open the form too. */
   asking: string | null
   onAsk: (day: string | null) => void
+  /** Goes up each time something asks to see the form, so it comes into view again even if it's open. */
+  jumps?: number
 }) {
   const { person, row } = useMyAttendance(props.range)
   const requests = useMyRequests()
@@ -27,7 +29,7 @@ export function MyAttendance(props: {
     if (asking === null) return
     formArea.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
     formArea.current?.querySelector<HTMLElement>('input, select, textarea')?.focus({ preventScroll: true })
-  }, [asking])
+  }, [asking, props.jumps])
 
   if (!person) {
     return (
