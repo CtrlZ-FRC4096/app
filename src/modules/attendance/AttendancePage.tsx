@@ -15,9 +15,9 @@ import { ago, dayLabel } from './time'
 
 const SETUP = 'https://github.com/CtrlZ-FRC4096/app/blob/main/src/modules/attendance/README.md#pulling-from-slack-automatically'
 
-const TABS = ['Everyone', 'Check-ins', 'RSVPs', 'Periods', 'Import'] as const
+const TABS = ['All', 'Check-ins', 'RSVPs', 'Periods', 'Import'] as const
 type Tab = (typeof TABS)[number]
-const SHEET: Record<Exclude<Tab, 'Everyone' | 'Periods' | 'Import'>, Sheet> = { 'Check-ins': 'checks', RSVPs: 'rsvps' }
+const SHEET: Record<Exclude<Tab, 'All' | 'Periods' | 'Import'>, Sheet> = { 'Check-ins': 'checks', RSVPs: 'rsvps' }
 
 const fileName = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
@@ -97,7 +97,7 @@ function RangeNote({ range }: { range: ReturnType<typeof useCountRange> }) {
 
 /** Mentors and admins: everyone's sheets, fixing mistakes, points periods and importing. */
 function TeamAttendance({ range }: { range: ReturnType<typeof useCountRange> }) {
-  const [tab, setTab] = useState<Tab>('Everyone')
+  const [tab, setTab] = useState<Tab>('All')
   const [displaySheet, setDisplaySheet] = useState<Sheet>('points')
   const [sortBy, setSortBy] = useState<SortBy>(SHEET_SORT.points)
   const [search, setSearch] = useState('')
@@ -120,7 +120,7 @@ function TeamAttendance({ range }: { range: ReturnType<typeof useCountRange> }) 
   // points or hours choice when sorting by Name or Days here.
   function choose(next: Tab) {
     setTab(next)
-    if (next !== 'Everyone' && next !== 'Periods' && next !== 'Import') setSortBy(SHEET_SORT[SHEET[next]])
+    if (next !== 'All' && next !== 'Periods' && next !== 'Import') setSortBy(SHEET_SORT[SHEET[next]])
   }
 
   function download(sheet: Sheet) {
@@ -135,7 +135,7 @@ function TeamAttendance({ range }: { range: ReturnType<typeof useCountRange> }) 
 
   return (
     <>
-      <h2>Everyone</h2>
+      <h2>Everyone's attendance</h2>
       <p className="note">
         {plural(report.rows.length, 'person', 'people')} · {plural(report.days.length, 'meeting', 'meetings')}
         {last && ` · ${cameLast} at the last one (${dayLabel(last)})`}
@@ -156,7 +156,7 @@ function TeamAttendance({ range }: { range: ReturnType<typeof useCountRange> }) 
         <PeriodsPanel
           onShow={(period) => {
             range.set({ kind: 'period', id: period.id })
-            choose('Everyone')
+            choose('All')
           }}
         />
       ) : (
@@ -169,10 +169,10 @@ function TeamAttendance({ range }: { range: ReturnType<typeof useCountRange> }) 
           {person && <PersonPanel row={person} days={report.days} onClose={() => setSelected(null)} />}
 
           <Panel
-            title={tab}
-            aside={<button type="button" className="btn btn-sm" onClick={() => download(tab === 'Everyone' ? displaySheet : SHEET[tab])}>Download CSV</button>}
+            title={tab === 'All' ? 'Attendance' : tab}
+            aside={<button type="button" className="btn btn-sm" onClick={() => download(tab === 'All' ? displaySheet : SHEET[tab])}>Download CSV</button>}
           >
-            <AttendanceGrid report={report} rows={rows} sheet={tab === 'Everyone' ? displaySheet : SHEET[tab]} sortBy={sortBy} onSort={(by) => {
+            <AttendanceGrid report={report} rows={rows} sheet={tab === 'All' ? displaySheet : SHEET[tab]} sortBy={sortBy} onSort={(by) => {
               setSortBy(by)
               if (by === 'points' || by === 'hours') setDisplaySheet(by)
             }} selected={selected} onSelect={setSelected} />
