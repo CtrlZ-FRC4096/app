@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
 import { useMemberNames, useMembers, type Member } from '../../core/members'
 import { navigate, useRoute } from '../../core/router'
 import { isMentor, useSession } from '../../core/session'
@@ -8,6 +8,7 @@ import { PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
 import { partsTable, systemsTable } from '../bom/data'
 import {
   EMPTY_ITEM,
+  RECEIPT_ACCEPT,
   STATUSES,
   TYPES,
   VENDORS,
@@ -15,6 +16,8 @@ import {
   addBuyer,
   addItem,
   arrivalText,
+  addReceipt,
+  canOpenReceipts,
   changeItem,
   choices,
   duplicateItem,
@@ -24,17 +27,23 @@ import {
   pickStatus,
   isLate,
   itemToForm,
+  receiptCountText,
+  receiptLink,
+  receiptText,
   removeBuyer,
   removeItem,
+  removeReceipt,
   requestFromBomPart,
   searchItems,
   statusOf,
   summaryText,
   useBuyers,
   useCanOrder,
+  useReceipts,
   useItems,
   type NewItem,
   type PurchaseItem,
+  type Receipt,
   type View,
 } from './data'
 
@@ -207,6 +216,7 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
     item.shipped_to && `Shipped to ${nameOf(item.shipped_to)}`,
     arrivalText(item),
   ].filter(Boolean)
+  const receipts = receiptCountText(useReceipts(item.id).length)
 
   function open(event: MouseEvent) {
     if ((event.target as HTMLElement).closest('a, button')) return
@@ -225,6 +235,7 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
         {bomPart && <><br /><span className="note">For BOM part {bomPart.part_number}</span></>}
         {item.notes && <><br /><span className="muted">{item.notes}</span></>}
         {order.length > 0 && <><br /><span className="note">{order.join(' · ')}</span></>}
+        {receipts && <><br /><span className="note">{receipts}</span></>}
         <br />
         <span className="note">Requested by {nameOf(item.requested_by)} · {shortDate(item.created_at)}</span>
       </span>
@@ -343,6 +354,7 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
         <textarea id={id('notes')} className="input" style={BOX} rows={2} value={form.notes} onChange={(e) => set({ notes: e.target.value })} />
       </label>
       {item && <OrderDetails item={item} form={form} canOrder={canOrder} set={set} id={id} people={people} orderers={orderers} />}
+      {item && <Receipts item={item} />}
       <div className="toolbar">
         <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : item ? 'Save' : 'Add to the list'}</button>
         <button type="button" className="btn" onClick={props.onDone}>Cancel</button>
@@ -429,6 +441,101 @@ function OrderDetails(props: {
 }
 
 /** Who the purchasers are, so people know who to ask. Mentors and admins add and remove them. */
+/**
+ * An item's receipts, on the opened item. Everyone sees how many there are.
+ * Mentors and admins open and delete them; mentors and purchasers add them.
+ * The buttons are only tidiness: the database's rules are what stop people.
+ */
+function Receipts(props: { item: PurchaseItem }) {
+  const me = useSession()
+  const nameOf = useMemberNames()
+  const canAdd = useCanOrder()
+  const canOpen = canOpenReceipts(me)
+  const receipts = useReceipts(props.item.id)
+  const picker = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+  // The receipt whose Delete was pressed once: it takes two presses.
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  async function pick(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    // Cleared so picking the same file again, after a problem, still counts.
+    event.target.value = ''
+    if (!file) return
+    setUploading(true)
+    const result = await addReceipt(props.item, file)
+    setUploading(false)
+    toast(result.ok ? 'Receipt added.' : result.error)
+  }
+
+  async function open(receipt: Receipt) {
+    // The tab has to open during the tap, or phones block it. The address
+    // comes after, once the link is made.
+    const tab = window.open('', '_blank')
+    const result = await receiptLink(receipt)
+    if (!result.ok) {
+      tab?.close()
+      toast(result.error)
+      return
+    }
+    if (!tab) {
+      toast('Your browser blocked the new tab. Allow pop-ups for this site and try again.')
+      return
+    }
+    tab.opener = null
+    tab.location.href = result.value
+  }
+
+  async function remove(receipt: Receipt) {
+    if (deletingId !== receipt.id) {
+      setDeletingId(receipt.id)
+      return
+    }
+    const result = await removeReceipt(receipt)
+    setDeletingId(null)
+    toast(result.ok ? 'Receipt deleted.' : result.error)
+  }
+
+  // Nothing to see or do here for a student, on an item with no receipts.
+  if (!canAdd && receipts.length === 0) return null
+
+  return (
+    <div className="field" style={FIELD}>
+      <span>Receipts</span>
+      {canOpen ? (
+        receipts.map((receipt, i) => (
+          <div key={receipt.id} className="toolbar" style={{ justifyContent: 'space-between', padding: '4px 0' }}>
+            <span style={{ minWidth: 0, color: 'var(--ink)' }}>
+              Receipt {i + 1}: {receiptText(receipt)}
+              <br />
+              <span className="note">Added by {nameOf(receipt.created_by)} · {shortDate(receipt.created_at)}</span>
+            </span>
+            <span className="toolbar">
+              <button type="button" className="btn btn-sm" onClick={() => void open(receipt)}>Open</button>
+              <button type="button" className="btn btn-sm" onClick={() => void remove(receipt)}>
+                {deletingId === receipt.id ? 'Press again to delete' : 'Delete'}
+              </button>
+            </span>
+          </div>
+        ))
+      ) : (
+        <span className="note">
+          {receipts.length > 0 ? `${receiptCountText(receipts.length)} added. ` : ''}Only mentors can open receipts, because they can show card digits and addresses.
+        </span>
+      )}
+      {canAdd && (
+        <div className="toolbar">
+          <button type="button" className="btn btn-sm" disabled={uploading} onClick={() => picker.current?.click()}>
+            {uploading ? 'Uploading…' : 'Add receipt'}
+          </button>
+          <span className="note">PDF or photo, up to 10 MB</span>
+          <input ref={picker} type="file" accept={RECEIPT_ACCEPT} aria-label="Add receipt" hidden onChange={(e) => void pick(e)} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Purchasers() {
   const buyers = useBuyers()
   const members = useMembers()
