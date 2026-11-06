@@ -30,9 +30,10 @@ export into an Excel workbook). It works the same way:
 - **Hours** pair each check-in with the next check-out. A double check-in is
   ignored. Someone who never checks out gets no hours that day until a
   mentor adds the check-out.
-- **Points** per day, plus 3 to start each points period:
+- **Points** per day, plus 3 to start each points period. A full session is
+  2 hours or more (`FULL_SESSION_HOURS`; the old spreadsheet used 1.5):
 
-  | Poll answer | Didn't come | Under 1.5 h | 1.5 h or more |
+  | Poll answer | Didn't come | Under 2 h | 2 h or more |
   |:--|--:|--:|--:|
   | Yes | −1 | 1 | 3 |
   | No | 1 | 1 | 2 |

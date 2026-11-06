@@ -182,12 +182,13 @@ function PointsRules() {
   return (
     <Callout title="How points work">
       <span>
-        Everyone starts the dates being counted with {BASE_POINTS}. Each meeting day, a full session means staying at least{' '}
-        {FULL_SESSION_HOURS} hours, by Jibble check-in and check-out:
+        Everyone starts each points period with {BASE_POINTS} points. Then each meeting day adds or takes away points, depending on
+        what you answered in the Slack poll and how long you stayed, from your Jibble check-in to check-out. A full session is{' '}
+        {FULL_SESSION_HOURS} hours or more.
       </span>
       <div className="table-wrap">
         <table className="points-rules">
-          <thead><tr><th>Poll answer</th><th className="num">Didn't come</th><th className="num">Left early</th><th className="num">Full session</th></tr></thead>
+          <thead><tr><th>Poll answer</th><th className="num">Didn't come</th><th className="num">Under {FULL_SESSION_HOURS} hours</th><th className="num">{FULL_SESSION_HOURS} hours or more</th></tr></thead>
           <tbody>
             {(['yes', 'no', 'none'] as const).map((answer) => (
               <tr key={answer}>
@@ -200,7 +201,7 @@ function PointsRules() {
           </tbody>
         </table>
       </div>
-      <span className="note">Someone who checked in but never out gets no hours for that day until a mentor adds the check-out.</span>
+      <span className="note">If you checked in but never checked out, that day counts as not coming until a mentor adds your check-out.</span>
     </Callout>
   )
 }
