@@ -12,9 +12,9 @@
  * database's rules are in supabase/migrations/..._purchase_items.sql and
  * ..._purchasing_orders.sql; the checks here only give a clearer message.
  *
- * Receipts (#79) are files in a private storage bucket. Only mentors and
- * admins open them, mentors and purchasers add them, and everyone can see
- * that an item has one. See supabase/migrations/..._purchase_receipts.sql.
+ * Receipts (#79) are files in a private storage bucket. Only mentors, admins
+ * and purchasers add, open and delete them, and everyone can see that an
+ * item has one. See supabase/migrations/..._purchase_receipts.sql.
  *
  * Dates, tracking, prices and importing the Slack list come in later steps:
  * see issue #66.
@@ -362,11 +362,6 @@ export function useReceipts(itemId: string): Receipt[] {
   return receiptsTable.useRows().filter((r) => r.item_id === itemId)
 }
 
-/** Mentors and admins open and delete receipts. Purchasers can only add them. */
-export function canOpenReceipts(user: Pick<User, 'role'> | null): boolean {
-  return !!user && isMentor(user.role)
-}
-
 /** The parts of a file that matter here. A real File has them. */
 type ReceiptFile = Pick<File, 'name' | 'type' | 'size'>
 
@@ -433,17 +428,17 @@ export async function addReceipt(item: PurchaseItem, file: File): Promise<Result
   return receiptsTable.insert({ item_id: item.id, path, content_type, size_bytes: file.size })
 }
 
-/** A link to a receipt that stops working soon. Mentors and admins only. */
+/** A link to a receipt that stops working soon. Mentors, admins and purchasers only. */
 export async function receiptLink(receipt: Receipt): Promise<Result<string>> {
-  if (!canOpenReceipts(currentUser())) return fail('Only mentors can open receipts.')
+  if (!canOrder(currentUser(), buyersTable.rows())) return fail('Only mentors and purchasers can open receipts.')
   if (!supabase) return fail('Demo mode: there are no files. On the live site, this opens the receipt.')
   const { data, error } = await supabase.storage.from(RECEIPT_BUCKET).createSignedUrl(receipt.path, RECEIPT_LINK_SECONDS)
   return error || !data ? fail("Couldn't open that receipt. Try again.") : ok(data.signedUrl)
 }
 
-/** Delete a receipt and its file. Mentors and admins only. */
+/** Delete a receipt and its file. Mentors, admins and purchasers only. */
 export async function removeReceipt(receipt: Receipt): Promise<Result> {
-  if (!canOpenReceipts(currentUser())) return fail('Only mentors can delete receipts.')
+  if (!canOrder(currentUser(), buyersTable.rows())) return fail('Only mentors and purchasers can delete receipts.')
   // The file first: if the row went first and this failed, the file would
   // stay with nothing pointing at it. Trying again is safe.
   if (supabase) {
@@ -686,7 +681,7 @@ export async function removeItem(item: PurchaseItem): Promise<Result> {
   }
   // The database refuses too: a receipt is a record of what was spent.
   if (receiptsTable.rows().some((r) => r.item_id === item.id)) {
-    return fail('This item has a receipt, so it can\'t be deleted. A mentor needs to delete the receipt first.')
+    return fail('This item has a receipt, so it can\'t be deleted. A mentor or purchaser needs to delete the receipt first.')
   }
   return itemsTable.remove(item.id)
 }

@@ -19,7 +19,6 @@ import {
   arrivalText,
   addReceipt,
   buyersTable,
-  canOpenReceipts,
   canOrder,
   changeItem,
   checkItem,
@@ -621,13 +620,11 @@ describe('receipts', () => {
     })
   })
 
-  it('can only be opened by mentors and admins', async () => {
-    expect(canOpenReceipts({ role: 'student' })).toBe(false)
-    expect(canOpenReceipts({ role: 'mentor' })).toBe(true)
-    expect(canOpenReceipts({ role: 'admin' })).toBe(true)
-    expect(canOpenReceipts(null)).toBe(false)
+  it('can only be opened by mentors and purchasers', async () => {
     const [receipt] = receiptsTable.rows()
-    expect(await receiptLink(receipt)).toEqual({ ok: false, error: 'Only mentors can open receipts.' })
+    expect(await receiptLink(receipt)).toEqual({ ok: false, error: 'Only mentors and purchasers can open receipts.' })
+    await buyersTable.insert({ member_id: DEMO_PEOPLE.alex })
+    expect(await receiptLink(receipt)).toMatchObject({ ok: false, error: expect.stringMatching(/^Demo mode/) })
   })
 
   it('says there are no files in demo mode, for a mentor', async () => {
@@ -635,20 +632,22 @@ describe('receipts', () => {
     expect(await receiptLink(receiptsTable.rows()[0])).toMatchObject({ ok: false, error: expect.stringMatching(/^Demo mode/) })
   })
 
-  it('can only be deleted by mentors and admins', async () => {
-    const [receipt] = receiptsTable.rows()
-    await buyersTable.insert({ member_id: DEMO_PEOPLE.alex })
-    expect((await removeReceipt(receipt)).ok).toBe(false)
+  it('can only be deleted by mentors and purchasers', async () => {
+    const [first, second] = receiptsTable.rows()
+    expect((await removeReceipt(first)).ok).toBe(false)
     expect(receiptsTable.rows()).toHaveLength(3)
-    setDemoRole('mentor')
-    expect((await removeReceipt(receipt)).ok).toBe(true)
+    await buyersTable.insert({ member_id: DEMO_PEOPLE.alex })
+    expect((await removeReceipt(first)).ok).toBe(true)
     expect(receiptsTable.rows()).toHaveLength(2)
+    setDemoRole('mentor')
+    expect((await removeReceipt(second)).ok).toBe(true)
+    expect(receiptsTable.rows()).toHaveLength(1)
   })
 
-  it('stop an item being deleted until a mentor deletes them', async () => {
+  it('stop an item being deleted until a mentor or purchaser deletes them', async () => {
     setDemoRole('mentor')
     const item = find('Polycarbonate sheet, 1/8 in')
-    expect(await removeItem(item)).toMatchObject({ ok: false, error: expect.stringMatching(/mentor needs to delete the receipt/) })
+    expect(await removeItem(item)).toMatchObject({ ok: false, error: expect.stringMatching(/mentor or purchaser needs to delete the receipt/) })
     const [receipt] = receiptsOf(item)
     await removeReceipt(receipt)
     expect((await removeItem(item)).ok).toBe(true)
