@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { toast } from '../../core/toast'
 import { Panel, Pill } from '../../core/ui'
 import { cancelRequest, requestHours, useMyAttendance, useMyRequests, type AttendancePerson } from './data'
@@ -11,11 +11,23 @@ import { dayLabel, teamClock, today } from './time'
  * sees this, students included. Nobody changes anything here directly:
  * if Jibble missed some hours, ask for them, and a mentor approves.
  */
-export function MyAttendance(props: { range: { from?: string; to?: string }; rangeName: string }) {
+export function MyAttendance(props: {
+  range: { from?: string; to?: string }
+  rangeName: string
+  /** The day being asked about, when the request form is open. The page keeps it, so How points work can open the form too. */
+  asking: string | null
+  onAsk: (day: string | null) => void
+}) {
   const { person, row } = useMyAttendance(props.range)
   const requests = useMyRequests()
-  // The day being asked about, when the form is open.
-  const [asking, setAsking] = useState<string | null>(null)
+  const { asking, onAsk: setAsking } = props
+  // Bring the form into view when it opens, wherever it was opened from.
+  const formArea = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (asking === null) return
+    formArea.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+    formArea.current?.querySelector<HTMLElement>('input, select, textarea')?.focus({ preventScroll: true })
+  }, [asking])
 
   if (!person) {
     return (
@@ -37,7 +49,7 @@ export function MyAttendance(props: { range: { from?: string; to?: string }; ran
         <div><strong>{row?.daysPresent ?? 0}</strong><span>{row?.daysPresent === 1 ? 'meeting' : 'meetings'} here</span></div>
       </div>
 
-      <div className="panel-body">
+      <div className="panel-body" ref={formArea}>
         {asking === null ? (
           <div className="toolbar">
             <button type="button" className="btn btn-sm" onClick={() => setAsking(today())}>Request missing hours</button>
