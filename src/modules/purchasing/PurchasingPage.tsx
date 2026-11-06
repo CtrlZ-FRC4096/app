@@ -21,6 +21,7 @@ import {
   groupItems,
   isAsking,
   orderFieldsShown,
+  pickStatus,
   isLate,
   itemToForm,
   removeBuyer,
@@ -323,7 +324,7 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
       ) : (
         <label className="field" style={FIELD} htmlFor={id('status')}>
           {item ? 'Status' : 'Priority'}
-          <select id={id('status')} className="input" style={BOX} value={form.status} onChange={(e) => set({ status: e.target.value as NewItem['status'] })}>
+          <select id={id('status')} className="input" style={BOX} value={form.status} onChange={(e) => set(pickStatus(form, e.target.value as NewItem['status'], item ?? null, me.id))}>
             {statuses.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
           </select>
           <span className="note">{statusOf(form.status).hint}.</span>
@@ -395,7 +396,7 @@ function OrderDetails(props: {
                 <option value="">Nobody yet</option>
                 {props.orderers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
               </select>
-              <span className="note">Marking it Order Placed makes this you, unless you pick someone else.</span>
+              <span className="note">Marking it Order Placed fills this in with you. Pick someone else if they placed it.</span>
             </label>
           )}
           {shown.shipped_to && (

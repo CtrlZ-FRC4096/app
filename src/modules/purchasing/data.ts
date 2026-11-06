@@ -406,6 +406,20 @@ export function orderFieldsShown(form: Pick<NewItem, 'status' | 'ordered_by' | '
   }
 }
 
+/**
+ * The form's changes when someone picks a new status. Moving an order to
+ * Order Placed fills in Ordered by with them, as saving does (the database
+ * does the same), unless someone else was already picked in the form.
+ * Moving it away again puts back what was saved.
+ */
+export function pickStatus(form: NewItem, status: StatusKey, item: PurchaseItem | null, me: string): Partial<NewItem> {
+  const saved = item?.ordered_by ?? ''
+  const placing = status === 'placed' && item?.status !== 'placed'
+  if (placing && form.ordered_by === saved) return { status, ordered_by: me }
+  if (!placing && form.status === 'placed' && item?.status !== 'placed' && form.ordered_by === me) return { status, ordered_by: saved }
+  return { status }
+}
+
 /** An item's fields, to fill in the form for changing it. */
 export function itemToForm(item: PurchaseItem): NewItem {
   return {

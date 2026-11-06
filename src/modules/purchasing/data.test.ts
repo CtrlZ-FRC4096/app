@@ -19,6 +19,7 @@ import {
   changeItem,
   checkItem,
   orderFieldsShown,
+  pickStatus,
   choices,
   dayText,
   duplicateItem,
@@ -472,5 +473,30 @@ describe('orderFieldsShown', () => {
 
   it('still shows one that is filled in, so nothing saved is hidden', () => {
     expect(orderFieldsShown({ ...empty, status: 'order', shipped_to: DEMO_PEOPLE.pat })).toEqual({ ordered_by: false, shipped_to: true, estimated_arrival: false })
+  })
+})
+
+describe('pickStatus', () => {
+  const asked = () => find('Compliant wheel, 2 in')
+  const me = DEMO_PEOPLE.morgan
+
+  it('fills in Ordered by with you when you pick Order Placed', () => {
+    expect(pickStatus(itemToForm(asked()), 'placed', asked(), me)).toEqual({ status: 'placed', ordered_by: me })
+  })
+
+  it('keeps someone else picked in the form', () => {
+    const form = { ...itemToForm(asked()), ordered_by: DEMO_PEOPLE.pat }
+    expect(pickStatus(form, 'placed', asked(), me)).toEqual({ status: 'placed' })
+  })
+
+  it('puts back what was saved when you move it away from Order Placed again', () => {
+    const form = { ...itemToForm(asked()), status: 'placed' as const, ordered_by: me }
+    expect(pickStatus(form, 'order_high', asked(), me)).toEqual({ status: 'order_high', ordered_by: '' })
+  })
+
+  it('only changes the status otherwise', () => {
+    expect(pickStatus(itemToForm(asked()), 'order_high', asked(), me)).toEqual({ status: 'order_high' })
+    const placed = find('Timing belt, 60T')
+    expect(pickStatus(itemToForm(placed), 'received', placed, me)).toEqual({ status: 'received' })
   })
 })
