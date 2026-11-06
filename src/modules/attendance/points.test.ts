@@ -2,17 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { BASE_POINTS, buildReport, dayPoints, hoursOf, sessions } from './points'
 import { teamInstant } from './time'
 
-describe('dayPoints matches the old attendance spreadsheet', () => {
+describe('dayPoints: a full session is 2 hours or more', () => {
   it.each([
     ['yes', null, -1],
     ['yes', 1.0, 1],
-    ['yes', 1.5, 3],
+    ['yes', 1.5, 1],
+    ['yes', 1.99, 1],
+    ['yes', 2.0, 3],
     ['no', null, 1],
-    ['no', 1.0, 1],
+    ['no', 1.5, 1],
     ['no', 2.0, 2],
     [null, null, 0],
-    [null, 1.0, 0],
-    [null, 1.5, 1],
+    [null, 1.5, 0],
+    [null, 2.0, 1],
   ] as const)('RSVP %s, %s hours → %i', (rsvp, hours, points) => {
     expect(dayPoints(rsvp, hours)).toBe(points)
   })

@@ -10,8 +10,8 @@
 import { teamDay } from './time'
 
 export const BASE_POINTS = 3
-/** Staying at least this long counts as a full session. */
-export const FULL_SESSION_HOURS = 1.5
+/** Staying at least this long counts as a full session. (The old spreadsheet used 1.5.) */
+export const FULL_SESSION_HOURS = 2
 
 export type Rsvp = 'yes' | 'no' | null
 type Stay = 'none' | 'short' | 'full'

@@ -10,8 +10,8 @@ import { PersonPanel } from './PersonPanel'
 import { RequestsPanel } from './RequestsPanel'
 import { BASE_POINTS, FULL_SESSION_HOURS, POINTS } from './points'
 import { rangeText } from './periods'
-import { periodsTable, SHEET_SORT, sheetRows, sortRows, toCsv, useCountRange, useLastPull, useReport, type Sheet, type SortBy } from './data'
-import { ago, dayLabel } from './time'
+import { periodsTable, SHEET_SORT, sheetRows, sortRows, toCsv, useCountRange, useLastPull, useMyAttendance, useReport, type Sheet, type SortBy } from './data'
+import { ago, dayLabel, today } from './time'
 
 const SETUP = 'https://github.com/CtrlZ-FRC4096/app/blob/main/src/modules/attendance/README.md#pulling-from-slack-automatically'
 
@@ -27,6 +27,15 @@ export default function AttendancePage() {
   const { role } = useSession()
   const range = useCountRange()
   const rangeName = range.period?.name ?? (range.from || range.to ? rangeText(range.from, range.to) : 'All time')
+  const { person } = useMyAttendance(range)
+  // The day being asked about in Your attendance's request form, when it's open.
+  const [asking, setAsking] = useState<string | null>(null)
+  // Counts taps on Request missing attendance, so each one brings the form into view, even when it's already open.
+  const [jumps, setJumps] = useState(0)
+  const request = () => {
+    setAsking((day) => day ?? today())
+    setJumps((n) => n + 1)
+  }
 
   return (
     <>
@@ -37,9 +46,10 @@ export default function AttendancePage() {
       </PageHead>
       <RangePicker range={range} />
       <RangeNote range={range} />
-      <MyAttendance range={range} rangeName={rangeName} />
+      <MyAttendance range={range} rangeName={rangeName} asking={asking} onAsk={setAsking} jumps={jumps} />
       {isMentor(role) && <TeamAttendance range={range} />}
-      <PointsRules />
+      {/* No link for someone with no attendance yet: there's no form to open. */}
+      <PointsRules onRequest={person ? request : undefined} />
       {isMentor(role) && <RequestsPanel />}
     </>
   )
@@ -178,20 +188,27 @@ function TeamAttendance({ range }: { range: ReturnType<typeof useCountRange> }) 
   )
 }
 
-function PointsRules() {
+const WRAP = { whiteSpace: 'normal' } as const
+
+/** The points for each day, and a link that opens the request form in Your attendance. */
+function PointsRules(props: { onRequest?: () => void }) {
   return (
     <Callout title="How points work">
-      <span>
-        Everyone starts the dates being counted with {BASE_POINTS}. Each meeting day, a full session means staying at least{' '}
-        {FULL_SESSION_HOURS} hours, by Jibble check-in and check-out:
-      </span>
       <div className="table-wrap">
         <table className="points-rules">
-          <thead><tr><th>Poll answer</th><th className="num">Didn't come</th><th className="num">Left early</th><th className="num">Full session</th></tr></thead>
+          {/* Headings may wrap here, so the table fits on a phone without swiping. */}
+          <thead>
+            <tr>
+              <th style={WRAP}>Poll answer</th>
+              <th className="num" style={WRAP}>Didn't come</th>
+              <th className="num" style={WRAP}>Under {FULL_SESSION_HOURS}&nbsp;h</th>
+              <th className="num" style={WRAP}>{FULL_SESSION_HOURS}&nbsp;h+</th>
+            </tr>
+          </thead>
           <tbody>
             {(['yes', 'no', 'none'] as const).map((answer) => (
               <tr key={answer}>
-                <td>{answer === 'yes' ? "Said they'd come" : answer === 'no' ? "Said they wouldn't" : "Didn't answer"}</td>
+                <td>{answer === 'yes' ? 'Yes' : answer === 'no' ? 'No' : 'No answer'}</td>
                 <td className="num">{POINTS[answer].none}</td>
                 <td className="num">{POINTS[answer].short}</td>
                 <td className="num">{POINTS[answer].full}</td>
@@ -200,7 +217,12 @@ function PointsRules() {
           </tbody>
         </table>
       </div>
-      <span className="note">Someone who checked in but never out gets no hours for that day until a mentor adds the check-out.</span>
+      <span className="note">If you checked in but never checked out, that day counts as not coming until a mentor adds your check-out.</span>
+      {props.onRequest && (
+        <span>
+          <button type="button" className="link-btn" onClick={props.onRequest}>Request missing attendance</button>
+        </span>
+      )}
     </Callout>
   )
 }
