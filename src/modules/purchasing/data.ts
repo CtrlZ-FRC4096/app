@@ -371,14 +371,25 @@ export function canOpenReceipts(user: Pick<User, 'role'> | null): boolean {
 type ReceiptFile = Pick<File, 'name' | 'type' | 'size'>
 
 /**
- * A file's type. Some browsers don't know .heic (from iPhones), so they
- * leave the type empty: then it goes by how the name ends.
+ * A file's type. Some browsers and phones leave it empty, or give a general
+ * one like application/octet-stream or a spelling like image/jpg: then it
+ * goes by how the name ends. Whatever comes back is one of RECEIPT_TYPES or
+ * empty, so a file is only ever saved as a type on that list.
  */
 export function receiptType(file: ReceiptFile): string {
-  if (file.type) return file.type
+  if (file.type in RECEIPT_TYPES) return file.type
   const ending = file.name.split('.').pop()?.toLowerCase()
   const known = Object.entries(RECEIPT_TYPES).find(([, e]) => e === (ending === 'jpeg' ? 'jpg' : ending))
   return known?.[0] ?? ''
+}
+
+/**
+ * The file to upload, labelled with its type. Supabase sends the type on the
+ * file itself and ignores the upload's contentType option, and the bucket
+ * refuses anything else, so a file with the wrong label has to be relabelled.
+ */
+export function receiptBody(file: Blob, content_type: string): Blob {
+  return file.slice(0, file.size, content_type)
 }
 
 /** Why a file can't be a receipt, or null if it can. */
@@ -416,7 +427,7 @@ export async function addReceipt(item: PurchaseItem, file: File): Promise<Result
   const content_type = receiptType(file)
   const path = `${item.id}/${crypto.randomUUID()}.${RECEIPT_TYPES[content_type]}`
   if (supabase) {
-    const { error } = await supabase.storage.from(RECEIPT_BUCKET).upload(path, file, { contentType: content_type, upsert: false })
+    const { error } = await supabase.storage.from(RECEIPT_BUCKET).upload(path, receiptBody(file, content_type), { upsert: false })
     if (error) return fail("Couldn't upload that receipt. Check your connection and try again.")
   }
   return receiptsTable.insert({ item_id: item.id, path, content_type, size_bytes: file.size })
