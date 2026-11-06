@@ -9,6 +9,7 @@ import {
   type NewPart, type Part,
 } from './data'
 import { itemsTable, type Item } from '../inventory/data'
+import { itemsTable as purchaseTable, type PurchaseItem } from '../purchasing/data'
 import {
   addStep, advance, changeDone, checkStep, moveBack, removeStep, stationName, stationQueue, stepName, stepsFor, stepsTable, type Step,
 } from './data'
@@ -42,35 +43,35 @@ describe('filterParts', () => {
     expect(filterParts(parts(), 'All')).toEqual(parts())
   })
 
-  it('keeps only made parts for Made, and only COTS parts for COTS', () => {
-    expect(filterParts(parts(), 'Made').every((p) => p.kind === 'made')).toBe(true)
+  it('keeps only custom parts for Custom, and only COTS parts for COTS', () => {
+    expect(filterParts(parts(), 'Custom').every((p) => p.kind === 'made')).toBe(true)
     expect(filterParts(parts(), 'COTS').every((p) => p.kind === 'cots')).toBe(true)
-    expect(filterParts(parts(), 'Made').length + filterParts(parts(), 'COTS').length).toBe(parts().length)
+    expect(filterParts(parts(), 'Custom').length + filterParts(parts(), 'COTS').length).toBe(parts().length)
   })
 })
 
 describe('countParts', () => {
   it('counts each part once, whatever its quantity', () => {
-    const [madePart] = filterParts(parts(), 'Made')
+    const [madePart] = filterParts(parts(), 'Custom')
     const [cotsPart] = filterParts(parts(), 'COTS')
     expect(countParts([madePart, cotsPart, { ...cotsPart, quantity: 100 } as Part])).toEqual({ made: 1, cots: 2 })
   })
 
   it('is zero for no parts', () => {
     expect(countParts([])).toEqual({ made: 0, cots: 0 })
-    expect(partCountText([])).toBe('0 made, 0 COTS')
+    expect(partCountText([])).toBe('0 custom, 0 COTS')
   })
 })
 
 describe('partCountText', () => {
-  it('reads like "5 made, 7 COTS"', () => {
-    expect(partCountText(parts())).toBe('5 made, 7 COTS')
+  it('reads like "5 custom, 7 COTS"', () => {
+    expect(partCountText(parts())).toBe('5 custom, 7 COTS')
   })
 })
 
 describe('kindLabel', () => {
   it('writes the kinds the way the team says them', () => {
-    expect(kindLabel('made')).toBe('Made')
+    expect(kindLabel('made')).toBe('Custom')
     expect(kindLabel('cots')).toBe('COTS')
   })
 })
@@ -308,7 +309,7 @@ describe('advance and moveBack', () => {
 
 describe('checkStep', () => {
   it('needs a made part, a stage it doesn\'t have yet, and a machine for process stages', () => {
-    expect(checkStep(part('Brushless motor'), 'design', null, [])).toMatch(/Only made parts/)
+    expect(checkStep(part('Brushless motor'), 'design', null, [])).toMatch(/Only custom parts/)
     expect(checkStep(part('Roller shaft'), 'pre', null, stepsOf('Roller shaft'))).toBe('Roller shaft already has Pre-process.')
     expect(checkStep(part('Roller shaft'), 'process2', null, stepsOf('Roller shaft'))).toBe('Pick the machine for Process 2.')
     expect(checkStep(part('Roller shaft'), 'process2', 'mill', stepsOf('Roller shaft'))).toBeNull()
@@ -393,27 +394,44 @@ describe('shelfItem and shelfText', () => {
   })
 
   it('finds nothing for made parts, or COTS parts with no vendor part number', () => {
-    expect(shelfItem(filterParts(parts(), 'Made')[0], [item({})])).toBeUndefined()
+    expect(shelfItem(filterParts(parts(), 'Custom')[0], [item({})])).toBeUndefined()
     expect(shelfItem(cotsPart({ vendor_part_number: null }), [item({ vendor_part_number: '' })])).toBeUndefined()
   })
 
-  it('says how many are on the shelf, where, and how many short', () => {
-    expect(shelfText(cotsPart({ quantity: 6 }), [item({ quantity: 4 })])).toEqual({ text: 'On the shelf: 4 · Bin M1', short: 2 })
-    expect(shelfText(cotsPart({ quantity: 3 }), [item({ quantity: 4 })])).toEqual({ text: 'On the shelf: 4 · Bin M1', short: 0 })
+  const request = (fields: Partial<PurchaseItem>) => ({ ...purchaseTable.rows()[0], quantity: 3, status: 'order', ...fields }) as PurchaseItem
+
+  it('says how many are on the shelf and where, and how many are missing', () => {
+    expect(shelfText(cotsPart({ quantity: 6 }), [item({ quantity: 4 })])).toBe('On the shelf: 4 · Bin M1 · Missing 2')
   })
 
-  it('counts a part not in Inventory as fully short', () => {
-    expect(shelfText(cotsPart({ quantity: 6 }), [])).toEqual({ text: 'Not in Inventory', short: 6 })
+  it("doesn't say anything is missing when there are enough", () => {
+    expect(shelfText(cotsPart({ quantity: 3 }), [item({ quantity: 4 })])).toBe('On the shelf: 4 · Bin M1')
+    expect(shelfText(cotsPart({ quantity: 4 }), [item({ quantity: 4 })])).toBe('On the shelf: 4 · Bin M1')
   })
 
-  it('shows nothing for made parts', () => {
-    expect(shelfText(filterParts(parts(), 'Made')[0], [item({})])).toBeNull()
+  it('counts a part not in Inventory as all missing', () => {
+    expect(shelfText(cotsPart({ quantity: 6 }), [])).toBe('Not in Inventory · Missing 6')
+  })
+
+  it('says how many are being ordered, instead of missing, when Purchasing has a request', () => {
+    expect(shelfText(cotsPart({ quantity: 3 }), [item({ quantity: 2 })], request({ quantity: 3 }))).toBe('On the shelf: 2 · Bin M1 · Ordering 3')
+    expect(shelfText(cotsPart({ quantity: 6 }), [], request({ quantity: 10, status: 'placed' }))).toBe('Not in Inventory · Ordering 10')
+  })
+
+  it('goes back to missing once the order has arrived or is cancelled', () => {
+    for (const status of ['received', 'in_shop', 'cancelled'] as const) {
+      expect(shelfText(cotsPart({ quantity: 6 }), [item({ quantity: 4 })], request({ status }))).toBe('On the shelf: 4 · Bin M1 · Missing 2')
+    }
+  })
+
+  it('shows nothing for custom parts', () => {
+    expect(shelfText(filterParts(parts(), 'Custom')[0], [item({})])).toBeNull()
   })
 
   it('matches the example Intake to the example Inventory', () => {
     const intake = parts().filter((p) => p.part_number.startsWith('4096-26-INT-'))
     const text = (name: string) => shelfText(intake.find((p) => p.name === name)!, itemsTable.rows())
-    expect(text('Compliant wheel, 2 in')).toEqual({ text: 'On the shelf: 12 · Bin M3', short: 0 })
-    expect(text('Flanged bearing, 1/2 in hex')).toEqual({ text: 'On the shelf: 4 · Bin M1', short: 2 })
+    expect(text('Compliant wheel, 2 in')).toBe('On the shelf: 12 · Bin M3')
+    expect(text('Flanged bearing, 1/2 in hex')).toBe('On the shelf: 4 · Bin M1 · Missing 2')
   })
 })

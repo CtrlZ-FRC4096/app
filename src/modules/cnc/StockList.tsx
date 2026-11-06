@@ -130,7 +130,7 @@ function ImportStock(props: { onDone: () => void }) {
   if (fromOnshape.length === 0) {
     return (
       <Panel title="Import stock from Onshape">
-        <p className="panel-body muted">No made parts in the BOM came from Onshape yet. Import a system from Onshape in the BOM first.</p>
+        <p className="panel-body muted">No custom parts in the BOM came from Onshape yet. Import a system from Onshape in the BOM first.</p>
         <div className="panel-body toolbar"><button type="button" className="btn" onClick={props.onDone}>Close</button></div>
       </Panel>
     )
@@ -141,7 +141,7 @@ function ImportStock(props: { onDone: () => void }) {
       <Panel title="Import stock from Onshape">
         <div className="panel-body" style={{ display: 'grid', gap: 8 }}>
           <span>
-            The stock comes from each made part's material and its thickness in Onshape.{' '}
+            The stock comes from each custom part's material and its thickness in Onshape.{' '}
             {plural(plan.unread.length, 'part hasn’t', 'parts haven’t')} been read from Onshape yet: {names(plan.unread.slice(0, 8))}
             {plan.unread.length > 8 && ` and ${plan.unread.length - 8} more`}.
           </span>

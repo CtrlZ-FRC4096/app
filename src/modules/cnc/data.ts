@@ -507,7 +507,7 @@ export function checkQuantity(quantity: number): string | null {
  * making another.
  */
 export async function addJob(part: Part, quantity: number, stockId: string | null, note = ''): Promise<Result<{ job: Job; added: boolean }>> {
-  if (part.kind !== 'made') return fail(`${part.name} is bought, not made, so it doesn't go on the CNC board.`)
+  if (part.kind !== 'made') return fail(`${part.name} is bought (COTS), not custom, so it doesn't go on the CNC board.`)
   const problem = checkQuantity(quantity)
   if (problem) return fail(problem)
   if (note.trim().length > 300) return fail(`Keep the note under 300 characters. This one is ${note.trim().length}.`)
@@ -586,7 +586,7 @@ export async function stockForPlate(material: PlateMaterial, thickness: number):
  * yet is added to it.
  */
 export async function markReadyToCam(part: Part, quantity: number, pick: CamStock, note = ''): Promise<Result<{ job: Job; added: boolean; stock: Stock | null }>> {
-  if (part.kind !== 'made') return fail(`${part.name} is bought, not made, so it doesn't go on the CNC board.`)
+  if (part.kind !== 'made') return fail(`${part.name} is bought (COTS), not custom, so it doesn't go on the CNC board.`)
   const problem = checkQuantity(quantity)
   if (problem) return fail(problem)
   let stock: Stock | null = null

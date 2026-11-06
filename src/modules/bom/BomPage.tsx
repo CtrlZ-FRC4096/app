@@ -188,11 +188,11 @@ export default function BomPage() {
                 ? `No parts in ${system.name} yet.`
                 : station.kind !== 'all'
                   ? `Nothing in ${system.name} is waiting for ${station.kind === 'machine' ? `the ${MACHINE_NAMES[station.machine]}` : STAGE_NAMES[station.stage].toLowerCase()}. Pick Every stage to see every part.`
-                  : `No ${kindLabel(filter === 'Made' ? 'made' : 'cots')} parts in ${system.name}. Pick All to see every part.`}
+                  : `No ${kindLabel(filter === 'Custom' ? 'made' : 'cots')} parts in ${system.name}. Pick All to see every part.`}
             </p>
           ) : (
             // Three columns, so the table fits on a phone. The revision and
-            // the Made / COTS pill sit under the part number, and the
+            // the Custom / COTS pill sit under the part number, and the
             // material (or vendor) under the name.
             <div className="table-wrap">
               <table>
@@ -235,7 +235,7 @@ export default function BomPage() {
                                 </span>
                               </>
                             )}
-                            {p.kind === 'cots' && !p.removed_in_onshape && <Shelf part={p} items={items} />}
+                            {p.kind === 'cots' && !p.removed_in_onshape && <Shelf part={p} items={items} request={requests.get(p.id)} />}
                             {p.kind === 'cots' && !p.removed_in_onshape && <PurchaseStatus part={p} request={requests.get(p.id)} />}
                           </td>
                           <td className="num" style={under}>{p.quantity}</td>
@@ -432,7 +432,7 @@ function SystemForm(props: {
   )
 }
 
-const KINDS: Record<string, PartKind> = { Made: 'made', COTS: 'cots' }
+const KINDS: Record<string, PartKind> = { Custom: 'made', COTS: 'cots' }
 
 /** The form for adding a part to one system, or changing one. `parts` are that system's parts. */
 function PartForm(props: { system: BomSystem; parts: Part[]; part: Part | null; onDone: () => void }) {
@@ -493,7 +493,7 @@ function PartForm(props: { system: BomSystem; parts: Part[]; part: Part | null; 
         {part?.onshape_id && (
           <p className="note">From Onshape: importing again sets its name, number, quantity and material back to what Onshape has. Change them in CAD to keep them.</p>
         )}
-        <Pick label="Made or COTS" options={Object.keys(KINDS)} value={kindLabel(kind)} onChange={(label) => setKind(KINDS[label])} />
+        <Pick label="Custom or COTS" options={Object.keys(KINDS)} value={kindLabel(kind)} onChange={(label) => setKind(KINDS[label])} />
         <label className="field" htmlFor="part-number">
           Part number
           <input id="part-number" className="input mono" value={shownPartNumber} onChange={(e) => setPartNumber(e.target.value)} />
@@ -600,15 +600,14 @@ function StationPicker(props: { value: Station; onChange: (station: Station) => 
   )
 }
 
-/** How many of a COTS part Inventory has and where, and whether that's enough for this line. */
-function Shelf(props: { part: Part; items: Item[] }) {
-  const shelf = shelfText(props.part, props.items)
-  if (!shelf) return null
+/** How many of a COTS part Inventory has and where, and how many are missing or being ordered. */
+function Shelf(props: { part: Part; items: Item[]; request: PurchaseItem | undefined }) {
+  const text = shelfText(props.part, props.items, props.request)
+  if (!text) return null
   return (
     <>
       <br />
-      <span className="note">{shelf.text}</span>{' '}
-      {shelf.short > 0 ? <Pill tone="warn">Short {shelf.short}</Pill> : <Pill tone="ok">Enough</Pill>}
+      <span className="note">{text}</span>
     </>
   )
 }

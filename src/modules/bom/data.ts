@@ -26,6 +26,7 @@ import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 import type { OnshapeBom, OnshapeImportPlan } from './onshape'
 import type { Item } from '../inventory/data'
+import type { PurchaseItem, StatusKey } from '../purchasing/data'
 
 /** One row of bom_robots. */
 export interface Robot extends Row {
@@ -46,7 +47,10 @@ export interface BomSystem extends Row {
   created_by: string | null
 }
 
-/** Made in our shop, or COTS (bought "commercial off the shelf"). */
+/**
+ * Custom (made in our shop), or COTS (bought "commercial off the shelf").
+ * The database stores custom parts as 'made'; the page calls them Custom.
+ */
 export type PartKind = 'made' | 'cots'
 
 /** One row of bom_parts. */
@@ -153,24 +157,24 @@ export function useParts(systemId: string | undefined): Part[] {
   return partsTable.useRows().filter((p) => p.system_id === systemId)
 }
 
-/** The choices in the page's Made / COTS filter. */
-export const PART_FILTERS = ['All', 'Made', 'COTS'] as const
+/** The choices in the page's Custom / COTS filter. */
+export const PART_FILTERS = ['All', 'Custom', 'COTS'] as const
 export type PartFilter = (typeof PART_FILTERS)[number]
 
 /** How a part's kind is written on the page. */
 export function kindLabel(kind: PartKind): string {
-  return kind === 'made' ? 'Made' : 'COTS'
+  return kind === 'made' ? 'Custom' : 'COTS'
 }
 
 /** Only the parts the filter asks for. */
 export function filterParts(parts: Part[], filter: PartFilter): Part[] {
-  if (filter === 'Made') return parts.filter((p) => p.kind === 'made')
+  if (filter === 'Custom') return parts.filter((p) => p.kind === 'made')
   if (filter === 'COTS') return parts.filter((p) => p.kind === 'cots')
   return parts
 }
 
 /**
- * How many parts are made and how many are COTS. Each part counts once,
+ * How many parts are custom and how many are COTS. Each part counts once,
  * whatever its quantity. Parts removed in Onshape don't count.
  */
 export function countParts(parts: Part[]): { made: number; cots: number } {
@@ -179,10 +183,10 @@ export function countParts(parts: Part[]): { made: number; cots: number } {
   return { made, cots: current.length - made }
 }
 
-/** Like "12 made, 31 COTS". */
+/** Like "12 custom, 31 COTS". */
 export function partCountText(parts: Part[]): string {
   const { made, cots } = countParts(parts)
-  return `${made} made, ${cots} COTS`
+  return `${made} custom, ${cots} COTS`
 }
 
 /** The start of this season's part numbers: team and year. */
@@ -224,15 +228,22 @@ export function shelfItem(part: Part, items: Item[]): Item | undefined {
   return found.find((item) => item.vendor.trim().toLowerCase() === vendor)
 }
 
+/** Purchasing statuses that mean the order is over: it arrived, or isn't happening. */
+const ORDER_OVER: StatusKey[] = ['received', 'in_shop', 'cancelled']
+
 /**
- * What the BOM shows under a COTS part about the shelf: how many Inventory
- * has and where, and how many short this line is. Null for made parts.
+ * What the BOM shows under a COTS part about the shelf, like
+ * "On the shelf: 2 · Bin B1 · Missing 1". If the part has a request in
+ * Purchasing that's still going, it says how many are being ordered
+ * instead: "On the shelf: 2 · Bin B1 · Ordering 3". Null for custom parts.
  */
-export function shelfText(part: Part, items: Item[]): { text: string; short: number } | null {
+export function shelfText(part: Part, items: Item[], request?: PurchaseItem): string | null {
   if (part.kind !== 'cots') return null
   const item = shelfItem(part, items)
-  if (!item) return { text: 'Not in Inventory', short: part.quantity }
-  return { text: `On the shelf: ${item.quantity} · ${item.location}`, short: Math.max(0, part.quantity - item.quantity) }
+  const shelf = item ? `On the shelf: ${item.quantity} · ${item.location}` : 'Not in Inventory'
+  if (request && !ORDER_OVER.includes(request.status)) return `${shelf} · Ordering ${request.quantity}`
+  const missing = part.quantity - (item?.quantity ?? 0)
+  return missing > 0 ? `${shelf} · Missing ${missing}` : shelf
 }
 
 // ---------------------------------------------------------------------------
@@ -534,7 +545,7 @@ export async function moveBack(step: Step): Promise<Result<Step>> {
 
 /** Why a part can't be given this stage, or null if it can. `steps` are the part's stages. */
 export function checkStep(part: Part, stage: Stage, machine: Machine | null, steps: Step[]): string | null {
-  if (part.kind !== 'made') return 'Only made parts have stages. COTS parts are bought ready.'
+  if (part.kind !== 'made') return 'Only custom parts have stages. COTS parts are bought ready.'
   if (steps.some((s) => s.stage === stage)) return `${part.name} already has ${STAGE_NAMES[stage]}.`
   if (isProcess(stage) && !machine) return `Pick the machine for ${STAGE_NAMES[stage]}.`
   return null
