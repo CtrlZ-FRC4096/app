@@ -38,8 +38,8 @@ The CNC board tracks routing separately (Ready to CAM → To cut → Cutting →
 
 Under each COTS part, the page shows what Inventory has, in plain text: "On the shelf: 4 · Bin M1", or "Not in Inventory". Then either:
 
-- **"Ordering 3"** when the part has a request in Purchasing that's still going, with the quantity on that request; or
-- **"Missing 2"** when there's no request (or it arrived or was cancelled) and the shelf has fewer than the line needs. Nothing is added when there are enough.
+- the quantity on the part's request in Purchasing, with how far along it is (`orderWord()`): **"Ordering 3"** while it's still being asked for (Wait to Order and the Order statuses), **"Ordered 3"** once it's placed (Order Placed, Backordered), and **"Received 3"** once it's Received or In Shop; or
+- **"Missing 2"** when there's no request, or it was cancelled or is Out of Stock (so it couldn't be ordered), and the shelf has fewer than the line needs. Nothing is added when there are enough.
 
  `shelfItem()` in `data.ts` finds the Inventory part with the same **vendor part number**, ignoring capitals and spaces. Vendor names only decide when two Inventory parts have the same number, because the team writes them differently ("REV" and "REV Robotics"). Missing compares the shelf with that one line's quantity. It doesn't yet add up the same part used in more than one system (#17).
 

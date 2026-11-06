@@ -5,11 +5,11 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { setDemoRole } from '../../core/demo'
 import {
   addPart, addRobot, addSystem, bomSummary, changePart, changeSystem, checkPart, checkSystem, countParts, filterParts, kindLabel,
-  nextPartNumber, partCountText, partsTable, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, systemsTable,
+  nextPartNumber, partCountText, partsTable, orderWord, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, systemsTable,
   type NewPart, type Part,
 } from './data'
 import { itemsTable, type Item } from '../inventory/data'
-import { itemsTable as purchaseTable, type PurchaseItem } from '../purchasing/data'
+import { STATUSES, itemsTable as purchaseTable, type PurchaseItem } from '../purchasing/data'
 import {
   addStep, advance, changeDone, checkStep, moveBack, removeStep, stationName, stationQueue, stepName, stepsFor, stepsTable, type Step,
 } from './data'
@@ -413,15 +413,32 @@ describe('shelfItem and shelfText', () => {
     expect(shelfText(cotsPart({ quantity: 6 }), [])).toBe('Not in Inventory · Missing 6')
   })
 
-  it('says how many are being ordered, instead of missing, when Purchasing has a request', () => {
-    expect(shelfText(cotsPart({ quantity: 3 }), [item({ quantity: 2 })], request({ quantity: 3 }))).toBe('On the shelf: 2 · Bin M1 · Ordering 3')
-    expect(shelfText(cotsPart({ quantity: 6 }), [], request({ quantity: 10, status: 'placed' }))).toBe('Not in Inventory · Ordering 10')
+  it('says Ordering, with the quantity on the request, while it is still being asked for', () => {
+    for (const status of ['wait', 'order_low', 'order', 'order_high'] as const) {
+      expect(shelfText(cotsPart({ quantity: 3 }), [item({ quantity: 2 })], request({ quantity: 3, status }))).toBe('On the shelf: 2 · Bin M1 · Ordering 3')
+    }
   })
 
-  it('goes back to missing once the order has arrived or is cancelled', () => {
-    for (const status of ['received', 'in_shop', 'cancelled'] as const) {
+  it('says Ordered once the order is placed or backordered', () => {
+    for (const status of ['placed', 'backordered'] as const) {
+      expect(shelfText(cotsPart({ quantity: 6 }), [], request({ quantity: 10, status }))).toBe('Not in Inventory · Ordered 10')
+    }
+  })
+
+  it('says Received once it has arrived or is in the shop, not Missing', () => {
+    for (const status of ['received', 'in_shop'] as const) {
+      expect(shelfText(cotsPart({ quantity: 4 }), [], request({ quantity: 4, status }))).toBe('Not in Inventory · Received 4')
+    }
+  })
+
+  it("says Missing when the request is cancelled, or out of stock so it couldn't be ordered", () => {
+    for (const status of ['cancelled', 'out_of_stock'] as const) {
       expect(shelfText(cotsPart({ quantity: 6 }), [item({ quantity: 4 })], request({ status }))).toBe('On the shelf: 4 · Bin M1 · Missing 2')
     }
+  })
+
+  it('has a word for every status', () => {
+    expect(STATUSES.map((s) => orderWord(s.key))).toEqual(['Ordering', 'Ordering', 'Ordering', 'Ordering', 'Ordered', null, 'Ordered', 'Received', 'Received', null])
   })
 
   it('shows nothing for custom parts', () => {

@@ -26,7 +26,7 @@ import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 import type { OnshapeBom, OnshapeImportPlan } from './onshape'
 import type { Item } from '../inventory/data'
-import type { PurchaseItem, StatusKey } from '../purchasing/data'
+import { isAsking, type PurchaseItem, type StatusKey } from '../purchasing/data'
 
 /** One row of bom_robots. */
 export interface Robot extends Row {
@@ -228,20 +228,30 @@ export function shelfItem(part: Part, items: Item[]): Item | undefined {
   return found.find((item) => item.vendor.trim().toLowerCase() === vendor)
 }
 
-/** Purchasing statuses that mean the order is over: it arrived, or isn't happening. */
-const ORDER_OVER: StatusKey[] = ['received', 'in_shop', 'cancelled']
+/**
+ * How far along a Purchasing request is, in a word: Ordering while it's
+ * still being asked for, Ordered once it's placed (including Backordered),
+ * and Received once it's arrived or in the shop. Null when it's cancelled,
+ * or Out of Stock (the order couldn't be placed), so the BOM says Missing.
+ */
+export function orderWord(status: StatusKey): 'Ordering' | 'Ordered' | 'Received' | null {
+  if (status === 'cancelled' || status === 'out_of_stock') return null
+  if (status === 'received' || status === 'in_shop') return 'Received'
+  return isAsking(status) ? 'Ordering' : 'Ordered'
+}
 
 /**
  * What the BOM shows under a COTS part about the shelf, like
  * "On the shelf: 2 · Bin B1 · Missing 1". If the part has a request in
- * Purchasing that's still going, it says how many are being ordered
- * instead: "On the shelf: 2 · Bin B1 · Ordering 3". Null for custom parts.
+ * Purchasing, it says how many are on that request and how far along it is
+ * instead: "Ordering 3", "Ordered 3" or "Received 3". Null for custom parts.
  */
 export function shelfText(part: Part, items: Item[], request?: PurchaseItem): string | null {
   if (part.kind !== 'cots') return null
   const item = shelfItem(part, items)
   const shelf = item ? `On the shelf: ${item.quantity} · ${item.location}` : 'Not in Inventory'
-  if (request && !ORDER_OVER.includes(request.status)) return `${shelf} · Ordering ${request.quantity}`
+  const word = request && orderWord(request.status)
+  if (request && word) return `${shelf} · ${word} ${request.quantity}`
   const missing = part.quantity - (item?.quantity ?? 0)
   return missing > 0 ? `${shelf} · Missing ${missing}` : shelf
 }
