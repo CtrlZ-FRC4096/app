@@ -40,6 +40,7 @@ import {
   isCurrent,
   itemToForm,
   itemsTable,
+  receiptBody,
   receiptCountText,
   receiptLink,
   receiptText,
@@ -553,6 +554,25 @@ describe('receipts', () => {
   it('works out the type of an iPhone photo when the browser leaves it empty', () => {
     expect(receiptType({ ...pdf, name: 'IMG_0001.HEIC', type: '' })).toBe('image/heic')
     expect(receiptType({ ...pdf, name: 'scan.jpeg', type: '' })).toBe('image/jpeg')
+  })
+
+  it('goes by the ending when the type is a general one or another spelling', () => {
+    expect(receiptType({ ...pdf, name: 'order.pdf', type: 'application/octet-stream' })).toBe('application/pdf')
+    expect(receiptType({ ...pdf, name: 'IMG_0001.HEIC', type: 'application/octet-stream' })).toBe('image/heic')
+    expect(receiptType({ ...pdf, name: 'order.pdf', type: 'application/x-pdf' })).toBe('application/pdf')
+    expect(receiptType({ ...pdf, name: 'photo.jpg', type: 'image/jpg' })).toBe('image/jpeg')
+  })
+
+  it('still refuses a file whose type and ending are both not allowed', () => {
+    expect(checkReceipt({ ...pdf, name: 'photo.svg', type: 'application/octet-stream' })).toMatch(/PDF or a photo/)
+  })
+
+  it('labels the file to upload with its type, keeping what is in it', async () => {
+    const file = new File(['receipt'], 'IMG_0001.HEIC', { type: '' })
+    const body = receiptBody(file, 'image/heic')
+    expect(body.type).toBe('image/heic')
+    expect(body.size).toBe(file.size)
+    expect(await body.text()).toBe('receipt')
   })
 
   it('describes a receipt without its file name', () => {
