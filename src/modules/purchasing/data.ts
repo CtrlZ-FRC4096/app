@@ -12,13 +12,18 @@
  * database's rules are in supabase/migrations/..._purchase_items.sql and
  * ..._purchasing_orders.sql; the checks here only give a clearer message.
  *
- * Dates, tracking, prices, importing the Slack list and receipts come in
- * later steps: see issue #66.
+ * Receipts (#79) are files in a private storage bucket. Only mentors and
+ * admins open them, mentors and purchasers add them, and everyone can see
+ * that an item has one. See supabase/migrations/..._purchase_receipts.sql.
+ *
+ * Dates, tracking, prices and importing the Slack list come in later steps:
+ * see issue #66.
  */
-import { createTable, fail, newestFirst, type Fields, type Result, type Row } from '../../core/table'
+import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { currentUser, isMentor, useSession, type User } from '../../core/session'
-import { isLive } from '../../core/supabase'
+import { isLive, supabase } from '../../core/supabase'
+import { plural } from '../../core/format'
 import type { Notice, Tone } from '../../core/registry'
 import type { BomSystem, Part } from '../bom/data'
 
@@ -293,6 +298,151 @@ export async function removeBuyer(buyer: Buyer): Promise<Result> {
 }
 
 // ---------------------------------------------------------------------------
+// Receipts (#79): a PDF or photo of a receipt, on an item.
+//
+// Each receipt is a file in the private purchase-receipts bucket, and a row
+// in purchase_receipts, which is how everyone can see that an item has one.
+// Who can do what is in supabase/migrations/..._purchase_receipts.sql: the
+// checks here only give a clearer message. Demo mode has no file storage, so
+// there it only saves the row.
+
+const RECEIPT_BUCKET = 'purchase-receipts'
+
+/** The file types allowed, and how each file's name ends. The database has the same list. */
+const RECEIPT_TYPES: Record<string, string> = {
+  'application/pdf': 'pdf',
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+}
+
+/**
+ * What the file picker offers. There's no `capture`, so a phone or tablet
+ * offers the camera as well as files. It's only a hint: checkReceipt() and
+ * the bucket are what refuse other kinds of file.
+ */
+export const RECEIPT_ACCEPT = 'application/pdf,image/*'
+
+/** The database and the bucket have the same limit. */
+export const MAX_RECEIPT_BYTES = 10 * 1024 * 1024
+
+/** How long a link to a receipt works, in seconds. Enough to open it, not to pass it around. */
+export const RECEIPT_LINK_SECONDS = 60
+
+/** One row of purchase_receipts. It doesn't hold the file, or the file's own name. */
+export interface Receipt extends Row {
+  item_id: string
+  /** Where the file is in the bucket: the item's id, then a random id. */
+  path: string
+  content_type: string
+  size_bytes: number
+  /** Who added it. */
+  created_by: string | null
+}
+
+// Made up, for the example Motor controller (the 7th item) and Polycarbonate sheet (the 8th).
+const exampleReceipt = (n: number, itemNumber: number, content_type: string, ending: string, size_bytes: number, created_at: string): Receipt => {
+  const item_id = `00000000-0000-4000-8000-0000000c000${itemNumber}`
+  const id = `00000000-0000-4000-8000-0000000c030${n}`
+  return { id, item_id, path: `${item_id}/${id}.${ending}`, content_type, size_bytes, created_at, created_by: DEMO_PEOPLE.pat }
+}
+
+const EXAMPLE_RECEIPTS: Receipt[] = [
+  exampleReceipt(1, 8, 'application/pdf', 'pdf', 184_000, '2026-10-21T15:10:00Z'),
+  exampleReceipt(2, 7, 'application/pdf', 'pdf', 96_000, '2026-10-22T14:00:00Z'),
+  exampleReceipt(3, 7, 'image/jpeg', 'jpg', 2_400_000, '2026-10-28T19:30:00Z'),
+]
+
+export const receiptsTable = createTable<Receipt>('purchase_receipts', { demo: EXAMPLE_RECEIPTS })
+
+/** An item's receipts, oldest first. */
+export function useReceipts(itemId: string): Receipt[] {
+  return receiptsTable.useRows().filter((r) => r.item_id === itemId)
+}
+
+/** Mentors and admins open and delete receipts. Purchasers can only add them. */
+export function canOpenReceipts(user: Pick<User, 'role'> | null): boolean {
+  return !!user && isMentor(user.role)
+}
+
+/** The parts of a file that matter here. A real File has them. */
+type ReceiptFile = Pick<File, 'name' | 'type' | 'size'>
+
+/**
+ * A file's type. Some browsers don't know .heic (from iPhones), so they
+ * leave the type empty: then it goes by how the name ends.
+ */
+export function receiptType(file: ReceiptFile): string {
+  if (file.type) return file.type
+  const ending = file.name.split('.').pop()?.toLowerCase()
+  const known = Object.entries(RECEIPT_TYPES).find(([, e]) => e === (ending === 'jpeg' ? 'jpg' : ending))
+  return known?.[0] ?? ''
+}
+
+/** Why a file can't be a receipt, or null if it can. */
+export function checkReceipt(file: ReceiptFile): string | null {
+  if (!(receiptType(file) in RECEIPT_TYPES)) return 'A receipt has to be a PDF or a photo (JPEG, PNG, WebP or HEIC).'
+  if (file.size === 0) return "That file is empty. Try saving it again."
+  if (file.size > MAX_RECEIPT_BYTES) return `That file is ${sizeText(file.size)}, and a receipt can be up to 10 MB. Try a smaller photo, or a PDF of just the receipt.`
+  return null
+}
+
+/** "240 KB" or "2.4 MB". */
+export function sizeText(bytes: number): string {
+  return bytes < 1_000_000 ? `${Math.max(1, Math.round(bytes / 1000))} KB` : `${(bytes / 1_000_000).toFixed(1)} MB`
+}
+
+/** "PDF, 240 KB" or "Photo, 2.4 MB". */
+export function receiptText(receipt: Receipt): string {
+  return `${receipt.content_type === 'application/pdf' ? 'PDF' : 'Photo'}, ${sizeText(receipt.size_bytes)}`
+}
+
+/** "2 receipts", for an item in the list. Empty when it has none. */
+export function receiptCountText(count: number): string {
+  return count > 0 ? plural(count, 'receipt', 'receipts') : ''
+}
+
+/**
+ * Add a receipt to an item: the file first, then the row. If the row fails
+ * the file stays with nothing pointing at it, but that's better the other
+ * way round, where the list would say there's a receipt that isn't there.
+ */
+export async function addReceipt(item: PurchaseItem, file: File): Promise<Result<Receipt>> {
+  if (!canOrder(currentUser(), buyersTable.rows())) return fail('Only mentors and purchasers add receipts. Ask one of them: they\'re listed at the bottom of this page.')
+  const problem = checkReceipt(file)
+  if (problem) return fail(problem)
+  const content_type = receiptType(file)
+  const path = `${item.id}/${crypto.randomUUID()}.${RECEIPT_TYPES[content_type]}`
+  if (supabase) {
+    const { error } = await supabase.storage.from(RECEIPT_BUCKET).upload(path, file, { contentType: content_type, upsert: false })
+    if (error) return fail("Couldn't upload that receipt. Check your connection and try again.")
+  }
+  return receiptsTable.insert({ item_id: item.id, path, content_type, size_bytes: file.size })
+}
+
+/** A link to a receipt that stops working soon. Mentors and admins only. */
+export async function receiptLink(receipt: Receipt): Promise<Result<string>> {
+  if (!canOpenReceipts(currentUser())) return fail('Only mentors can open receipts.')
+  if (!supabase) return fail('Demo mode: there are no files. On the live site, this opens the receipt.')
+  const { data, error } = await supabase.storage.from(RECEIPT_BUCKET).createSignedUrl(receipt.path, RECEIPT_LINK_SECONDS)
+  return error || !data ? fail("Couldn't open that receipt. Try again.") : ok(data.signedUrl)
+}
+
+/** Delete a receipt and its file. Mentors and admins only. */
+export async function removeReceipt(receipt: Receipt): Promise<Result> {
+  if (!canOpenReceipts(currentUser())) return fail('Only mentors can delete receipts.')
+  // The file first: if the row went first and this failed, the file would
+  // stay with nothing pointing at it. Trying again is safe.
+  if (supabase) {
+    const { error } = await supabase.storage.from(RECEIPT_BUCKET).remove([receipt.path])
+    if (error) return fail("Couldn't delete that receipt. Try again.")
+  }
+  return receiptsTable.remove(receipt.id)
+}
+
+// ---------------------------------------------------------------------------
 // The views: the same ones as the Slack list.
 
 export const VIEWS = ['Current', 'All', 'By status', 'By vendor'] as const
@@ -522,6 +672,10 @@ export async function changeItem(item: PurchaseItem, changes: NewItem): Promise<
 export async function removeItem(item: PurchaseItem): Promise<Result> {
   if (!isAsking(item.status) && !canOrder(currentUser(), buyersTable.rows())) {
     return fail('Only mentors and purchasers can delete an order. To stop it, ask one of them to cancel it.')
+  }
+  // The database refuses too: a receipt is a record of what was spent.
+  if (receiptsTable.rows().some((r) => r.item_id === item.id)) {
+    return fail('This item has a receipt, so it can\'t be deleted. A mentor needs to delete the receipt first.')
   }
   return itemsTable.remove(item.id)
 }

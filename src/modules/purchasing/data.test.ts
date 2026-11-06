@@ -1,25 +1,31 @@
 // Tests for data.ts. Run them with `npm test`.
 // They run in demo mode, starting from the example items, as the made-up
 // student Alex. Who is allowed to do what is the database's job: that's
-// tested in supabase/tests/purchase-items.test.ts and purchasing-orders.test.ts.
+// tested in supabase/tests/purchase-items.test.ts, purchasing-orders.test.ts
+// and purchase-receipts.test.ts.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import {
   EMPTY_ITEM,
   MAX_NAME_LENGTH,
   MAX_QUANTITY,
+  MAX_RECEIPT_BYTES,
+  RECEIPT_ACCEPT,
   STATUSES,
   TYPES,
   VENDORS,
   addBuyer,
   addItem,
   arrivalText,
+  addReceipt,
   buyersTable,
+  canOpenReceipts,
   canOrder,
   changeItem,
   checkItem,
   orderFieldsShown,
   pickStatus,
+  checkReceipt,
   choices,
   dayText,
   duplicateItem,
@@ -34,7 +40,14 @@ import {
   isCurrent,
   itemToForm,
   itemsTable,
+  receiptCountText,
+  receiptLink,
+  receiptText,
+  receiptType,
+  receiptsTable,
   removeItem,
+  removeReceipt,
+  sizeText,
   statusOf,
   summaryText,
   today,
@@ -44,6 +57,7 @@ import {
 beforeEach(() => {
   itemsTable.reset()
   buyersTable.reset()
+  receiptsTable.reset()
 })
 
 afterEach(() => setDemoRole('student'))
@@ -498,5 +512,125 @@ describe('pickStatus', () => {
     expect(pickStatus(itemToForm(asked()), 'order_high', asked(), me)).toEqual({ status: 'order_high' })
     const placed = find('Timing belt, 60T')
     expect(pickStatus(itemToForm(placed), 'received', placed, me)).toEqual({ status: 'received' })
+  })
+})
+
+describe('receipts', () => {
+  const pdf = { name: 'order.pdf', type: 'application/pdf', size: 1000 }
+  const receiptFile = () => new File(['receipt'], 'my card order.pdf', { type: 'application/pdf' })
+  const receiptsOf = (item: PurchaseItem) => receiptsTable.rows().filter((r) => r.item_id === item.id)
+
+  describe('checkReceipt', () => {
+    it('takes PDFs and photos, up to 10 MB', () => {
+      expect(checkReceipt(pdf)).toBeNull()
+      expect(checkReceipt({ ...pdf, name: 'photo.jpg', type: 'image/jpeg' })).toBeNull()
+      expect(checkReceipt({ ...pdf, name: 'photo.heic', type: 'image/heic' })).toBeNull()
+      expect(checkReceipt({ ...pdf, size: MAX_RECEIPT_BYTES })).toBeNull()
+    })
+
+    it('says how big a file is when it is too big', () => {
+      expect(checkReceipt({ ...pdf, size: 12_300_000 })).toMatch(/12\.3 MB.*up to 10 MB/)
+    })
+
+    it('refuses other kinds of file and says what it takes', () => {
+      expect(checkReceipt({ ...pdf, name: 'list.docx', type: 'application/msword' })).toMatch(/PDF or a photo/)
+      expect(checkReceipt({ ...pdf, name: 'no-idea', type: '' })).toMatch(/PDF or a photo/)
+    })
+
+    it('refuses SVG images, which can run code when opened', () => {
+      expect(checkReceipt({ ...pdf, name: 'photo.svg', type: 'image/svg+xml' })).toMatch(/PDF or a photo/)
+    })
+
+    it('refuses an empty file', () => {
+      expect(checkReceipt({ ...pdf, size: 0 })).toMatch(/empty/)
+    })
+  })
+
+  it('offers the camera on phones: PDFs and images, with no capture', () => {
+    expect(RECEIPT_ACCEPT).toBe('application/pdf,image/*')
+  })
+
+  it('works out the type of an iPhone photo when the browser leaves it empty', () => {
+    expect(receiptType({ ...pdf, name: 'IMG_0001.HEIC', type: '' })).toBe('image/heic')
+    expect(receiptType({ ...pdf, name: 'scan.jpeg', type: '' })).toBe('image/jpeg')
+  })
+
+  it('describes a receipt without its file name', () => {
+    expect(sizeText(240_000)).toBe('240 KB')
+    expect(sizeText(2_400_000)).toBe('2.4 MB')
+    expect(sizeText(10)).toBe('1 KB')
+    expect(receiptText(receiptsOf(find('Motor controller'))[0])).toBe('PDF, 96 KB')
+    expect(receiptText(receiptsOf(find('Motor controller'))[1])).toBe('Photo, 2.4 MB')
+  })
+
+  it('counts them for the list, and says nothing when there are none', () => {
+    expect(receiptCountText(0)).toBe('')
+    expect(receiptCountText(1)).toBe('1 receipt')
+    expect(receiptCountText(2)).toBe('2 receipts')
+  })
+
+  describe('addReceipt', () => {
+    it('adds receipts for a mentor, more than one per item', async () => {
+      setDemoRole('mentor')
+      const item = find('Timing belt, 60T')
+      expect((await addReceipt(item, receiptFile())).ok).toBe(true)
+      expect((await addReceipt(item, receiptFile())).ok).toBe(true)
+      expect(receiptsOf(item)).toHaveLength(2)
+    })
+
+    it('adds a receipt for a purchaser, in the item\'s folder, without the file\'s own name', async () => {
+      await buyersTable.insert({ member_id: DEMO_PEOPLE.alex })
+      const item = find('Timing belt, 60T')
+      const result = await addReceipt(item, receiptFile())
+      expect(result.ok && result.value.path).toMatch(new RegExp(`^${item.id}/[0-9a-f-]{36}\\.pdf$`))
+      expect(result.ok && result.value.created_by).toBe(DEMO_PEOPLE.alex)
+    })
+
+    it('refuses a student', async () => {
+      const item = find('Timing belt, 60T')
+      expect((await addReceipt(item, receiptFile())).ok).toBe(false)
+      expect(receiptsOf(item)).toHaveLength(0)
+    })
+
+    it('refuses a file that is not a receipt', async () => {
+      setDemoRole('mentor')
+      const item = find('Timing belt, 60T')
+      const result = await addReceipt(item, new File(['<svg/>'], 'a.svg', { type: 'image/svg+xml' }))
+      expect(result.ok).toBe(false)
+      expect(receiptsOf(item)).toHaveLength(0)
+    })
+  })
+
+  it('can only be opened by mentors and admins', async () => {
+    expect(canOpenReceipts({ role: 'student' })).toBe(false)
+    expect(canOpenReceipts({ role: 'mentor' })).toBe(true)
+    expect(canOpenReceipts({ role: 'admin' })).toBe(true)
+    expect(canOpenReceipts(null)).toBe(false)
+    const [receipt] = receiptsTable.rows()
+    expect(await receiptLink(receipt)).toEqual({ ok: false, error: 'Only mentors can open receipts.' })
+  })
+
+  it('says there are no files in demo mode, for a mentor', async () => {
+    setDemoRole('mentor')
+    expect(await receiptLink(receiptsTable.rows()[0])).toMatchObject({ ok: false, error: expect.stringMatching(/^Demo mode/) })
+  })
+
+  it('can only be deleted by mentors and admins', async () => {
+    const [receipt] = receiptsTable.rows()
+    await buyersTable.insert({ member_id: DEMO_PEOPLE.alex })
+    expect((await removeReceipt(receipt)).ok).toBe(false)
+    expect(receiptsTable.rows()).toHaveLength(3)
+    setDemoRole('mentor')
+    expect((await removeReceipt(receipt)).ok).toBe(true)
+    expect(receiptsTable.rows()).toHaveLength(2)
+  })
+
+  it('stop an item being deleted until a mentor deletes them', async () => {
+    setDemoRole('mentor')
+    const item = find('Polycarbonate sheet, 1/8 in')
+    expect(await removeItem(item)).toMatchObject({ ok: false, error: expect.stringMatching(/mentor needs to delete the receipt/) })
+    const [receipt] = receiptsOf(item)
+    await removeReceipt(receipt)
+    expect((await removeItem(item)).ok).toBe(true)
   })
 })

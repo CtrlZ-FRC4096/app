@@ -70,3 +70,32 @@ grant execute on function auth.uid(), auth.role(), auth.jwt() to anon, authentic
 
 -- Supabase's live updates read changes from this publication.
 create publication supabase_realtime;
+
+-- File storage. Supabase keeps a row in storage.objects for each file, and
+-- checks the rules on that table before it hands over, adds or deletes one.
+-- Like in Supabase, signed-in people have access to the table itself, so
+-- the rules (policies) are what protect the files. The files aren't here.
+create schema storage;
+grant usage on schema storage to anon, authenticated, service_role;
+
+create table storage.buckets (
+  id text primary key,
+  name text not null unique,
+  public boolean default false,
+  file_size_limit bigint,
+  allowed_mime_types text[],
+  created_at timestamptz default now()
+);
+
+create table storage.objects (
+  id uuid primary key default gen_random_uuid(),
+  bucket_id text references storage.buckets (id),
+  name text,
+  owner_id text,
+  created_at timestamptz default now(),
+  unique (bucket_id, name)
+);
+
+alter table storage.buckets enable row level security;
+alter table storage.objects enable row level security;
+grant all on table storage.buckets, storage.objects to anon, authenticated, service_role;
