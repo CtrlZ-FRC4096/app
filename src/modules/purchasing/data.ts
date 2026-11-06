@@ -163,9 +163,10 @@ function example(
   }
 }
 
-// The example BOM parts (src/modules/bom/data.ts) two of these were asked for from.
+// The example BOM parts (src/modules/bom/data.ts) three of these were asked for from.
 const BOM_BRUSHLESS_MOTOR = '00000000-0000-4000-8000-0000000b1004'
 const BOM_COMPLIANT_WHEEL = '00000000-0000-4000-8000-0000000b1005'
+const BOM_ABSOLUTE_ENCODER = '00000000-0000-4000-8000-0000000b1011'
 // Ordered by a made-up mentor, and shipped to the shop through them.
 const ORDERED = { ordered_by: DEMO_PEOPLE.pat, shipped_to: DEMO_PEOPLE.pat }
 
@@ -179,6 +180,8 @@ const EXAMPLE_ITEMS: PurchaseItem[] = [
   example({ name: 'Hex bearing, 1/2 in', status: 'backordered', vendor: 'Andy Mark', type: 'Hardware', part_number: 'EXAMPLE-HB-12', quantity: 12, requested_by: DEMO_PEOPLE.alex, ...ORDERED, estimated_arrival: '2026-11-01' }, '2026-10-22T23:15:00Z'),
   example({ name: 'Motor controller', status: 'received', vendor: 'CTRE', type: 'Electrical', part_number: 'EXAMPLE-MC-1', quantity: 1, requested_by: DEMO_PEOPLE.pat, ...ORDERED }, '2026-10-21T17:00:00Z'),
   example({ name: 'Polycarbonate sheet, 1/8 in', status: 'in_shop', vendor: 'McMaster', type: 'Mechanical', part_number: 'EXAMPLE-PC-18', quantity: 1, requested_by: DEMO_PEOPLE.jordan, ...ORDERED }, '2026-10-20T18:30:00Z'),
+  // In the shop already, so the BOM's Drivetrain shows a part that arrived.
+  example({ name: 'Absolute encoder', status: 'in_shop', vendor: 'CTRE', type: 'Drive Base', part_number: 'EXAMPLE-ENC-1', quantity: 4, requested_by: DEMO_PEOPLE.sam, ...ORDERED, bom_part_id: BOM_ABSOLUTE_ENCODER }, '2026-10-19T17:30:00Z'),
   example({ name: 'Field tape, 2 in', status: 'cancelled', vendor: 'Other', type: 'Field', part_number: null, quantity: 3, requested_by: DEMO_PEOPLE.alex, notes: 'Found some in the storage room.' }, '2026-10-18T16:00:00Z'),
 ]
 

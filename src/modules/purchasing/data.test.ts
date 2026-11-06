@@ -105,7 +105,7 @@ describe('groupItems', () => {
 
   it('All: everything, newest first, under one heading', () => {
     const [all] = groupItems(itemsTable.rows(), 'All')
-    expect(all.items).toHaveLength(9)
+    expect(all.items).toHaveLength(10)
     expect(all.items[0].name).toBe('Compliant wheel, 2 in')
   })
 
@@ -114,7 +114,7 @@ describe('groupItems', () => {
     expect(groups[0].title).toBe('Wait to Order')
     expect(groups.at(-1)!.title).toBe('Cancel Item')
     expect(groups.map((g) => g.title)).not.toContain('Out of Stock')
-    expect(groups.flatMap((g) => g.items)).toHaveLength(9)
+    expect(groups.flatMap((g) => g.items)).toHaveLength(10)
   })
 
   it('By vendor: in the order of the vendor list, with vendors no longer listed at the end', () => {
@@ -201,7 +201,7 @@ describe('addItem', () => {
 
   it('refuses an item without a name and says why', async () => {
     expect((await addItem(EMPTY_ITEM)).ok).toBe(false)
-    expect(itemsTable.rows()).toHaveLength(9)
+    expect(itemsTable.rows()).toHaveLength(10)
   })
 })
 
@@ -227,7 +227,7 @@ describe('changeItem', () => {
 describe('removeItem', () => {
   it('deletes only that item', async () => {
     expect(await removeItem(find('Ethernet cables, 5 ft (10 pack)'))).toEqual({ ok: true, value: null })
-    expect(itemsTable.rows()).toHaveLength(8)
+    expect(itemsTable.rows()).toHaveLength(9)
   })
 
   it('says so if the item is already gone', async () => {
@@ -251,7 +251,7 @@ describe('searchItems', () => {
   })
 
   it('matches everything when the search is empty, and nothing when nothing matches', () => {
-    expect(searchItems(itemsTable.rows(), '  ')).toHaveLength(9)
+    expect(searchItems(itemsTable.rows(), '  ')).toHaveLength(10)
     expect(searchItems(itemsTable.rows(), 'unobtainium')).toEqual([])
   })
 })
