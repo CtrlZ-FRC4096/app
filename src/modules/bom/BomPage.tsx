@@ -6,7 +6,7 @@ import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
 import {
   PART_FILTERS, addPart, addRobot, addSystem, applyOnshapeImport, changePart, changeSystem, filterParts, getOnshapeBom, kindLabel,
-  nextPartNumber, partCountText, removePart, removeSystem, renameRobot, useParts, useRobots, useSystems,
+  nextPartNumber, partCountText, removePart, removeSystem, renameRobot, shelfText, useParts, useRobots, useSystems,
   type BomSystem, type Part, type PartFilter, type PartKind, type Robot,
 } from './data'
 import {
@@ -15,6 +15,7 @@ import {
 } from './data'
 import { planImport, type OnshapeImportPlan } from './onshape'
 import { href } from '../../core/router'
+import { useItems, type Item } from '../inventory/data'
 import { arrivalText, isLate, statusOf, useRequestsByBomPart, type PurchaseItem } from '../purchasing/data'
 import { camStockFor, markReadyToCam, shapesTable, useOnBoard, useStock, type CamStock } from '../cnc/data'
 // The CNC module's material and thickness picker, so flagging a part looks the same here and on the CNC board.
@@ -60,6 +61,8 @@ export default function BomPage() {
   const onBoard = useOnBoard()
   // Each COTS part's request in Purchasing, if it has one.
   const requests = useRequestsByBomPart()
+  // Inventory's parts, to show how many of each COTS part are on the shelf.
+  const items = useItems()
 
   async function readOnshape(s: BomSystem) {
     setReading(true)
@@ -232,6 +235,7 @@ export default function BomPage() {
                                 </span>
                               </>
                             )}
+                            {p.kind === 'cots' && !p.removed_in_onshape && <Shelf part={p} items={items} />}
                             {p.kind === 'cots' && !p.removed_in_onshape && <PurchaseStatus part={p} request={requests.get(p.id)} />}
                           </td>
                           <td className="num" style={under}>{p.quantity}</td>
@@ -593,6 +597,19 @@ function StationPicker(props: { value: Station; onChange: (station: Station) => 
     >
       {stations.map((s) => <option key={encode(s)} value={encode(s)}>{stationName(s)}</option>)}
     </select>
+  )
+}
+
+/** How many of a COTS part Inventory has and where, and whether that's enough for this line. */
+function Shelf(props: { part: Part; items: Item[] }) {
+  const shelf = shelfText(props.part, props.items)
+  if (!shelf) return null
+  return (
+    <>
+      <br />
+      <span className="note">{shelf.text}</span>{' '}
+      {shelf.short > 0 ? <Pill tone="warn">Short {shelf.short}</Pill> : <Pill tone="ok">Enough</Pill>}
+    </>
   )
 }
 
