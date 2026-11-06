@@ -385,6 +385,24 @@ export const EMPTY_ITEM: NewItem = {
   name: '', status: FIRST_STATUS, vendor: '', type: '', link: '', part_number: '', quantity: 1, notes: '', ordered_by: '', shipped_to: '', estimated_arrival: '',
 }
 
+/**
+ * Which order details the form shows: all of them once the order is placed
+ * (any status past the asking ones, like Order Placed or Backordered), and
+ * before that only the ones already filled in, so nothing saved is hidden.
+ */
+export function orderFieldsShown(form: Pick<NewItem, 'status' | 'ordered_by' | 'shipped_to' | 'estimated_arrival'>): {
+  ordered_by: boolean
+  shipped_to: boolean
+  estimated_arrival: boolean
+} {
+  const placed = !isAsking(form.status)
+  return {
+    ordered_by: placed || !!form.ordered_by,
+    shipped_to: placed || !!form.shipped_to,
+    estimated_arrival: placed || !!form.estimated_arrival,
+  }
+}
+
 /** An item's fields, to fill in the form for changing it. */
 export function itemToForm(item: PurchaseItem): NewItem {
   return {

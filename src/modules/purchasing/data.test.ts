@@ -18,6 +18,7 @@ import {
   canOrder,
   changeItem,
   checkItem,
+  orderFieldsShown,
   choices,
   dayText,
   duplicateItem,
@@ -451,5 +452,25 @@ describe('estimated arrival', () => {
     setDemoRole('mentor')
     expect((await changeItem(placed(), changed)).ok).toBe(true)
     expect(placed().estimated_arrival).toBe('2026-12-20')
+  })
+})
+
+describe('orderFieldsShown', () => {
+  const empty = { ordered_by: '', shipped_to: '', estimated_arrival: '' }
+
+  it('hides every order detail while the request is still asking', () => {
+    for (const status of ['wait', 'order_low', 'order', 'order_high'] as const) {
+      expect(orderFieldsShown({ ...empty, status })).toEqual({ ordered_by: false, shipped_to: false, estimated_arrival: false })
+    }
+  })
+
+  it('shows them all once the order is placed, or past that', () => {
+    for (const status of ['placed', 'backordered', 'received'] as const) {
+      expect(orderFieldsShown({ ...empty, status })).toEqual({ ordered_by: true, shipped_to: true, estimated_arrival: true })
+    }
+  })
+
+  it('still shows one that is filled in, so nothing saved is hidden', () => {
+    expect(orderFieldsShown({ ...empty, status: 'order', shipped_to: DEMO_PEOPLE.pat })).toEqual({ ordered_by: false, shipped_to: true, estimated_arrival: false })
   })
 })
