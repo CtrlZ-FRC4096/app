@@ -43,14 +43,14 @@ export function Board(props: { onOpenSheet: (id: string) => void }) {
             {reading ? 'Reading Onshape…' : 'Update sizes from Onshape'}
           </button>
         )}
-        <span className="note">Flag made parts here, or with Ready to CAM in the BOM. Sizes, outlines and checks come from Onshape.</span>
+        <span className="note">Flag custom parts here, or with Ready to CAM in the BOM. Sizes, outlines and checks come from Onshape.</span>
       </div>
 
       {adding && <AddJobForm onDone={() => setAdding(false)} />}
 
       {groups.length === 0 && (
         <Panel>
-          <p className="panel-body muted">Nothing waiting to cut. Flag parts ready to CAM above, or with "Ready to CAM" on a made part in the BOM.</p>
+          <p className="panel-body muted">Nothing waiting to cut. Flag parts ready to CAM above, or with "Ready to CAM" on a custom part in the BOM.</p>
         </Panel>
       )}
 
@@ -320,7 +320,7 @@ function AddJobForm(props: { onDone: () => void }) {
     <Panel title="Flag parts ready to CAM">
       <form ref={ref} className="panel-body" onSubmit={add}>
         {parts.length === 0 ? (
-          <p className="muted">There are no made parts in the BOM yet. Add them there first, or import them from Onshape.</p>
+          <p className="muted">There are no custom parts in the BOM yet. Add them there first, or import them from Onshape.</p>
         ) : (
           <>
             <div className="toolbar">

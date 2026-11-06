@@ -18,6 +18,8 @@ import {
   canOrder,
   changeItem,
   checkItem,
+  orderFieldsShown,
+  pickStatus,
   choices,
   dayText,
   duplicateItem,
@@ -104,7 +106,7 @@ describe('groupItems', () => {
 
   it('All: everything, newest first, under one heading', () => {
     const [all] = groupItems(itemsTable.rows(), 'All')
-    expect(all.items).toHaveLength(9)
+    expect(all.items).toHaveLength(10)
     expect(all.items[0].name).toBe('Compliant wheel, 2 in')
   })
 
@@ -113,7 +115,7 @@ describe('groupItems', () => {
     expect(groups[0].title).toBe('Wait to Order')
     expect(groups.at(-1)!.title).toBe('Cancel Item')
     expect(groups.map((g) => g.title)).not.toContain('Out of Stock')
-    expect(groups.flatMap((g) => g.items)).toHaveLength(9)
+    expect(groups.flatMap((g) => g.items)).toHaveLength(10)
   })
 
   it('By vendor: in the order of the vendor list, with vendors no longer listed at the end', () => {
@@ -200,7 +202,7 @@ describe('addItem', () => {
 
   it('refuses an item without a name and says why', async () => {
     expect((await addItem(EMPTY_ITEM)).ok).toBe(false)
-    expect(itemsTable.rows()).toHaveLength(9)
+    expect(itemsTable.rows()).toHaveLength(10)
   })
 })
 
@@ -226,7 +228,7 @@ describe('changeItem', () => {
 describe('removeItem', () => {
   it('deletes only that item', async () => {
     expect(await removeItem(find('Ethernet cables, 5 ft (10 pack)'))).toEqual({ ok: true, value: null })
-    expect(itemsTable.rows()).toHaveLength(8)
+    expect(itemsTable.rows()).toHaveLength(9)
   })
 
   it('says so if the item is already gone', async () => {
@@ -250,7 +252,7 @@ describe('searchItems', () => {
   })
 
   it('matches everything when the search is empty, and nothing when nothing matches', () => {
-    expect(searchItems(itemsTable.rows(), '  ')).toHaveLength(9)
+    expect(searchItems(itemsTable.rows(), '  ')).toHaveLength(10)
     expect(searchItems(itemsTable.rows(), 'unobtainium')).toEqual([])
   })
 })
@@ -451,5 +453,50 @@ describe('estimated arrival', () => {
     setDemoRole('mentor')
     expect((await changeItem(placed(), changed)).ok).toBe(true)
     expect(placed().estimated_arrival).toBe('2026-12-20')
+  })
+})
+
+describe('orderFieldsShown', () => {
+  const empty = { ordered_by: '', shipped_to: '', estimated_arrival: '' }
+
+  it('hides every order detail while the request is still asking', () => {
+    for (const status of ['wait', 'order_low', 'order', 'order_high'] as const) {
+      expect(orderFieldsShown({ ...empty, status })).toEqual({ ordered_by: false, shipped_to: false, estimated_arrival: false })
+    }
+  })
+
+  it('shows them all once the order is placed, or past that', () => {
+    for (const status of ['placed', 'backordered', 'received'] as const) {
+      expect(orderFieldsShown({ ...empty, status })).toEqual({ ordered_by: true, shipped_to: true, estimated_arrival: true })
+    }
+  })
+
+  it('still shows one that is filled in, so nothing saved is hidden', () => {
+    expect(orderFieldsShown({ ...empty, status: 'order', shipped_to: DEMO_PEOPLE.pat })).toEqual({ ordered_by: false, shipped_to: true, estimated_arrival: false })
+  })
+})
+
+describe('pickStatus', () => {
+  const asked = () => find('Compliant wheel, 2 in')
+  const me = DEMO_PEOPLE.morgan
+
+  it('fills in Ordered by with you when you pick Order Placed', () => {
+    expect(pickStatus(itemToForm(asked()), 'placed', asked(), me)).toEqual({ status: 'placed', ordered_by: me })
+  })
+
+  it('keeps someone else picked in the form', () => {
+    const form = { ...itemToForm(asked()), ordered_by: DEMO_PEOPLE.pat }
+    expect(pickStatus(form, 'placed', asked(), me)).toEqual({ status: 'placed' })
+  })
+
+  it('puts back what was saved when you move it away from Order Placed again', () => {
+    const form = { ...itemToForm(asked()), status: 'placed' as const, ordered_by: me }
+    expect(pickStatus(form, 'order_high', asked(), me)).toEqual({ status: 'order_high', ordered_by: '' })
+  })
+
+  it('only changes the status otherwise', () => {
+    expect(pickStatus(itemToForm(asked()), 'order_high', asked(), me)).toEqual({ status: 'order_high' })
+    const placed = find('Timing belt, 60T')
+    expect(pickStatus(itemToForm(placed), 'received', placed, me)).toEqual({ status: 'received' })
   })
 })

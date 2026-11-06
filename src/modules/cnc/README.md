@@ -4,8 +4,8 @@ What needs cutting on the router, the stock it's cut from, and every sheet on th
 
 **Built so far:**
 
-- **Board.** Made parts from the BOM, grouped by the stock they're cut from, each going Ready to CAM → To cut → Cutting → Cut, then a "Cut lately" list. Each part links to its tab in Onshape and its system's assembly.
-- **Ready to CAM.** When a part's design is done, flag it, on the board or with **Ready to CAM** on a made part in the BOM: how many, and what it's cut from. Pick aluminum or polycarbonate and a thickness (1/32, 1/16, 1/8, 3/16, 1/4 or one typed in), or other stock like a tube. These start from the part's material in the BOM and its thickness in Onshape. A plate that isn't in the stock list yet is added to it. Whoever makes the toolpaths presses **CAM done**, and it's To cut.
+- **Board.** Custom parts from the BOM, grouped by the stock they're cut from, each going Ready to CAM → To cut → Cutting → Cut, then a "Cut lately" list. Each part links to its tab in Onshape and its system's assembly.
+- **Ready to CAM.** When a part's design is done, flag it, on the board or with **Ready to CAM** on a custom part in the BOM: how many, and what it's cut from. Pick aluminum or polycarbonate and a thickness (1/32, 1/16, 1/8, 3/16, 1/4 or one typed in), or other stock like a tube. These start from the part's material in the BOM and its thickness in Onshape. A plate that isn't in the stock list yet is added to it. Whoever makes the toolpaths presses **CAM done**, and it's To cut.
 - **Sizes and checks from Onshape.** A part's size, thickness and outline are read from Onshape once and kept. From those come a rough router time and design checks against the stock's bit: holes and slots too small for it, inside corners it can't make sharp, the wrong thickness, and parts too big for a sheet.
 - **Sheets.** Each sheet has an ID to write on it, like `AL250-007`, and is drawn to scale with its cuts. Tap a cut for what it is, who cut it and when. Cuts come from an Onshape layout, from **Find room**, or are typed in by hand. A leftover piece can be cut off as a remnant with its own ID, and a used-up sheet marked scrap.
 - **Stock.** The kinds of stock, like "1/4 in aluminum plate", with each one's code (the start of its sheet IDs), full sheet size and router settings. Anyone adds them, by hand or with **Import from Onshape**, which works out the plates the robot's parts need (see below).
@@ -36,7 +36,7 @@ No layout? **Find room** fits the parts waiting for that stock onto the sheet, f
 
 ## Importing stock from Onshape
 
-**Import from Onshape** on the Stock tab works out the plates the BOM's made parts are cut from, so nobody has to type them in:
+**Import from Onshape** on the Stock tab works out the plates the BOM's custom parts are cut from, so nobody has to type them in:
 
 - Each part's **material** comes from Onshape through the BOM import. "Aluminum - 6061" and "6061 aluminum, 1/4 in plate" both count as aluminum.
 - Each part's **thickness** comes from its shape in Onshape, snapped back to the fraction it was drawn as (0.188 → 3/16).

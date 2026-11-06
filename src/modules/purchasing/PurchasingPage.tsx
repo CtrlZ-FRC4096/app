@@ -20,6 +20,8 @@ import {
   duplicateItem,
   groupItems,
   isAsking,
+  orderFieldsShown,
+  pickStatus,
   isLate,
   itemToForm,
   removeBuyer,
@@ -322,7 +324,7 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
       ) : (
         <label className="field" style={FIELD} htmlFor={id('status')}>
           {item ? 'Status' : 'Priority'}
-          <select id={id('status')} className="input" style={BOX} value={form.status} onChange={(e) => set({ status: e.target.value as NewItem['status'] })}>
+          <select id={id('status')} className="input" style={BOX} value={form.status} onChange={(e) => set(pickStatus(form, e.target.value as NewItem['status'], item ?? null, me.id))}>
             {statuses.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
           </select>
           <span className="note">{statusOf(form.status).hint}.</span>
@@ -375,7 +377,10 @@ function OrderDetails(props: {
     item.shipped_to && `Shipped to ${nameOf(item.shipped_to)}`,
     arrivalText(item),
   ].filter(Boolean)
+  // Mentors and purchasers get the fields once it's ordered (see orderFieldsShown).
+  const shown = orderFieldsShown(form)
   if (!props.canOrder && known.length === 0) return null
+  if (props.canOrder && !shown.ordered_by && !shown.shipped_to && !shown.estimated_arrival) return null
 
   return (
     <div style={{ display: 'grid', gap: 14, minWidth: 0, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
@@ -384,23 +389,26 @@ function OrderDetails(props: {
         <p className="note" style={{ margin: 0 }}>{known.join(' · ')}</p>
       ) : (
         <>
-          <label className="field" style={FIELD} htmlFor={id('ordered-by')}>
-            Ordered by
-            <select id={id('ordered-by')} className="input" style={BOX} value={form.ordered_by} onChange={(e) => set({ ordered_by: e.target.value })}>
-              <option value="">Nobody yet</option>
-              {props.orderers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </select>
-            <span className="note">Marking it Order Placed makes this you, unless you pick someone else.</span>
-          </label>
-          <label className="field" style={FIELD} htmlFor={id('shipped-to')}>
-            Shipped to
-            <select id={id('shipped-to')} className="input" style={BOX} value={form.shipped_to} onChange={(e) => set({ shipped_to: e.target.value })}>
-              <option value="">Nobody yet</option>
-              {props.people.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </select>
-          </label>
-          {/* Asked for once it's ordered. */}
-          {(!isAsking(form.status) || form.estimated_arrival) && (
+          {shown.ordered_by && (
+            <label className="field" style={FIELD} htmlFor={id('ordered-by')}>
+              Ordered by
+              <select id={id('ordered-by')} className="input" style={BOX} value={form.ordered_by} onChange={(e) => set({ ordered_by: e.target.value })}>
+                <option value="">Nobody yet</option>
+                {props.orderers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+              <span className="note">Marking it Order Placed fills this in with you. Pick someone else if they placed it.</span>
+            </label>
+          )}
+          {shown.shipped_to && (
+            <label className="field" style={FIELD} htmlFor={id('shipped-to')}>
+              Shipped to
+              <select id={id('shipped-to')} className="input" style={BOX} value={form.shipped_to} onChange={(e) => set({ shipped_to: e.target.value })}>
+                <option value="">Nobody yet</option>
+                {props.people.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </label>
+          )}
+          {shown.estimated_arrival && (
             <label className="field" style={FIELD} htmlFor={id('arrival')}>
               Estimated arrival
               <input
