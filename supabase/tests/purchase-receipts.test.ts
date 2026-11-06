@@ -1,11 +1,10 @@
 // Permission rules for receipts in Purchasing (#79). Receipts can show card
-// digits and addresses: only mentors and admins open them, mentors and
-// purchasers add them, and everyone can see that an item has one.
+// digits and addresses: only mentors, admins and purchasers add, open and
+// delete them, and everyone can see that an item has one.
 //
 // Supabase checks the rules on storage.objects before it does anything with
 // a file, so these tests do what it does:
-//   - add a file: a plain insert, with no "returning" (that would need the
-//     select rule, which purchasers don't have)
+//   - add a file: a plain insert, with no "returning"
 //   - open a file, or make a signed link to it: a select that must find it
 //   - delete a file: a delete
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -69,9 +68,10 @@ describe('the receipts bucket', () => {
 describe('opening a receipt', () => {
   beforeEach(() => upload(mentor))
 
-  it('works for mentors and admins', async () => {
+  it('works for mentors, admins and purchasers', async () => {
     expect(await openFile(mentor)).toHaveLength(1)
     expect(await openFile(admin)).toHaveLength(1)
+    expect(await openFile(buyer)).toHaveLength(1)
   })
 
   it("doesn't work for a student, even knowing exactly where the file is", async () => {
@@ -80,9 +80,9 @@ describe('opening a receipt', () => {
     expect(await openFile(student, path)).toEqual([])
   })
 
-  it("doesn't work for a purchaser, even for a receipt they added", async () => {
-    await upload(buyer, filePath(`22222222-2222-4222-8222-222222222222.pdf`))
-    expect(await openFile(buyer, filePath(`22222222-2222-4222-8222-222222222222.pdf`))).toEqual([])
+  it("stops working for a purchaser who's removed", async () => {
+    await db.as(mentor, 'delete from public.purchasing_buyers where member_id = $1', [buyer])
+    expect(await openFile(buyer)).toEqual([])
   })
 
   it("doesn't work for someone who isn't signed in, or whose access is off", async () => {
@@ -136,11 +136,16 @@ describe('adding a receipt', () => {
 describe('deleting a receipt', () => {
   beforeEach(() => upload(mentor))
 
-  it('works for mentors and admins', async () => {
+  it('works for admins', async () => {
     expect(await deleteFile(admin)).toHaveLength(1)
   })
 
-  it("doesn't work for students or purchasers", async () => {
+  it('works for purchasers', async () => {
+    expect(await deleteFile(buyer)).toHaveLength(1)
+  })
+
+  it("doesn't work for students, or a purchaser who's removed", async () => {
+    await db.as(mentor, 'delete from public.purchasing_buyers where member_id = $1', [buyer])
     expect(await deleteFile(student)).toEqual([])
     expect(await deleteFile(buyer)).toEqual([])
     expect(await db.sql('select id from storage.objects')).toHaveLength(1)
@@ -192,11 +197,12 @@ describe('the purchase_receipts table', () => {
     ).rejects.toThrow('check constraint')
   })
 
-  it('can be deleted by a mentor, but not a purchaser or student', async () => {
+  it('can be deleted by a mentor or purchaser, but not a student', async () => {
     const [row] = await addRow(buyer)
-    expect(await db.as(buyer, 'delete from public.purchase_receipts where id = $1 returning id', [row.id])).toEqual([])
     expect(await db.as(student, 'delete from public.purchase_receipts where id = $1 returning id', [row.id])).toEqual([])
-    expect(await db.as(mentor, 'delete from public.purchase_receipts where id = $1 returning id', [row.id])).toEqual([{ id: row.id }])
+    expect(await db.as(buyer, 'delete from public.purchase_receipts where id = $1 returning id', [row.id])).toEqual([{ id: row.id }])
+    const [other] = await addRow(buyer, filePath(`22222222-2222-4222-8222-222222222222.pdf`))
+    expect(await db.as(mentor, 'delete from public.purchase_receipts where id = $1 returning id', [other.id])).toEqual([{ id: other.id }])
   })
 
   it("can't be changed after it's added, even by a mentor", async () => {
@@ -204,7 +210,7 @@ describe('the purchase_receipts table', () => {
     await expect(db.as(mentor, 'update public.purchase_receipts set size_bytes = 2 where id = $1', [row.id])).rejects.toThrow(PERMISSION_DENIED)
   })
 
-  it('stops its item being deleted, until a mentor deletes the receipt', async () => {
+  it('stops its item being deleted, until a mentor or purchaser deletes the receipt', async () => {
     const [row] = await addRow(buyer)
     await expect(db.as(student, 'delete from public.purchase_items where id = $1', [itemId])).rejects.toThrow('foreign key')
     await expect(db.as(mentor, 'delete from public.purchase_items where id = $1', [itemId])).rejects.toThrow('foreign key')

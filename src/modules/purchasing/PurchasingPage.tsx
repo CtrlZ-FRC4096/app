@@ -17,7 +17,6 @@ import {
   addItem,
   arrivalText,
   addReceipt,
-  canOpenReceipts,
   changeItem,
   choices,
   duplicateItem,
@@ -443,14 +442,12 @@ function OrderDetails(props: {
 /** Who the purchasers are, so people know who to ask. Mentors and admins add and remove them. */
 /**
  * An item's receipts, on the opened item. Everyone sees how many there are.
- * Mentors and admins open and delete them; mentors and purchasers add them.
+ * Mentors, admins and purchasers add, open and delete them.
  * The buttons are only tidiness: the database's rules are what stop people.
  */
 function Receipts(props: { item: PurchaseItem }) {
-  const me = useSession()
   const nameOf = useMemberNames()
-  const canAdd = useCanOrder()
-  const canOpen = canOpenReceipts(me)
+  const canManage = useCanOrder()
   const receipts = useReceipts(props.item.id)
   const picker = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
@@ -497,12 +494,12 @@ function Receipts(props: { item: PurchaseItem }) {
   }
 
   // Nothing to see or do here for a student, on an item with no receipts.
-  if (!canAdd && receipts.length === 0) return null
+  if (!canManage && receipts.length === 0) return null
 
   return (
     <div className="field" style={FIELD}>
       <span>Receipts</span>
-      {canOpen ? (
+      {canManage ? (
         receipts.map((receipt, i) => (
           <div key={receipt.id} className="toolbar" style={{ justifyContent: 'space-between', padding: '4px 0' }}>
             <span style={{ minWidth: 0, color: 'var(--ink)' }}>
@@ -520,10 +517,10 @@ function Receipts(props: { item: PurchaseItem }) {
         ))
       ) : (
         <span className="note">
-          {receipts.length > 0 ? `${receiptCountText(receipts.length)} added. ` : ''}Only mentors can open receipts, because they can show card digits and addresses.
+          {receipts.length > 0 ? `${receiptCountText(receipts.length)} added. ` : ''}Only mentors and purchasers can open receipts, because they can show card digits and addresses.
         </span>
       )}
-      {canAdd && (
+      {canManage && (
         <div className="toolbar">
           <button type="button" className="btn btn-sm" disabled={uploading} onClick={() => picker.current?.click()}>
             {uploading ? 'Uploading…' : 'Add receipt'}

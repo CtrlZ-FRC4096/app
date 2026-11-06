@@ -39,14 +39,14 @@ Receipts can show card digits, addresses and names, so:
 | Who | See that an item has one | Add | Open | Delete |
 |:--|:--|:--|:--|:--|
 | Anyone on the team | Yes | | | |
-| Purchasers | Yes | Yes | | |
+| Purchasers | Yes | Yes | Yes | Yes |
 | Mentors and admins | Yes | Yes | Yes | Yes |
 
 - The files are in the **private** `purchase-receipts` storage bucket, made by `supabase/migrations/20261106120000_purchase_receipts.sql` with its rules. Those rules are tested in `supabase/tests/purchase-receipts.test.ts`.
 - **Opening** one makes a signed link that stops working after 60 seconds. Anyone who has that link can use it until then, so don't paste it anywhere.
 - **Only exact file types** are allowed (PDF, JPEG, PNG, WebP, HEIC), never all of `image/*`: SVG images can run code when they're opened.
 - `purchase_receipts` has a row for each file, which is how students can see an item has a receipt. It never holds the file's own name, which can have personal details in it.
-- **An item with a receipt can't be deleted** until a mentor deletes the receipt. It's a record of what was spent. Cancel the item instead.
+- **An item with a receipt can't be deleted** until a mentor or purchaser deletes the receipt. It's a record of what was spent. Cancel the item instead.
 - Demo mode has no file storage: adding a receipt saves only the row, and Open says so.
 
 ## Still to do (#66)

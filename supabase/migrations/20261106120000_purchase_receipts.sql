@@ -3,16 +3,13 @@
 --
 -- Receipts can show card digits, addresses and names, so:
 --
---   - Only mentors and admins can open them.
---   - Mentors, admins and purchasers can add them. A student purchaser
---     can add a receipt but can't open it afterwards.
---   - Only mentors and admins can delete them.
+--   - Only mentors, admins and purchasers can add, open and delete them.
 --   - Everyone on the team can see that an item has a receipt: that's what
 --     the purchase_receipts table is for. It doesn't hold the file, or the
 --     file's name, which can have personal details in it too.
 --
 -- The files are in a private storage bucket, so there's no public address
--- for them. Mentors open one through a signed link that stops working after
+-- for them. Mentors and purchasers open one through a signed link that stops working after
 -- a short time (see receiptLink() in src/modules/purchasing/data.ts).
 -- Making a signed link needs the select rule below, so nobody else can
 -- make one.
@@ -20,8 +17,8 @@
 -- Only exact file types are allowed, not image/*: that would let in SVG
 -- images, which can run code when they're opened.
 --
--- The helpers private.is_member(), private.is_mentor() and
--- private.is_purchaser() come from the members and purchasing_orders
+-- The helpers private.is_member() and private.is_purchaser() (which
+-- includes mentors and admins) come from the members and purchasing_orders
 -- migrations.
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
@@ -34,7 +31,7 @@ values (
 );
 
 -- One row per receipt. An item can have several. An item with a receipt
--- can't be deleted until a mentor deletes the receipt: that keeps the
+-- can't be deleted until a mentor or purchaser deletes the receipt: that keeps the
 -- record of what was spent, and leaves no file behind that nobody can reach.
 create table public.purchase_receipts (
   id uuid primary key default gen_random_uuid(),
@@ -69,18 +66,18 @@ create policy "Mentors and purchasers add receipts as themselves"
   on public.purchase_receipts for insert to authenticated
   with check ((select private.is_purchaser()) and created_by = (select auth.uid()));
 
-create policy "Mentors delete receipts"
+create policy "Mentors and purchasers delete receipts"
   on public.purchase_receipts for delete to authenticated
-  using ((select private.is_mentor()));
+  using ((select private.is_purchaser()));
 
 -- The rules for the files themselves. storage.objects holds every bucket's
 -- files, so each rule starts by naming this bucket.
 --
 -- There's no update rule, so a receipt can't be replaced by another file.
 
-create policy "Mentors open purchase receipts"
+create policy "Mentors and purchasers open purchase receipts"
   on storage.objects for select to authenticated
-  using (bucket_id = 'purchase-receipts' and (select private.is_mentor()));
+  using (bucket_id = 'purchase-receipts' and (select private.is_purchaser()));
 
 -- Files go in a folder named after a real item. It has to say objects.name:
 -- purchase_items has a name column too, and a plain "name" would mean that.
@@ -92,6 +89,6 @@ create policy "Mentors and purchasers add purchase receipts"
     and exists (select 1 from public.purchase_items i where i.id::text = split_part(objects.name, '/', 1))
   );
 
-create policy "Mentors delete purchase receipts"
+create policy "Mentors and purchasers delete purchase receipts"
   on storage.objects for delete to authenticated
-  using (bucket_id = 'purchase-receipts' and (select private.is_mentor()));
+  using (bucket_id = 'purchase-receipts' and (select private.is_purchaser()));
