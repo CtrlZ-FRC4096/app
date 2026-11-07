@@ -28,6 +28,7 @@ import {
   choices,
   dayText,
   duplicateItem,
+  formPriceText,
   groupItems,
   isLate,
   isOrderChange,
@@ -39,6 +40,10 @@ import {
   isCurrent,
   itemToForm,
   itemsTable,
+  lineTotal,
+  priceFrom,
+  priceProblem,
+  priceText,
   receiptBody,
   receiptCountText,
   receiptLink,
@@ -51,6 +56,7 @@ import {
   statusOf,
   summaryText,
   today,
+  type NewItem,
   type PurchaseItem,
 } from './data'
 
@@ -90,6 +96,120 @@ describe('the lists', () => {
       expect(VENDORS).toContain(item.vendor)
       expect(TYPES).toContain(item.type)
     }
+  })
+})
+
+describe('prices', () => {
+  const ordered = () => find('Timing belt, 60T')
+  const asked = () => find('Zip ties, 8 in (pack of 100)')
+
+  it('reads what people type, with or without a dollar sign or comma', () => {
+    expect(priceFrom('12.5')).toBe(12.5)
+    expect(priceFrom('$1,250.00')).toBe(1250)
+    expect(priceFrom(' 7 ')).toBe(7)
+    expect(priceFrom('0')).toBe(0)
+    expect(priceFrom('')).toBeNull()
+    expect(priceFrom('  ')).toBeNull()
+  })
+
+  it('accepts dollars and cents, or an empty box', () => {
+    for (const price of ['', '12', '12.', '12.5', '12.50', '.99', '0', '$1,250.00', '99999.99']) {
+      expect(priceProblem(price)).toBeNull()
+    }
+  })
+
+  it('refuses anything else, and says what to do', () => {
+    for (const price of ['abc', '-5', '12.345', '1e3', '.', '12 dollars']) {
+      expect(priceProblem(price)).toMatch(/like 12\.50/)
+    }
+    expect(priceProblem('100000')).toMatch(/up to \$99,999\.99/)
+    expect(checkItem({ ...valid, price: 'abc' })).toMatch(/like 12\.50/)
+    expect(checkItem({ ...valid, price: '12.50' })).toBeNull()
+  })
+
+  it('works out the line from the price of one and the number needed', () => {
+    expect(lineTotal({ price: 12.5, quantity: 4 })).toBe(50)
+    expect(lineTotal({ price: 0.07, quantity: 3 })).toBe(0.21)
+    expect(lineTotal({ price: 19.99, quantity: 100 })).toBe(1999)
+    expect(lineTotal({ price: 0, quantity: 4 })).toBe(0)
+    expect(lineTotal({ price: null, quantity: 4 })).toBeNull()
+  })
+
+  it('shows the price each and the total, or just the price for one', () => {
+    expect(priceText({ price: 12.5, quantity: 4 })).toBe('$12.50 each · $50.00 total')
+    expect(priceText({ price: 12.5, quantity: 1 })).toBe('$12.50')
+    expect(priceText({ price: 0, quantity: 2 })).toBe('$0.00 each · $0.00 total')
+    expect(priceText({ price: null, quantity: 4 })).toBeNull()
+  })
+
+  it('shows the total in the form only once what is typed is a price', () => {
+    expect(formPriceText({ price: '12.5', quantity: 4 })).toBe('$12.50 each · $50.00 total')
+    expect(formPriceText({ price: '', quantity: 4 })).toBeNull()
+    expect(formPriceText({ price: 'abc', quantity: 4 })).toBeNull()
+  })
+
+  it('can be filled in when asking, or left empty', async () => {
+    const added = await addItem({ ...valid, price: '$12.50', quantity: 4 })
+    expect(added.ok && added.value.price).toBe(12.5)
+    const without = await addItem(valid)
+    expect(without.ok && without.value.price).toBeNull()
+  })
+
+  it('fills in the form, and comes back the same', () => {
+    expect(itemToForm(asked()).price).toBe('7.25')
+    expect(itemToForm(find('Ethernet cables, 5 ft (10 pack)')).price).toBe('')
+    expect(isOrderChange(ordered(), itemToForm(ordered()))).toBe(false)
+  })
+
+  it('stays on a duplicate, to buy it again', () => {
+    expect(duplicateItem(ordered()).price).toBe('18.75')
+  })
+
+  it('can be changed or emptied by a student while it is being asked for', async () => {
+    expect(isOrderChange(asked(), { ...itemToForm(asked()), price: '8.00' })).toBe(false)
+    expect((await changeItem(asked(), { ...itemToForm(asked()), price: '8.00' })).ok).toBe(true)
+    expect(asked().price).toBe(8)
+    expect((await changeItem(asked(), { ...itemToForm(asked()), price: '' })).ok).toBe(true)
+    expect(asked().price).toBeNull()
+  })
+
+  it("can't be changed by a student once it's ordered", async () => {
+    const changed = { ...itemToForm(ordered()), price: '1.00' }
+    expect(isOrderChange(ordered(), changed)).toBe(true)
+    expect(await changeItem(ordered(), changed)).toMatchObject({ ok: false, error: expect.stringMatching(/Only mentors and purchasers/) })
+    expect((await changeItem(ordered(), { ...itemToForm(ordered()), price: '' })).ok).toBe(false)
+    expect(ordered().price).toBe(18.75)
+  })
+
+  it("locks the number needed once it's ordered too, so a student can't change the total", async () => {
+    const changed = { ...itemToForm(ordered()), quantity: 5 }
+    expect(isOrderChange(ordered(), changed)).toBe(true)
+    expect(await changeItem(ordered(), changed)).toMatchObject({ ok: false, error: expect.stringMatching(/Only mentors and purchasers/) })
+    expect(ordered().quantity).toBe(4)
+    setDemoRole('mentor')
+    expect((await changeItem(ordered(), changed)).ok).toBe(true)
+    expect(ordered().quantity).toBe(5)
+  })
+
+  it('can be changed by a mentor or purchaser once it is ordered', async () => {
+    await buyersTable.insert({ member_id: DEMO_PEOPLE.alex })
+    expect((await changeItem(ordered(), { ...itemToForm(ordered()), price: '20.00' })).ok).toBe(true)
+    expect(ordered().price).toBe(20)
+    await buyersTable.reset()
+    setDemoRole('mentor')
+    expect((await changeItem(ordered(), { ...itemToForm(ordered()), price: '21.00' })).ok).toBe(true)
+    expect(ordered().price).toBe(21)
+  })
+
+  it("locks everything else about an order for a student too", async () => {
+    const changes: Partial<NewItem>[] = [{ name: 'Belt' }, { vendor: 'Amazon' }, { type: 'Field' }, { link: 'https://example.com/other' }, { part_number: 'OTHER' }, { notes: 'Two boxes' }]
+    for (const change of changes) {
+      expect(await changeItem(ordered(), { ...itemToForm(ordered()), ...change })).toMatchObject({ ok: false, error: expect.stringMatching(/Only mentors and purchasers/) })
+    }
+    expect(ordered().notes).toBeNull()
+    setDemoRole('mentor')
+    expect((await changeItem(ordered(), { ...itemToForm(ordered()), notes: 'Two boxes' })).ok).toBe(true)
+    expect(ordered().notes).toBe('Two boxes')
   })
 })
 
@@ -307,7 +427,10 @@ describe('placing orders', () => {
     expect(isOrderChange(asked, { ...itemToForm(asked), shipped_to: DEMO_PEOPLE.pat })).toBe(true)
     expect(isOrderChange(ordered, { ...itemToForm(ordered), ordered_by: DEMO_PEOPLE.jordan })).toBe(true)
     expect(isOrderChange(ordered, { ...itemToForm(ordered), status: 'order' })).toBe(true)
-    expect(isOrderChange(ordered, { ...itemToForm(ordered), quantity: 5 })).toBe(false)
+    expect(isOrderChange(ordered, { ...itemToForm(ordered), notes: 'Two boxes' })).toBe(true)
+    expect(isOrderChange(ordered, itemToForm(ordered))).toBe(false)
+    expect(isOrderChange(asked, { ...itemToForm(asked), notes: 'Two boxes' })).toBe(false)
+    expect(isOrderChange(asked, { ...itemToForm(asked), quantity: 5 })).toBe(false)
     expect(isOrderChange(null, valid)).toBe(false)
     expect(isOrderChange(null, { ...valid, status: 'placed' })).toBe(true)
   })

@@ -20,12 +20,14 @@ import {
   changeItem,
   choices,
   duplicateItem,
+  formPriceText,
   groupItems,
   isAsking,
   orderFieldsShown,
   pickStatus,
   isLate,
   itemToForm,
+  priceText,
   receiptCountText,
   receiptLink,
   receiptText,
@@ -216,6 +218,7 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
     arrivalText(item),
   ].filter(Boolean)
   const receipts = receiptCountText(useReceipts(item.id).length)
+  const price = priceText(item)
 
   function open(event: MouseEvent) {
     if ((event.target as HTMLElement).closest('a, button')) return
@@ -231,6 +234,7 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
         {isLate(item) && <>{' '}<Pill tone="warn">Late</Pill></>}
         <br />
         <span className="muted">{details.join(' · ')}</span>
+        {price && <><br /><span>{price}</span></>}
         {bomPart && <><br /><span className="note">For BOM part {bomPart.part_number}</span></>}
         {item.notes && <><br /><span className="muted">{item.notes}</span></>}
         {order.length > 0 && <><br /><span className="note">{order.join(' · ')}</span></>}
@@ -268,8 +272,11 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
   // purchasers can pick any status; others only between the priorities,
   // and only while it's still being asked for.
   const statuses = item && canOrder ? STATUSES : STATUSES.filter((s) => s.ask)
-  const statusLocked = !!item && !canOrder && !isAsking(item.status)
+  // Once it's ordered, only mentors and purchasers change anything about
+  // it: everyone else sees it as text.
+  const locked = !!item && !canOrder && !isAsking(item.status)
   const canDelete = !!item && (canOrder || isAsking(item.status))
+  const price = formPriceText(form)
   const buyers = useBuyers()
   const people = members.filter((m) => m.active || m.id === form.shipped_to)
   // Who can have placed an order: mentors, admins and purchasers, and whoever it says now.
@@ -300,14 +307,21 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
     if (result.ok) props.onDone()
   }
 
-  const text = (field: 'name' | 'link' | 'part_number', label: string, placeholder = '') => (
+  const shown = (label: string, value: ReactNode) => (
+    <div className="field" style={FIELD}>
+      {label}
+      <span style={{ overflowWrap: 'anywhere' }}>{value || 'Not filled in'}</span>
+    </div>
+  )
+
+  const text = (field: 'name' | 'link' | 'part_number', label: string, placeholder = '') => locked ? shown(label, form[field]) : (
     <label className="field" style={FIELD} htmlFor={id(field)}>
       {label}
       <input id={id(field)} className="input" style={BOX} value={form[field]} placeholder={placeholder} onChange={(e) => set({ [field]: e.target.value })} />
     </label>
   )
 
-  const select = (field: 'vendor' | 'type', label: string, list: string[]) => (
+  const select = (field: 'vendor' | 'type', label: string, list: string[]) => locked ? shown(label, form[field]) : (
     <label className="field" style={FIELD} htmlFor={id(field)}>
       {label}
       <select id={id(field)} className="input" style={BOX} value={form[field]} onChange={(e) => set({ [field]: e.target.value })}>
@@ -325,11 +339,11 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
         {props.bomPartId && ' · from the BOM: fill in what\'s missing, like the link and the priority'}
       </p>
       {text('name', 'What to buy', 'Like "Ethernet cables, 5 ft (10 pack)"')}
-      {statusLocked && item ? (
+      {locked && item ? (
         <div className="field" style={FIELD}>
           Status
           <span><Pill tone={statusOf(item.status).tone}>{statusOf(item.status).label}</Pill></span>
-          <span className="note">Only mentors and purchasers change an order once it's placed.</span>
+          <span className="note">Only mentors and purchasers change anything about an order once it's placed.</span>
         </div>
       ) : (
         <label className="field" style={FIELD} htmlFor={id('status')}>
@@ -344,19 +358,28 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
       {select('type', 'Type', TYPES)}
       <div className="field">
         <span>Number needed</span>
-        <Stepper id={id('quantity')} label="Number needed" min={1} value={form.quantity} onChange={(quantity) => set({ quantity })} />
+        {locked ? <span>{form.quantity}</span> : <Stepper id={id('quantity')} label="Number needed" min={1} value={form.quantity} onChange={(quantity) => set({ quantity })} />}
       </div>
+      {locked ? shown('Price each', price) : (
+        <label className="field" style={FIELD} htmlFor={id('price')}>
+          Price each (if you know it)
+          <input id={id('price')} className="input" style={BOX} inputMode="decimal" placeholder="12.50" value={form.price} onChange={(e) => set({ price: e.target.value })} />
+          {price && <span className="note">{price}</span>}
+        </label>
+      )}
       {text('link', 'Link to the product', 'https://…')}
       {text('part_number', 'Part or item number (if there is one)')}
-      <label className="field" style={FIELD} htmlFor={id('notes')}>
-        Notes
-        <textarea id={id('notes')} className="input" style={BOX} rows={2} value={form.notes} onChange={(e) => set({ notes: e.target.value })} />
-      </label>
+      {locked ? shown('Notes', form.notes) : (
+        <label className="field" style={FIELD} htmlFor={id('notes')}>
+          Notes
+          <textarea id={id('notes')} className="input" style={BOX} rows={2} value={form.notes} onChange={(e) => set({ notes: e.target.value })} />
+        </label>
+      )}
       {item && <OrderDetails item={item} form={form} canOrder={canOrder} set={set} id={id} people={people} orderers={orderers} />}
       {item && <Receipts item={item} />}
       <div className="toolbar">
-        <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : item ? 'Save' : 'Add to the list'}</button>
-        <button type="button" className="btn" onClick={props.onDone}>Cancel</button>
+        {!locked && <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : item ? 'Save' : 'Add to the list'}</button>}
+        <button type="button" className="btn" onClick={props.onDone}>{locked ? 'Close' : 'Cancel'}</button>
         {canDelete && (
           <button type="button" className="btn" style={{ marginLeft: 'auto' }} onClick={() => void remove()}>
             {deleting ? 'Press again to delete' : 'Delete'}
