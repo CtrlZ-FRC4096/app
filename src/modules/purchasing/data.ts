@@ -16,14 +16,19 @@
  * and purchasers add, open and delete them, and everyone can see that an
  * item has one. See supabase/migrations/..._purchase_receipts.sql.
  *
- * Dates, tracking, prices and importing the Slack list come in later steps:
- * see issue #66.
+ * Prices are public, so everyone on the team sees them. Anyone can fill one
+ * in while an item is being asked for. Once an item is ordered (Order Placed
+ * or after), only mentors and purchasers change anything about it, its price
+ * included. See ..._purchase_items_price.sql.
+ *
+ * Dates, tracking and importing the Slack list come in later steps: see
+ * issue #66.
  */
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { currentUser, isMentor, useSession, type User } from '../../core/session'
 import { isLive, supabase } from '../../core/supabase'
-import { plural } from '../../core/format'
+import { money, plural } from '../../core/format'
 import type { Notice, Tone } from '../../core/registry'
 import type { BomSystem, Part } from '../bom/data'
 
@@ -117,6 +122,8 @@ export interface PurchaseItem extends Row {
   part_number: string | null
   /** How many are needed. */
   quantity: number
+  /** What ONE costs, in dollars, or null if nobody has filled it in. lineTotal() is the price of them all. */
+  price: number | null
   /**
    * Who asked for it: always whoever filled in the form. The database
    * refuses anyone else, and nobody can change it. Show their name with
@@ -143,14 +150,15 @@ export interface PurchaseItem extends Row {
 /** The database allows the same: see the checks on its columns. */
 export const MAX_NAME_LENGTH = 200
 export const MAX_QUANTITY = 10000
+export const MAX_PRICE = 99999.99
 export const MAX_PART_NUMBER_LENGTH = 100
 export const MAX_LINK_LENGTH = 2000
 export const MAX_NOTES_LENGTH = 1000
 
 let exampleCount = 0
 function example(
-  fields: Omit<PurchaseItem, 'id' | 'created_at' | 'created_by' | 'link' | 'notes' | 'ordered_by' | 'shipped_to' | 'estimated_arrival' | 'bom_part_id'> &
-    Partial<Pick<PurchaseItem, 'ordered_by' | 'shipped_to' | 'estimated_arrival' | 'bom_part_id'>> & { notes?: string },
+  fields: Omit<PurchaseItem, 'id' | 'created_at' | 'created_by' | 'link' | 'notes' | 'price' | 'ordered_by' | 'shipped_to' | 'estimated_arrival' | 'bom_part_id'> &
+    Partial<Pick<PurchaseItem, 'price' | 'ordered_by' | 'shipped_to' | 'estimated_arrival' | 'bom_part_id'>> & { notes?: string },
   created_at: string,
 ): PurchaseItem {
   exampleCount += 1
@@ -158,6 +166,7 @@ function example(
     id: `00000000-0000-4000-8000-0000000c00${String(exampleCount).padStart(2, '0')}`,
     link: fields.part_number ? `https://example.com/parts/${fields.part_number}` : null,
     notes: null,
+    price: null,
     ordered_by: null,
     shipped_to: null,
     estimated_arrival: null,
@@ -177,21 +186,21 @@ const ORDERED = { ordered_by: DEMO_PEOPLE.pat, shipped_to: DEMO_PEOPLE.pat }
 
 // Made up. Part numbers start EXAMPLE- so nobody orders them.
 const EXAMPLE_ITEMS: PurchaseItem[] = [
-  example({ name: 'Compliant wheel, 2 in', status: 'order', vendor: 'Andy Mark', type: 'Intake', part_number: 'EXAMPLE-CW-2', quantity: 8, requested_by: DEMO_PEOPLE.alex, notes: 'Spares for the intake rollers.', bom_part_id: BOM_COMPLIANT_WHEEL }, '2026-10-31T21:10:00Z'),
-  example({ name: 'Brushless motor', status: 'order_high', vendor: 'REV Robotics', type: 'Intake', part_number: 'EXAMPLE-NEO-01', quantity: 2, requested_by: DEMO_PEOPLE.sam, notes: 'Needed before Saturday build day.', bom_part_id: BOM_BRUSHLESS_MOTOR }, '2026-10-30T22:00:00Z'),
-  example({ name: 'Zip ties, 8 in (pack of 100)', status: 'order_low', vendor: 'Amazon', type: 'Miscellaneous', part_number: null, quantity: 2, requested_by: DEMO_PEOPLE.jordan }, '2026-10-30T19:45:00Z'),
+  example({ name: 'Compliant wheel, 2 in', status: 'order', vendor: 'Andy Mark', type: 'Intake', part_number: 'EXAMPLE-CW-2', quantity: 8, price: 6.5, requested_by: DEMO_PEOPLE.alex, notes: 'Spares for the intake rollers.', bom_part_id: BOM_COMPLIANT_WHEEL }, '2026-10-31T21:10:00Z'),
+  example({ name: 'Brushless motor', status: 'order_high', vendor: 'REV Robotics', type: 'Intake', part_number: 'EXAMPLE-NEO-01', quantity: 2, price: 95, requested_by: DEMO_PEOPLE.sam, notes: 'Needed before Saturday build day.', bom_part_id: BOM_BRUSHLESS_MOTOR }, '2026-10-30T22:00:00Z'),
+  example({ name: 'Zip ties, 8 in (pack of 100)', status: 'order_low', vendor: 'Amazon', type: 'Miscellaneous', part_number: null, quantity: 2, price: 7.25, requested_by: DEMO_PEOPLE.jordan }, '2026-10-30T19:45:00Z'),
   example({ name: 'Ethernet cables, 5 ft (10 pack)', status: 'wait', vendor: 'Amazon', type: 'Electrical', part_number: null, quantity: 1, requested_by: DEMO_PEOPLE.jordan }, '2026-10-29T18:20:00Z'),
-  example({ name: 'Timing belt, 60T', status: 'placed', vendor: 'West Coast Products', type: 'Drive Base', part_number: 'EXAMPLE-TB-60', quantity: 4, requested_by: DEMO_PEOPLE.sam, ...ORDERED, estimated_arrival: '2026-12-15' }, '2026-10-24T20:00:00Z'),
-  example({ name: 'Hex bearing, 1/2 in', status: 'backordered', vendor: 'Andy Mark', type: 'Hardware', part_number: 'EXAMPLE-HB-12', quantity: 12, requested_by: DEMO_PEOPLE.alex, ...ORDERED, estimated_arrival: '2026-11-01' }, '2026-10-22T23:15:00Z'),
-  example({ name: 'Motor controller', status: 'received', vendor: 'CTRE', type: 'Electrical', part_number: 'EXAMPLE-MC-1', quantity: 1, requested_by: DEMO_PEOPLE.pat, ...ORDERED }, '2026-10-21T17:00:00Z'),
-  example({ name: 'Polycarbonate sheet, 1/8 in', status: 'in_shop', vendor: 'McMaster', type: 'Mechanical', part_number: 'EXAMPLE-PC-18', quantity: 1, requested_by: DEMO_PEOPLE.jordan, ...ORDERED }, '2026-10-20T18:30:00Z'),
+  example({ name: 'Timing belt, 60T', status: 'placed', vendor: 'West Coast Products', type: 'Drive Base', part_number: 'EXAMPLE-TB-60', quantity: 4, price: 18.75, requested_by: DEMO_PEOPLE.sam, ...ORDERED, estimated_arrival: '2026-12-15' }, '2026-10-24T20:00:00Z'),
+  example({ name: 'Hex bearing, 1/2 in', status: 'backordered', vendor: 'Andy Mark', type: 'Hardware', part_number: 'EXAMPLE-HB-12', quantity: 12, price: 3.2, requested_by: DEMO_PEOPLE.alex, ...ORDERED, estimated_arrival: '2026-11-01' }, '2026-10-22T23:15:00Z'),
+  example({ name: 'Motor controller', status: 'received', vendor: 'CTRE', type: 'Electrical', part_number: 'EXAMPLE-MC-1', quantity: 1, price: 120, requested_by: DEMO_PEOPLE.pat, ...ORDERED }, '2026-10-21T17:00:00Z'),
+  example({ name: 'Polycarbonate sheet, 1/8 in', status: 'in_shop', vendor: 'McMaster', type: 'Mechanical', part_number: 'EXAMPLE-PC-18', quantity: 1, price: 42.5, requested_by: DEMO_PEOPLE.jordan, ...ORDERED }, '2026-10-20T18:30:00Z'),
   // In the shop already, so the BOM's Drivetrain shows a part that arrived.
-  example({ name: 'Absolute encoder', status: 'in_shop', vendor: 'CTRE', type: 'Drive Base', part_number: 'EXAMPLE-ENC-1', quantity: 4, requested_by: DEMO_PEOPLE.sam, ...ORDERED, bom_part_id: BOM_ABSOLUTE_ENCODER }, '2026-10-19T17:30:00Z'),
+  example({ name: 'Absolute encoder', status: 'in_shop', vendor: 'CTRE', type: 'Drive Base', part_number: 'EXAMPLE-ENC-1', quantity: 4, price: 39, requested_by: DEMO_PEOPLE.sam, ...ORDERED, bom_part_id: BOM_ABSOLUTE_ENCODER }, '2026-10-19T17:30:00Z'),
   example({ name: 'Field tape, 2 in', status: 'cancelled', vendor: 'Other', type: 'Field', part_number: null, quantity: 3, requested_by: DEMO_PEOPLE.alex, notes: 'Found some in the storage room.' }, '2026-10-18T16:00:00Z'),
 ]
 
-// Version 3: items have an estimated arrival.
-export const itemsTable = createTable<PurchaseItem>('purchase_items', { demo: EXAMPLE_ITEMS, sort: newestFirst, version: 3 })
+// Version 4: items have a price.
+export const itemsTable = createTable<PurchaseItem>('purchase_items', { demo: EXAMPLE_ITEMS, sort: newestFirst, version: 4 })
 
 /** Every item, newest first. */
 export function useItems(): PurchaseItem[] {
@@ -234,11 +243,15 @@ export function isAsking(status: StatusKey): boolean {
   return statusOf(status).ask
 }
 
+/** What only mentors and purchasers change once an item is ordered, along with its status and order details. */
+const ORDER_LOCKED_FIELDS = ['name', 'vendor', 'type', 'link', 'part_number', 'quantity', 'price', 'notes'] as const
+
 /**
  * Whether saving `changes` needs a mentor or purchaser: it moves an item
- * into or out of an order status (Order Placed and after), or sets who
- * ordered it, who it ships to or when it arrives. Changing between the
- * asking statuses doesn't.
+ * into or out of an order status (Order Placed and after), sets who ordered
+ * it, who it ships to or when it arrives, or changes anything about an item
+ * that's already ordered. Changing between the asking statuses doesn't, and
+ * neither does changing anything else about a request.
  */
 export function isOrderChange(item: PurchaseItem | null, changes: NewItem): boolean {
   const orderedBy = changes.ordered_by || null
@@ -246,7 +259,47 @@ export function isOrderChange(item: PurchaseItem | null, changes: NewItem): bool
   const arrival = changes.estimated_arrival || null
   if (!item) return !isAsking(changes.status) || orderedBy !== null || shippedTo !== null || arrival !== null
   const statusMoved = changes.status !== item.status && (!isAsking(item.status) || !isAsking(changes.status))
-  return statusMoved || orderedBy !== item.ordered_by || shippedTo !== item.shipped_to || arrival !== item.estimated_arrival
+  const fields = itemFields(changes)
+  const orderEdited = !isAsking(item.status) && ORDER_LOCKED_FIELDS.some((field) => fields[field] !== item[field])
+  return statusMoved || orderEdited || orderedBy !== item.ordered_by || shippedTo !== item.shipped_to || arrival !== item.estimated_arrival
+}
+
+// ---------------------------------------------------------------------------
+// Prices.
+
+/** People type a price their own way, so "$1,250" is fine. */
+const plainPrice = (text: string) => text.replace(/[$,\s]/g, '')
+
+/** What's typed in the price box as a number, or null if it's empty. */
+export function priceFrom(text: string): number | null {
+  const price = plainPrice(text)
+  return price ? Number(price) : null
+}
+
+/** What's wrong with what's typed in the price box, or null if it's fine. */
+export function priceProblem(text: string): string | null {
+  const price = plainPrice(text)
+  if (!price) return null
+  if (!/^(\d+\.?\d{0,2}|\.\d{1,2})$/.test(price)) return 'Type the price of one item in dollars and cents, like 12.50, or leave it empty.'
+  if (Number(price) > MAX_PRICE) return `Check the price: one item can be up to ${money(MAX_PRICE)}.`
+  return null
+}
+
+/** The price of the whole line: one item's price times the number needed. Counted in cents, so it adds up exactly. */
+export function lineTotal(item: Pick<PurchaseItem, 'price' | 'quantity'>): number | null {
+  return item.price === null ? null : (Math.round(item.price * 100) * item.quantity) / 100
+}
+
+/** "$12.50 each · $50.00 total", just "$12.50" for one item, or nothing if there's no price. */
+export function priceText(item: Pick<PurchaseItem, 'price' | 'quantity'>): string | null {
+  const total = lineTotal(item)
+  if (item.price === null || total === null) return null
+  return item.quantity === 1 ? money(item.price) : `${money(item.price)} each · ${money(total)} total`
+}
+
+/** priceText() for what's in the form, or nothing while what's typed isn't a price yet. */
+export function formPriceText(form: Pick<NewItem, 'price' | 'quantity'>): string | null {
+  return priceProblem(form.price) ? null : priceText({ price: priceFrom(form.price), quantity: form.quantity })
 }
 
 // ---------------------------------------------------------------------------
@@ -523,7 +576,7 @@ export function usePurchasingSummary(): Notice {
 // ---------------------------------------------------------------------------
 // Adding, changing and deleting items.
 
-/** What someone types in. The link, part number, notes, Ordered by and Shipped to can be left empty. */
+/** What someone types in. The link, part number, price, notes, Ordered by and Shipped to can be left empty. */
 export interface NewItem {
   name: string
   status: StatusKey
@@ -532,6 +585,8 @@ export interface NewItem {
   link: string
   part_number: string
   quantity: number
+  /** What one costs, as typed, like "12.50". Empty if nobody knows yet. */
+  price: string
   notes: string
   /** Members' ids, or empty for nobody yet. Mentors and purchasers only. */
   ordered_by: string
@@ -541,7 +596,7 @@ export interface NewItem {
 }
 
 export const EMPTY_ITEM: NewItem = {
-  name: '', status: FIRST_STATUS, vendor: '', type: '', link: '', part_number: '', quantity: 1, notes: '', ordered_by: '', shipped_to: '', estimated_arrival: '',
+  name: '', status: FIRST_STATUS, vendor: '', type: '', link: '', part_number: '', quantity: 1, price: '', notes: '', ordered_by: '', shipped_to: '', estimated_arrival: '',
 }
 
 /**
@@ -586,6 +641,7 @@ export function itemToForm(item: PurchaseItem): NewItem {
     link: item.link ?? '',
     part_number: item.part_number ?? '',
     quantity: item.quantity,
+    price: item.price === null ? '' : item.price.toFixed(2),
     notes: item.notes ?? '',
     ordered_by: item.ordered_by ?? '',
     shipped_to: item.shipped_to ?? '',
@@ -621,6 +677,8 @@ export function checkItem(item: NewItem): string | null {
   if (item.type.trim().length > 100) return 'Keep the type under 100 characters.'
   if (!Number.isInteger(item.quantity) || item.quantity < 1) return 'Ask for at least 1.'
   if (item.quantity > MAX_QUANTITY) return `That's a lot. Ask for ${MAX_QUANTITY} or fewer.`
+  const badPrice = priceProblem(item.price)
+  if (badPrice) return badPrice
   const link = item.link.trim()
   if (link && !/^https:\/\/\S+$/.test(link)) return "The link should be the product's page, starting with https://"
   if (link.length > MAX_LINK_LENGTH) return `That link is too long. Keep it under ${MAX_LINK_LENGTH} characters.`
@@ -640,6 +698,7 @@ const itemFields = (item: NewItem) => ({
   link: item.link.trim() || null,
   part_number: item.part_number.trim() || null,
   quantity: item.quantity,
+  price: priceFrom(item.price),
   notes: item.notes.trim() || null,
   ordered_by: item.ordered_by || null,
   shipped_to: item.shipped_to || null,
