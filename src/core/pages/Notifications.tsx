@@ -3,7 +3,7 @@ import { shortDate } from '../format'
 import { toast } from '../toast'
 import { PageHead, Panel } from '../ui'
 import { SHOWN_NOTIFICATIONS, deleteNotification, markAllRead, markRead, notificationHref, unreadCount, useNotifications, type AppNotification } from '../notifications'
-import { BLOCKED_TEXT, SUPPORT_TEXT, pushKey, pushState, sendTest, turnOffPush, turnOnPush, type PushState } from '../push'
+import { BLOCKED_TEXT, IPHONE_STEPS, SUPPORT_TEXT, pushKey, pushState, sendTest, turnOffPush, turnOnPush, type PushState } from '../push'
 
 type Outcome = { ok: true; value: unknown } | { ok: false; error: string }
 
@@ -131,7 +131,12 @@ function ThisDevice(props: { state: PushState | null; busy: boolean; run: (actio
           </>
         )}
         {state === 'blocked' && <p>{BLOCKED_TEXT}</p>}
-        {(state === 'iphone' || state === 'unsupported') && <p>{SUPPORT_TEXT[state]}</p>}
+        {(state === 'add-to-home-screen' || state === 'update-iphone' || state === 'unsupported') && <p>{SUPPORT_TEXT[state]}</p>}
+        {state === 'add-to-home-screen' && (
+          <ol style={{ margin: 0, paddingLeft: '1.4em', display: 'grid', gap: 6 }}>
+            {IPHONE_STEPS.map((step) => <li key={step}>{step}</li>)}
+          </ol>
+        )}
         <p className="note">Turn them on separately on each phone or computer you use.</p>
       </div>
     </Panel>

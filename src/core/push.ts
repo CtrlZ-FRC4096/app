@@ -14,7 +14,8 @@
  *     team's private key and sends to those addresses.
  *
  * Each phone or computer is turned on separately. iPhones only allow this
- * for apps on the Home Screen, which the team app doesn't support yet.
+ * for apps added to the Home Screen and opened from there, in their own
+ * window (public/manifest.webmanifest), on iOS 16.4 or later.
  *
  * Demo mode has no server: turning on only asks the browser, and the test
  * comes from the browser itself, so you can still see what one looks like.
@@ -27,11 +28,20 @@ import { fail, ok, type Result } from './table'
 /** The service worker, next to index.html. */
 const WORKER = './sw.js'
 
-/** What this browser can do about notifications. */
-export type PushSupport = 'ready' | 'iphone' | 'unsupported'
+/**
+ * What this browser can do about notifications:
+ *
+ *   - ready: it can turn them on.
+ *   - add-to-home-screen: an iPhone in Safari (or another browser). It has
+ *     to be opened from a Home Screen icon first.
+ *   - update-iphone: opened from the Home Screen, but too old: they came
+ *     in iOS 16.4.
+ *   - unsupported: anything else that can't.
+ */
+export type PushSupport = 'ready' | 'add-to-home-screen' | 'update-iphone' | 'unsupported'
 
 /** Where notifications are up to on this device. */
-export type PushState = 'on' | 'off' | 'blocked' | 'iphone' | 'unsupported'
+export type PushState = 'on' | 'off' | 'blocked' | Exclude<PushSupport, 'ready'>
 
 /** What we know about the browser. A plain object, so it can be tested. */
 export interface Device {
@@ -40,16 +50,19 @@ export interface Device {
   notification: boolean
   /** An iPhone or iPad. */
   ios: boolean
+  /** Opened from a Home Screen icon, in its own window rather than a browser tab. */
+  standalone: boolean
 }
 
 export function pushSupport(device: Device): PushSupport {
   if (device.serviceWorker && device.pushManager && device.notification) return 'ready'
-  return device.ios ? 'iphone' : 'unsupported'
+  if (!device.ios) return 'unsupported'
+  return device.standalone ? 'update-iphone' : 'add-to-home-screen'
 }
 
 export function thisDevice(): Device {
   if (typeof window === 'undefined' || typeof navigator === 'undefined') {
-    return { serviceWorker: false, pushManager: false, notification: false, ios: false }
+    return { serviceWorker: false, pushManager: false, notification: false, ios: false, standalone: false }
   }
   const agent = navigator.userAgent
   return {
@@ -58,6 +71,7 @@ export function thisDevice(): Device {
     notification: 'Notification' in window,
     // iPads say they're Macs, but Macs don't have touch screens.
     ios: /iPhone|iPad|iPod/.test(agent) || (/Macintosh/.test(agent) && navigator.maxTouchPoints > 1),
+    standalone: window.matchMedia?.('(display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true,
   }
 }
 
@@ -92,9 +106,18 @@ export function testResultText(answer: { sent: number; removed: number; failed: 
 }
 
 export const SUPPORT_TEXT: Record<Exclude<PushSupport, 'ready'>, string> = {
-  iphone: "iPhones only allow notifications for apps on the Home Screen, and the team app can't work that way yet. It's being worked on. Until then, Slack messages still reach you.",
+  'add-to-home-screen': 'On an iPhone, notifications only work when the app is opened from your Home Screen.',
+  'update-iphone': 'This iPhone needs iOS 16.4 or later for notifications. Update it in Settings > General > Software Update, then come back here.',
   unsupported: "This browser can't show notifications. Try Chrome on an Android phone, or a computer.",
 }
+
+/** How to add the app to an iPhone's Home Screen, one step each. */
+export const IPHONE_STEPS = [
+  'Tap the Share button (the square with an arrow pointing up). In Safari it\'s at the bottom, or under the ••• button.',
+  'Scroll down and tap Add to Home Screen, then Add.',
+  'Open the app from the new Ctrl-Z icon on your Home Screen, and sign in with Slack.',
+  'Tap the bell at the top right, then Turn on.',
+]
 
 export const BLOCKED_TEXT = "Notifications are blocked for this site. Allow them in your browser's settings for this site, then reload the page."
 

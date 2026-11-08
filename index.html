@@ -9,7 +9,12 @@
       The icon a phone shows for the app on its home screen ("Add to Home
       Screen"): the team logo on team blue. iPhones use apple-touch-icon;
       Android uses the icons in manifest.webmanifest. The manifest opens the
-      app in the browser, not as a separate window, so Slack sign-in works.
+      app from the home screen in its own window ("standalone"): iPhones
+      only allow notifications for apps opened that way (src/core/push.ts).
+      Slack sign-in opens over the app and comes back to it. If sign-in ever
+      stops working from the home screen, change "standalone" back to
+      "browser" there: the app then opens in the browser again, without
+      phone notifications on iPhone.
     -->
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <link rel="manifest" href="./manifest.webmanifest" />
