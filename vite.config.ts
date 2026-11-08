@@ -16,5 +16,10 @@ export default defineConfig({
       VITE_SUPABASE_URL: '',
       VITE_SUPABASE_PUBLISHABLE_KEY: '',
     },
+    // Each file in supabase/tests starts its own test database before its
+    // tests run. With every file starting at once on a busy computer, that
+    // can take longer than the usual 10 seconds, even though each test
+    // itself is quick (they keep the usual limit).
+    hookTimeout: 30_000,
   },
 })

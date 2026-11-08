@@ -1,9 +1,11 @@
 // Tests for the parts of the server functions (supabase/functions/) that
 // don't need Deno or a network: reading the caller's ID from their token,
-// and what the tba function asks The Blue Alliance.
+// what the tba function asks The Blue Alliance, and what the push function
+// allows.
 import { describe, expect, it, vi } from 'vitest'
 import { tokenSubject } from '../functions/_shared/token.ts'
 import { createTba, tbaPath, TBA_API } from '../functions/tba/tba.ts'
+import { isGone, pushRequest, testMessage } from '../functions/push/push.ts'
 
 const ID = '00000000-0000-4000-8000-000000000001'
 const base64url = (value: object) => btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -20,6 +22,36 @@ describe('tokenSubject', () => {
     expect(tokenSubject('Bearer a.!!!.c')).toBeNull()
     expect(tokenSubject(token({ role: 'anon' }))).toBeNull()
     expect(tokenSubject(token({ sub: "1' or '1'='1" }))).toBeNull()
+  })
+})
+
+describe('pushRequest', () => {
+  it('allows the key and a test', () => {
+    expect(pushRequest({ kind: 'key' })).toEqual({ kind: 'key' })
+    expect(pushRequest({ kind: 'test' })).toEqual({ kind: 'test' })
+  })
+
+  it("refuses anything else, so it can't send other messages yet", () => {
+    expect(pushRequest({ kind: 'send', text: 'Hi everyone' })).toHaveProperty('status', 400)
+    expect(pushRequest(null)).toHaveProperty('error')
+    expect(pushRequest('test')).toHaveProperty('error')
+  })
+})
+
+describe('testMessage', () => {
+  it('greets you by first name and opens the Notifications page', () => {
+    expect(testMessage('Riley Park')).toEqual({ title: 'Ctrl-Z', body: 'Hi Riley! Notifications are working on this device.', url: './#/notifications' })
+    expect(testMessage('  ').body).toBe('Hi there! Notifications are working on this device.')
+  })
+})
+
+describe('isGone', () => {
+  it('is true only when the push service says the device is gone for good', () => {
+    expect(isGone(404)).toBe(true)
+    expect(isGone(410)).toBe(true)
+    expect(isGone(429)).toBe(false)
+    expect(isGone(500)).toBe(false)
+    expect(isGone(undefined)).toBe(false)
   })
 })
 

@@ -11,6 +11,8 @@ import { toast, useToast } from './core/toast'
 import { ErrorBoundary } from './core/ErrorBoundary'
 import { Home } from './core/pages/Home'
 import { Message } from './core/pages/Message'
+import { Notifications } from './core/pages/Notifications'
+import { badgeText, bellLabel, useUnreadCount } from './core/notifications'
 import { Checking, NoAccess, SignIn } from './core/pages/SignIn'
 
 const CONTRIBUTING = 'https://github.com/CtrlZ-FRC4096/app/blob/main/CONTRIBUTING.md'
@@ -130,6 +132,7 @@ function Shell({ user }: { user: User }) {
               </Menu>
             ))}
           </nav>
+          <Bell current={id === 'notifications'} />
           <Menu
             className="account"
             panelId="menu-account"
@@ -225,6 +228,20 @@ function Menu(props: {
   )
 }
 
+/** The bell at the top right: opens Notifications, with how many are new. See src/core/notifications.ts. */
+function Bell(props: { current: boolean }) {
+  const count = useUnreadCount()
+  return (
+    <a className="nav-link bell" href="#/notifications" aria-label={bellLabel(count)} aria-current={props.current ? 'page' : undefined}>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+        <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+      </svg>
+      {count > 0 && <span className="bell-count" aria-hidden="true">{badgeText(count)}</span>}
+    </a>
+  )
+}
+
 /** The one line under the top bar: what state the app is in, and how to help. */
 function Banner() {
   return (
@@ -251,6 +268,7 @@ function Banner() {
 function Page({ id }: { id: string }) {
   const { role } = useSession()
   if (id === '') return <Home />
+  if (id === 'notifications') return <Notifications />
   const module = modules.find((m) => m.id === id)
   if (!module) return <Message title="Page not found">There's no module called "{id}". It may have been renamed.</Message>
   if (!canOpen(role, module.roles)) return <Message title="Not available">Your role can't open {module.name}. Ask a mentor if you need it.</Message>

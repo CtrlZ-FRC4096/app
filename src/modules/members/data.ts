@@ -70,11 +70,12 @@ interface Hello {
  * Are the server functions deployed, and do their keys work? Asks the
  * example `hello` function, then The Blue Alliance for team 4096, Onshape
  * whether the keys open anything (one Onshape API call), Slack to send you
- * a test message, and Google which calendar it is.
+ * a test message, Google which calendar it is, and the push function for
+ * its key.
  */
 export async function checkServerFunctions(): Promise<FunctionCheck[]> {
   const demoSecrets = Object.fromEntries(
-    ['TBA_KEY', 'ONSHAPE_ACCESS_KEY', 'ONSHAPE_SECRET_KEY', 'SLACK_BOT_TOKEN', 'GOOGLE_SERVICE_ACCOUNT_KEY', 'GOOGLE_CALENDAR_ID'].map((name) => [name, true]),
+    ['TBA_KEY', 'ONSHAPE_ACCESS_KEY', 'ONSHAPE_SECRET_KEY', 'SLACK_BOT_TOKEN', 'GOOGLE_SERVICE_ACCOUNT_KEY', 'GOOGLE_CALENDAR_ID', 'VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY'].map((name) => [name, true]),
   )
   const hello = await callFunction<Hello>('hello', {}, () => ({ message: 'Hi', role: 'mentor', secrets: demoSecrets }))
   if (!hello.ok) return [{ name: 'Server functions', ok: false, text: hello.error }]
@@ -140,6 +141,18 @@ export async function checkServerFunctions(): Promise<FunctionCheck[]> {
         text: `The app can see "${calendar.value.name}" but can't add events. In Google Calendar, share it with ${calendar.value.serviceAccount} and pick "Make changes to events".`,
       })
     }
+  }
+
+  const noPush = missing(['VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY'])
+  if (noPush) {
+    checks.push({ name: 'Phone notifications', ok: false, text: noPush })
+  } else {
+    const push = await callFunction<{ key: string }>('push', { kind: 'key' }, () => ({ key: 'demo' }))
+    checks.push(
+      push.ok
+        ? { name: 'Phone notifications', ok: true, text: 'Working: the keys are set. Turn notifications on from the menu at the top right, then send yourself a test.' }
+        : { name: 'Phone notifications', ok: false, text: push.error },
+    )
   }
   return checks
 }

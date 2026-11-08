@@ -9,6 +9,7 @@ import { setUpTestDatabase } from './database'
 // Load every module's data.ts so all their tables are made.
 import.meta.glob('../../src/modules/*/data.ts', { eager: true })
 import '../../src/core/members'
+import '../../src/core/notifications'
 
 const db = setUpTestDatabase()
 const tables = allTables()

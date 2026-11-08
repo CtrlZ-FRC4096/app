@@ -199,6 +199,7 @@ the functions can read.
 | `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio. For the CNC module: parts' sizes and outlines, and where parts sit in a sheet's layout assembly |
 | `slack` | Slack messages from the team's bot: to yourself (anyone), or to people and a channel (mentors). Used through `src/core/slack.ts` |
 | `calendar` | The team's Google Calendar: everyone sees its events; mentors add events, and change or remove the ones the app added. Used through `src/core/calendar.ts` |
+| `push` | Phone notifications (Web Push): the public key browsers need to turn them on, and a test to your own devices. Uses the `web-push` package (a mentor approved it). Used through `src/core/push.ts`. The same notifications are kept in the app too, in the `notifications` table behind the bell (`src/core/notifications.ts`) |
 
 Slack reminders that go out by themselves on a schedule don't use a server
 function: see [Slack reminders on a schedule](#slack-reminders-on-a-schedule).
@@ -231,6 +232,7 @@ paste a key anywhere else, including chat.
 | Slack bot token (`xoxb-...`) | `SLACK_BOT_TOKEN` | Supabase **and** GitHub (the attendance pull and reminders use GitHub's) |
 | Google service account key (a JSON file) | `GOOGLE_SERVICE_ACCOUNT_KEY` | Supabase |
 | The team calendar's ID | `GOOGLE_CALENDAR_ID` | Supabase |
+| Phone notification keys (VAPID) | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Supabase |
 
 1. **Let GitHub deploy functions.** Sign in to
    [supabase.com](https://supabase.com) with the coaches' shared account,
@@ -305,9 +307,24 @@ paste a key anywhere else, including chat.
    7. In Supabase, add `GOOGLE_SERVICE_ACCOUNT_KEY`: open the JSON file in
       a text editor and paste all of it. Then add `GOOGLE_CALENDAR_ID`: the
       calendar ID.
-6. **Deploy:** **Actions > Deploy > Run workflow** on `main`.
-7. **Check:** in the app, **Members > Server functions > Check them**. Every
-   line should say OK, and the Slack bot sends you a test message.
+6. **Add the keys for phone notifications.** They're a pair the team
+   makes itself, with no account anywhere: push services only check that
+   every message is signed with the same private key.
+   1. On your own computer, with Node installed, run
+      `npx web-push generate-vapid-keys`. It downloads the tool just for
+      this, and changes nothing in the app.
+   2. In Supabase's **Edge Functions > Secrets**, add `VAPID_PUBLIC_KEY`
+      and `VAPID_PRIVATE_KEY` from what it printed. Keep both in
+      Bitwarden. Never commit the private key or paste it anywhere else:
+      anyone with it could send notifications as the team app.
+   3. Only change them if the private key leaks. Everyone would have to
+      turn notifications on again, because devices only accept the key
+      they signed up with.
+7. **Deploy:** **Actions > Deploy > Run workflow** on `main`.
+8. **Check:** in the app, **Members > Server functions > Check them**. Every
+   line should say OK, and the Slack bot sends you a test message. Then
+   open **Notifications** from the menu at the top right, turn them on and
+   **Send me a test**.
 
 A new secret works straight away, with no redeploy. To change one, set it
 again with the same name.

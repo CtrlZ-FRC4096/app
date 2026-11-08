@@ -105,8 +105,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
  */
 .logo { width: 40px; height: 39px; background-color: var(--blue); -webkit-mask: url('./logo.png') center / contain no-repeat; mask: url('./logo.png') center / contain no-repeat; }
 .brand:hover .logo { background-color: var(--orange); }
-/* On a phone the logo and the account share the first line, the menus go below. */
-.topbar .account { order: 2; }
+/* On a phone the logo, the bell and the account share the first line, the menus go below. */
+.topbar .account, .topbar .bell { order: 2; }
+/* The bell (Bell in src/App.tsx) and how many notifications are new. */
+.bell { padding: 7px 9px; }
+.bell-count { position: absolute; top: 2px; right: 1px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; display: grid; place-items: center; background: var(--orange); color: #fff; font-family: var(--body, inherit); font-size: 11px; font-weight: 700; line-height: 1; }
 .nav { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; flex-basis: 100%; order: 3; }
 .nav-link, .menu-btn { position: relative; display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 7px 11px; border: 0; border-radius: var(--radius); background: none; color: var(--header-muted); font-family: var(--display); font-weight: 600; font-size: 16.5px; letter-spacing: 0.01em; text-decoration: none; cursor: pointer; }
 .nav-link:hover, .menu-btn:hover, .menu-btn[aria-expanded='true'] { color: var(--header-ink); background: var(--surface-2); }
@@ -136,7 +139,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 @media (min-width: 880px) {
   .brand { margin-right: 8px; }
   .nav { flex-basis: auto; margin-right: auto; order: 0; }
-  .topbar .account { order: 0; }
+  .topbar .account, .topbar .bell { order: 0; }
 }
 @media (max-width: 560px) {
   .nav-link, .menu-btn { font-size: 15.5px; padding: 7px 9px; }
