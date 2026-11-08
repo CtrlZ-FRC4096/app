@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import { keyBytes, pushSupport, savedDevice, testResultText, thisDevice } from './push'
 
-const everything = { serviceWorker: true, pushManager: true, notification: true, ios: false }
+const everything = { serviceWorker: true, pushManager: true, notification: true, ios: false, standalone: false }
 
 describe('pushSupport', () => {
   it('is ready when the browser has all three parts', () => {
@@ -12,8 +12,16 @@ describe('pushSupport', () => {
     expect(pushSupport({ ...everything, ios: true })).toBe('ready')
   })
 
-  it("says it's an iPhone when Safari doesn't offer them, so the page can explain", () => {
-    expect(pushSupport({ ...everything, pushManager: false, ios: true })).toBe('iphone')
+  it('is ready on an iPhone opened from the Home Screen', () => {
+    expect(pushSupport({ ...everything, ios: true, standalone: true })).toBe('ready')
+  })
+
+  it('says to add it to the Home Screen on an iPhone in Safari, which never offers them', () => {
+    expect(pushSupport({ ...everything, pushManager: false, notification: false, ios: true })).toBe('add-to-home-screen')
+  })
+
+  it('says to update an iPhone that is opened from the Home Screen but too old', () => {
+    expect(pushSupport({ ...everything, pushManager: false, notification: false, ios: true, standalone: true })).toBe('update-iphone')
   })
 
   it("is unsupported when something's missing on anything else", () => {
