@@ -70,12 +70,13 @@ describe('checkServerFunctions', () => {
   it('says which keys are missing, without calling those functions', async () => {
     const checks = await withAnswers({ hello: { ok: true, value: { message: 'Hi Pat', role: 'admin', secrets: { TBA_KEY: false, ONSHAPE_ACCESS_KEY: true } } } })
     expect(checks.map((c) => [c.name, c.ok])).toEqual([
-      ['Server functions', true], ['The Blue Alliance', false], ['Onshape', false], ['Slack', false], ['Google Calendar', false],
+      ['Server functions', true], ['The Blue Alliance', false], ['Onshape', false], ['Slack', false], ['Google Calendar', false], ['Phone notifications', false],
     ])
     expect(checks[1].text).toMatch(/TBA_KEY/)
     expect(checks[2].text).toBe('No ONSHAPE_SECRET_KEY secret yet. Add it in Supabase: see "Server functions" in supabase/README.md.')
     expect(checks[3].text).toBe('No SLACK_BOT_TOKEN secret yet. Add it in Supabase: see "Server functions" in supabase/README.md.')
     expect(checks[4].text).toBe('No GOOGLE_SERVICE_ACCOUNT_KEY and GOOGLE_CALENDAR_ID secrets yet. Add them in Supabase: see "Server functions" in supabase/README.md.')
+    expect(checks[5].text).toBe('No VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY secrets yet. Add them in Supabase: see "Server functions" in supabase/README.md.')
   })
 
   it('has Slack send you a test message, and asks Google which calendar it is', async () => {
@@ -83,7 +84,7 @@ describe('checkServerFunctions', () => {
     const hello = { ok: true as const, value: { message: 'Hi Pat', role: 'admin', secrets } }
     const calendar = (canAdd: boolean) => ({ ok: true as const, value: { name: 'Ctrl-Z', canAdd, serviceAccount: 'app@x.iam.gserviceaccount.com' } })
     const working = await withAnswers({ hello, slack: { ok: true, value: { bot: 'ctrl-z_team_app' } }, calendar: calendar(true) })
-    expect(working.slice(3)).toEqual([
+    expect(working.slice(3, 5)).toEqual([
       { name: 'Slack', ok: true, text: 'Working: the bot (ctrl-z_team_app) sent you a test message in Slack.' },
       { name: 'Google Calendar', ok: true, text: 'Working: the app can see and add events in "Ctrl-Z".' },
     ])
@@ -98,6 +99,14 @@ describe('checkServerFunctions', () => {
     expect(working[2]).toEqual({ name: 'Onshape', ok: true, text: 'Working: Onshape accepted the keys. Import a system from the BOM page.' })
     const turnedDown = await withAnswers({ hello, tba: { ok: true, value: { nickname: 'Ctrl-Z' } }, onshape: { ok: false, error: 'Onshape turned down the keys.' } })
     expect(turnedDown[2]).toEqual({ name: 'Onshape', ok: false, text: 'Onshape turned down the keys.' })
+  })
+
+  it('asks the push function for its key when both keys are set', async () => {
+    const hello = { ok: true as const, value: { message: 'Hi Pat', role: 'admin', secrets: { VAPID_PUBLIC_KEY: true, VAPID_PRIVATE_KEY: true } } }
+    const working = await withAnswers({ hello, push: { ok: true, value: { key: 'BAAA' } } })
+    expect(working[5]).toMatchObject({ name: 'Phone notifications', ok: true, text: expect.stringMatching(/^Working: the keys are set/) })
+    const broken = await withAnswers({ hello, push: { ok: false, error: "The push server function isn't set up yet." } })
+    expect(broken[5]).toEqual({ name: 'Phone notifications', ok: false, text: "The push server function isn't set up yet." })
   })
 
   it('asks The Blue Alliance for team 4096 when the key is set', async () => {
