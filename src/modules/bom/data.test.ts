@@ -7,7 +7,7 @@ import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import { membersTable } from '../../core/members'
 import {
   addPart, addRobot, addSystem, bomSummary, canEditRobotsAndParts, changePart, changeSystem, checkPart, checkSystem, countParts, filterParts, kindLabel,
-  nextPartNumber, partCountText, partsTable, orderWord, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, systemsTable,
+  nextPartNumber, partCountText, partsTable, orderWord, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, shortageFor, shortages, systemsTable, toOrder, toOrderCsv, NO_VENDOR,
   type NewPart, type Part,
 } from './data'
 import { itemsTable, type Item } from '../inventory/data'
@@ -568,5 +568,110 @@ describe('shelfItem and shelfText', () => {
     const text = (name: string) => shelfText(intake.find((p) => p.name === name)!, itemsTable.rows())
     expect(text('Compliant wheel, 2 in')).toBe('On the shelf: 12 · Bin M3')
     expect(text('Flanged bearing, 1/2 in hex')).toBe('On the shelf: 4 · Bin M1 · Missing 2')
+  })
+})
+
+describe('shortages', () => {
+  const cots = filterParts(parts(), 'COTS')[0]
+  const cotsPart = (fields: Partial<Part>) => ({ ...cots, vendor: 'WCP', vendor_part_number: 'WCP-0001', quantity: 6, ...fields }) as Part
+  const item = (fields: Partial<Item>) => ({ ...itemsTable.rows()[0], vendor: 'WCP', vendor_part_number: 'WCP-0001', location: 'Bin M1', quantity: 4, ...fields }) as Item
+  const intake = cotsPart({ id: 'in-intake', system_id: 'intake', quantity: 6 })
+  const drivetrain = cotsPart({ id: 'in-drivetrain', system_id: 'drivetrain', quantity: 4, vendor_part_number: ' wcp-0001' })
+
+  it('counts a part used in two systems once, with both quantities added', () => {
+    expect(shortages([intake, drivetrain], [item({ quantity: 7 })])).toEqual([
+      { name: intake.name, vendor: 'WCP', vendor_part_number: 'WCP-0001', needed: 10, on_shelf: 7, short: 3, parts: [intake, drivetrain] },
+    ])
+  })
+
+  it('counts a part that is not in Inventory as fully short, still added up across systems', () => {
+    expect(shortages([intake, drivetrain], [])).toMatchObject([{ needed: 10, on_shelf: 0, short: 10 }])
+  })
+
+  it('is short by 0 when the shelf has enough or more', () => {
+    expect(shortages([intake], [item({ quantity: 6 })])).toMatchObject([{ needed: 6, on_shelf: 6, short: 0 }])
+    expect(shortages([intake], [item({ quantity: 9 })])).toMatchObject([{ short: 0 }])
+  })
+
+  it('keeps different parts apart, and parts with no vendor part number on their own', () => {
+    const other = cotsPart({ id: 'other', vendor_part_number: 'WCP-0002', quantity: 2 })
+    const unnumbered = [cotsPart({ id: 'a', vendor_part_number: null }), cotsPart({ id: 'b', vendor_part_number: null })]
+    expect(shortages([intake, other, ...unnumbered], [item({})]).map((s) => [s.needed, s.short])).toEqual([[6, 2], [2, 2], [6, 6], [6, 6]])
+  })
+
+  it('leaves out custom parts and parts removed in Onshape', () => {
+    const removed = cotsPart({ id: 'gone', removed_in_onshape: true })
+    expect(shortages([filterParts(parts(), 'Custom')[0], removed, intake], [])).toMatchObject([{ needed: 6 }])
+  })
+
+  it('finds the line a part is in', () => {
+    const all = shortages([intake, drivetrain], [])
+    expect(shortageFor(drivetrain, all)).toBe(all[0])
+    expect(shortageFor(cotsPart({ id: 'elsewhere' }), all)).toBeUndefined()
+  })
+
+  it('makes the page count every system: Missing is for the whole robot', () => {
+    const shelf = [item({ quantity: 7 })]
+    const [line] = shortages([intake, drivetrain], shelf)
+    // On its own the drivetrain's 4 look covered by 7 on the shelf. With the intake's 6, they aren't.
+    expect(shelfText(drivetrain, shelf)).toBe('On the shelf: 7 · Bin M1')
+    expect(shelfText(drivetrain, shelf, undefined, line)).toBe('On the shelf: 7 · Bin M1 · Robot needs 10 in 2 systems · Missing 3')
+    expect(shelfText(intake, shelf, undefined, shortages([intake], shelf)[0])).toBe('On the shelf: 7 · Bin M1')
+  })
+})
+
+describe('toOrder', () => {
+  const cots = filterParts(parts(), 'COTS')[0]
+  const cotsPart = (id: string, fields: Partial<Part>) => ({ ...cots, id, name: id, vendor: 'WCP', vendor_part_number: id, quantity: 6, ...fields }) as Part
+  const request = (bom_part_id: string, quantity: number, status: PurchaseItem['status']) =>
+    ({ ...purchaseTable.rows()[0], bom_part_id, quantity, status }) as PurchaseItem
+  const byPart = (...requests: PurchaseItem[]) => new Map(requests.map((r) => [r.bom_part_id!, r]))
+  const list = (all: Part[], requests = byPart()) => toOrder(shortages(all, []), requests)
+
+  it('lists only what is short, grouped by vendor, vendors and parts in ABC order', () => {
+    const shelf = [{ ...itemsTable.rows()[0], vendor: 'WCP', vendor_part_number: 'enough', quantity: 6 }]
+    const all = [cotsPart('enough', {}), cotsPart('Wheel', { vendor: 'REV Robotics' }), cotsPart('Shaft', {}), cotsPart('Bearing', {})]
+    const orders = toOrder(shortages(all, shelf), byPart())
+    expect(orders.map((o) => [o.vendor, o.lines.map((l) => l.name)])).toEqual([['REV Robotics', ['Wheel']], ['West Coast Products', ['Bearing', 'Shaft']]])
+  })
+
+  it("puts a vendor typed two ways in one group, under Purchasing's name for it", () => {
+    const orders = list([cotsPart('a', { vendor: 'AndyMark' }), cotsPart('b', { vendor: 'andy mark' })])
+    expect(orders.map((o) => [o.vendor, o.lines.length])).toEqual([['Andy Mark', 2]])
+  })
+
+  it('groups parts with no vendor together', () => {
+    expect(list([cotsPart('a', { vendor: null }), cotsPart('b', { vendor: ' ' })]).map((o) => o.vendor)).toEqual([NO_VENDOR])
+  })
+
+  it("takes off what's already in Purchasing, so nothing is ordered twice", () => {
+    const part = cotsPart('a', { quantity: 6 })
+    expect(list([part], byPart(request('a', 2, 'order')))[0].lines[0]).toMatchObject({ short: 6, in_purchasing: 2, to_order: 4 })
+    expect(list([part], byPart(request('a', 6, 'placed')))).toEqual([])
+    expect(list([part], byPart(request('a', 10, 'received')))).toEqual([])
+  })
+
+  it("doesn't count a request that was cancelled, is Out of Stock, or is In Shop (so Inventory should have it)", () => {
+    const part = cotsPart('a', { quantity: 6 })
+    for (const status of ['cancelled', 'out_of_stock', 'in_shop'] as const) {
+      expect(list([part], byPart(request('a', 6, status)))[0].lines[0]).toMatchObject({ in_purchasing: 0, to_order: 6 })
+    }
+  })
+
+  it('adds up the requests of every system that uses the part', () => {
+    const intake = cotsPart('intake', { vendor_part_number: 'SAME', quantity: 6 })
+    const drivetrain = cotsPart('drivetrain', { vendor_part_number: 'SAME', quantity: 4 })
+    const orders = list([intake, drivetrain], byPart(request('intake', 3, 'order'), request('drivetrain', 2, 'placed')))
+    expect(orders[0].lines[0]).toMatchObject({ needed: 10, in_purchasing: 5, to_order: 5 })
+  })
+})
+
+describe('toOrderCsv', () => {
+  it('has a heading row, then a row for each part with its vendor', () => {
+    const line = { name: 'Bearing, 1/2 in', vendor: 'WCP', vendor_part_number: 'WCP-0001', needed: 10, on_shelf: 4, short: 6, parts: [], in_purchasing: 1, to_order: 5 }
+    const noNumber = { ...line, name: '=Wheel', vendor_part_number: null, to_order: 2 }
+    expect(toOrderCsv([{ vendor: 'WCP', lines: [line] }, { vendor: NO_VENDOR, lines: [noNumber] }])).toBe(
+      'Vendor,Vendor part number,Part,Quantity to order\r\nWCP,WCP-0001,"Bearing, 1/2 in",5\r\nNo vendor yet,,\'=Wheel,2\r\n',
+    )
   })
 })

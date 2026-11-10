@@ -29,7 +29,8 @@ import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 import type { OnshapeBom, OnshapeImportPlan } from './onshape'
 import type { Item } from '../inventory/data'
-import { isAsking, type PurchaseItem, type StatusKey } from '../purchasing/data'
+import { toCsv } from '../attendance/data'
+import { isAsking, vendorFor, type PurchaseItem, type StatusKey } from '../purchasing/data'
 
 /** One row of bom_robots. */
 export interface Robot extends Row {
@@ -160,6 +161,12 @@ export function useParts(systemId: string | undefined): Part[] {
   return partsTable.useRows().filter((p) => p.system_id === systemId)
 }
 
+/** Every part in one robot, across all its systems. */
+export function useRobotParts(robotId: string | undefined): Part[] {
+  const systems = new Set(systemsTable.useRows().filter((s) => s.robot_id === robotId).map((s) => s.id))
+  return partsTable.useRows().filter((p) => systems.has(p.system_id))
+}
+
 /** The choices in the page's Custom / COTS filter. */
 export const PART_FILTERS = ['All', 'Custom', 'COTS'] as const
 export type PartFilter = (typeof PART_FILTERS)[number]
@@ -243,19 +250,122 @@ export function orderWord(status: StatusKey): 'Ordering' | 'Ordered' | 'Received
   return isAsking(status) ? 'Ordering' : 'Ordered'
 }
 
+/** One bought part, added up across every system that uses it (#17). */
+export interface Shortage {
+  name: string
+  vendor: string | null
+  vendor_part_number: string | null
+  /** How many the robot needs: the quantities of every line that uses it, added up. */
+  needed: number
+  /** How many Inventory has. 0 if it isn't in Inventory. */
+  on_shelf: number
+  /** How many more are needed than the shelf has. 0 when there are enough. */
+  short: number
+  /** The BOM lines that use it, one for each system. */
+  parts: Part[]
+}
+
+/**
+ * Every COTS part in `parts`, with how many are needed, on the shelf and
+ * short. Pass one robot's parts. The same part in two systems (the same
+ * vendor part number, compared like shelfItem() does) is one line with both
+ * quantities added, so 4 bearings on the shelf aren't counted as enough for
+ * the drivetrain and again for the intake. A part that isn't in Inventory
+ * is fully short. Parts removed in Onshape don't count.
+ */
+export function shortages(parts: Part[], items: Item[]): Shortage[] {
+  const lines = new Map<string, { item: Item | undefined; parts: Part[] }>()
+  for (const part of parts) {
+    if (part.kind !== 'cots' || part.removed_in_onshape) continue
+    const item = shelfItem(part, items)
+    // The Inventory part it is, or its vendor part number. With neither, it can't be matched to anything, so it stays on its own.
+    const number = part.vendor_part_number?.trim()
+    const key = item ? `item:${item.id}` : number ? `number:${sameNumber(number)}` : `part:${part.id}`
+    const line = lines.get(key) ?? { item, parts: [] }
+    line.parts.push(part)
+    lines.set(key, line)
+  }
+  return [...lines.values()].map(({ item, parts: used }) => {
+    const needed = used.reduce((sum, part) => sum + part.quantity, 0)
+    const on_shelf = item?.quantity ?? 0
+    const { name, vendor, vendor_part_number } = used[0]
+    return { name, vendor, vendor_part_number, needed, on_shelf, short: Math.max(0, needed - on_shelf), parts: used }
+  })
+}
+
+/** The line of shortages() a part is in, if it's in one. */
+export function shortageFor(part: Part, all: Shortage[]): Shortage | undefined {
+  return all.find((shortage) => shortage.parts.some((p) => p.id === part.id))
+}
+
+/** One line of the To order list: a part the robot is short of. */
+export interface OrderLine extends Shortage {
+  /** How many are already on requests in Purchasing for the BOM lines that use it. */
+  in_purchasing: number
+  /** How many still to ask for: short, less what's already in Purchasing. */
+  to_order: number
+}
+
+/** One vendor's lines of the To order list. */
+export interface VendorOrder {
+  vendor: string
+  lines: OrderLine[]
+}
+
+/** What the To order list calls parts with no vendor yet. */
+export const NO_VENDOR = 'No vendor yet'
+
+/**
+ * The To order list (#17): the parts from shortages() that still need
+ * asking for, grouped by vendor, vendors and parts in ABC order. `requests`
+ * is each BOM part's request in Purchasing: what's already on one is taken
+ * off, so nothing is ordered twice. Requests that were cancelled or are Out
+ * of Stock don't count, and nor do ones In Shop: those are put away, so
+ * Inventory's count should already have them. Vendors are named the way Purchasing names them, so "REV" and
+ * "REV Robotics" are one group.
+ */
+export function toOrder(all: Shortage[], requests: Map<string, PurchaseItem>): VendorOrder[] {
+  const byVendor = new Map<string, OrderLine[]>()
+  for (const shortage of all) {
+    const in_purchasing = shortage.parts.reduce((sum, part) => {
+      const request = requests.get(part.id)
+      return request && orderWord(request.status) && request.status !== 'in_shop' ? sum + request.quantity : sum
+    }, 0)
+    const to_order = shortage.short - in_purchasing
+    if (to_order <= 0) continue
+    const vendor = vendorFor(shortage.vendor) ?? (shortage.vendor?.trim() || NO_VENDOR)
+    byVendor.set(vendor, [...(byVendor.get(vendor) ?? []), { ...shortage, in_purchasing, to_order }])
+  }
+  return [...byVendor.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([vendor, lines]) => ({ vendor, lines: lines.sort((a, b) => a.name.localeCompare(b.name)) }))
+}
+
+/** The To order list as CSV text, to paste into a spreadsheet or an order. */
+export function toOrderCsv(orders: VendorOrder[]): string {
+  return toCsv([
+    ['Vendor', 'Vendor part number', 'Part', 'Quantity to order'],
+    ...orders.flatMap((order) => order.lines.map((line) => [order.vendor, line.vendor_part_number ?? '', line.name, String(line.to_order)])),
+  ])
+}
+
 /**
  * What the BOM shows under a COTS part about the shelf, like
  * "On the shelf: 2 · Bin B1 · Missing 1". If the part has a request in
  * Purchasing, it says how many are on that request and how far along it is
  * instead: "Ordering 3", "Ordered 3" or "Received 3". Null for custom parts.
+ *
+ * With the part's line from shortages(), Missing counts every system that
+ * uses the part, and says so: "Robot needs 10 in 2 systems · Missing 6".
  */
-export function shelfText(part: Part, items: Item[], request?: PurchaseItem): string | null {
+export function shelfText(part: Part, items: Item[], request?: PurchaseItem, shortage?: Shortage): string | null {
   if (part.kind !== 'cots') return null
   const item = shelfItem(part, items)
-  const shelf = item ? `On the shelf: ${item.quantity} · ${item.location}` : 'Not in Inventory'
+  let shelf = item ? `On the shelf: ${item.quantity} · ${item.location}` : 'Not in Inventory'
+  if (shortage && shortage.parts.length > 1) shelf += ` · Robot needs ${shortage.needed} in ${shortage.parts.length} systems`
   const word = request && orderWord(request.status)
   if (request && word) return `${shelf} · ${word} ${request.quantity}`
-  const missing = part.quantity - (item?.quantity ?? 0)
+  const missing = shortage ? shortage.short : part.quantity - (item?.quantity ?? 0)
   return missing > 0 ? `${shelf} · Missing ${missing}` : shelf
 }
 

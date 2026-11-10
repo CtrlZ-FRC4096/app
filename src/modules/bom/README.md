@@ -10,7 +10,7 @@ The bill of materials for each robot, checked against Inventory, so the team can
 | `data.ts` | The four tables (`bom_robots`, `bom_systems`, `bom_parts`, `bom_steps`), their example rows, adding and changing them, moving stages along, assigning them, and reading a system from Onshape. |
 | `onshape.ts` | Works out what an import from Onshape changes: `planOnshapeImport()`. |
 | `data.test.ts`, `onshape.test.ts` | Tests for both. |
-| `BomPage.tsx` | Pick a system, then see its parts in a table with their stages, change them, and import from Onshape. |
+| `BomPage.tsx` | Pick a system, then see its parts in a table with their stages, change them, and import from Onshape. Below, the robot's To order list. |
 
 The tables are made by `supabase/migrations/20261027150000_bom.sql`, and their permission rules are tested in `supabase/tests/bom.test.ts`.
 
@@ -57,7 +57,13 @@ Under each COTS part, the page shows what Inventory has, in plain text: "On the 
 - the quantity on the part's request in Purchasing, with how far along it is (`orderWord()`): **"Ordering 3"** while it's still being asked for (Wait to Order and the Order statuses), **"Ordered 3"** once it's placed (Order Placed, Backordered), and **"Received 3"** once it's Received or In Shop; or
 - **"Missing 2"** when there's no request, or it was cancelled or is Out of Stock (so it couldn't be ordered), and the shelf has fewer than the line needs. Nothing is added when there are enough.
 
- `shelfItem()` in `data.ts` finds the Inventory part with the same **vendor part number**, ignoring capitals and spaces. Vendor names only decide when two Inventory parts have the same number, because the team writes them differently ("REV" and "REV Robotics"). Missing compares the shelf with that one line's quantity. It doesn't yet add up the same part used in more than one system (#17).
+ `shelfItem()` in `data.ts` finds the Inventory part with the same **vendor part number**, ignoring capitals and spaces. Vendor names only decide when two Inventory parts have the same number, because the team writes them differently ("REV" and "REV Robotics"). **A part used in more than one system is added up** (#17): `shortages()` in `data.ts` gives, for each COTS part in a robot, how many are needed across all its systems, how many are on the shelf, and how many short. So if the intake needs 6 of a bearing and the drivetrain 4, with 7 on the shelf, both lines say "Robot needs 10 in 2 systems · Missing 3". A part that isn't in Inventory is fully short.
+
+## To order
+
+At the bottom of the page, **To order** lists the COTS parts the whole robot is short of, grouped by vendor (#17). Each line shows how many the robot needs, how many are on the shelf, how many are already in Purchasing, and how many are left to order. **Copy as CSV** copies the list (vendor, vendor part number, part, quantity to order) to paste into a spreadsheet or an order.
+
+`toOrder()` in `data.ts` builds it from `shortages()`. To stop a part being ordered twice, it takes off what's already on a request in Purchasing for those BOM lines. Requests that are cancelled or Out of Stock don't count. Requests that are In Shop don't count either: they're put away, so Inventory's count should include them. **If something is In Shop but Inventory wasn't updated, it shows here again**, so update Inventory when parts are put away. Vendors are named the way Purchasing names them (`vendorFor()`), so "REV" and "REV Robotics" are one group.
 
 ## Importing from Onshape
 
@@ -77,7 +83,6 @@ The example Intake in demo mode is linked to a made-up assembly, so **Import fro
 ## Still to do
 
 - Write team part numbers into Onshape (#21)
-- Add up a bought part used in more than one system, and a To order list (#17)
 - A "My work" list of the stages assigned to you
 - Slack reminders about assigned stages (#22)
 - Move a part's CNC router stage along when the CNC board marks it cut
