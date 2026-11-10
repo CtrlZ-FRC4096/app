@@ -2,6 +2,7 @@
 // new role there should show up on the form with no other change.
 import { describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
+import { POSITIONS } from './data'
 import ScoutingPage from './ScoutingPage'
 import { AUTO_SIDES, DRIVETRAINS, ROLES } from './season'
 
@@ -40,6 +41,12 @@ describe('the match form', () => {
     } finally {
       ROLES.pop()
     }
+  })
+
+  it('has a button for each position, none chosen until the scout picks one', () => {
+    const html = renderToString(<ScoutingPage />)
+    for (const position of POSITIONS) expect(html).toContain(`aria-pressed="false">${position}</button>`)
+    expect(html).toContain('Pick your position, and the team fills in from the match number.')
   })
 
   it('starts with no driver skill chosen', () => {

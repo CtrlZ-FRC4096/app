@@ -468,6 +468,78 @@ export function getTeam(team: number): Promise<Result<TbaTeam>> {
 }
 
 // ---------------------------------------------------------------------------
+// Filling in the team from the schedule (#40). A scout picks their position
+// once, and the match form fills in the team for that position from the
+// schedule. The schedule is saved on this device, so it still works with no
+// Wi-Fi once it's been loaded.
+
+/** Where a scout sits: which robot they watch in every match. */
+export const POSITIONS = ['Red 1', 'Red 2', 'Red 3', 'Blue 1', 'Blue 2', 'Blue 3'] as const
+export type Position = (typeof POSITIONS)[number]
+
+// '' until the scout picks one. keepOnReset: it belongs to this device, not the example data.
+export const positionStore = createStore<Position | ''>('scouting-position', 1, () => '', { keepOnReset: true })
+
+/** This device's position, or '' if the scout hasn't picked one. */
+export function usePosition(): Position | '' {
+  return useStore(positionStore)
+}
+
+/** Remember this device's position. */
+export function setPosition(position: Position) {
+  positionStore.set(position)
+}
+
+/**
+ * The schedule as it's saved on this device: every match TBA sent, playoffs
+ * too, so the match schedule page (#107) can use the same copy.
+ */
+export interface SavedSchedule {
+  /** The event it's for, like 2026ilch. */
+  event: string
+  matches: TbaMatch[]
+  /** When it was fetched, as an ISO date and time. */
+  savedAt: string
+}
+
+// keepOnReset: "Reset example data" mustn't take the schedule away at an event with no Wi-Fi.
+export const scheduleStore = createStore<SavedSchedule | null>('scouting-schedule', 1, () => null, { keepOnReset: true })
+
+/** The schedule saved on this device, if it's for this event (EVENT_KEY in season.ts). */
+export function useSavedSchedule(): SavedSchedule | null {
+  const saved = useStore(scheduleStore)
+  return saved?.event === EVENT_KEY ? saved : null
+}
+
+/**
+ * Get the schedule from TBA and save it on this device. If that doesn't
+ * work (no Wi-Fi, say) but a copy for this event is already saved, that copy
+ * is used, so the form keeps working.
+ */
+export async function loadSchedule(): Promise<Result<SavedSchedule>> {
+  const saved = scheduleStore.get()
+  const savedCopy = saved?.event === EVENT_KEY ? saved : null
+  const result = await getSchedule()
+  if (!result.ok) return savedCopy ? ok(savedCopy) : fail(`Couldn't get the match schedule. ${result.error}`)
+  // TBA has no schedule until shortly before the event. Keep any saved copy rather than an empty one.
+  if (result.value.length === 0) return savedCopy ? ok(savedCopy) : fail("The Blue Alliance doesn't have the match schedule yet.")
+  const schedule = { event: EVENT_KEY, matches: result.value, savedAt: new Date().toISOString() }
+  scheduleStore.set(schedule)
+  return ok(schedule)
+}
+
+/** The team in `position` in qualification match `match`, or null if the schedule doesn't say. */
+export function teamFor(schedule: SavedSchedule | null, match: number, position: Position | ''): number | null {
+  if (!schedule || !position) return null
+  // Only qualification matches: the form's match number is one of those.
+  const found = schedule.matches.find((m) => m.comp_level === 'qm' && m.match_number === match)
+  if (!found) return null
+  const [color, spot] = position.split(' ')
+  const team = (color === 'Red' ? found.alliances.red : found.alliances.blue).team_keys[Number(spot) - 1]
+  return team ? teamNumber(team) : null
+}
+
+// ---------------------------------------------------------------------------
 // Match 13: team ratings and match predictions.
 
 /**

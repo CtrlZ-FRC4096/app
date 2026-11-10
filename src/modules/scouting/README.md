@@ -5,6 +5,9 @@
 ## What works so far
 
 - The match form, drawn from `season.ts`: counters, role (choose any), broke down, E-stop or A-stop, driver skill, endgame and notes
+- The team fills in from the schedule (#40). The scout picks their position once (Red 1 to Blue 3), and the phone remembers it (`positionStore` in `data.ts`). Typing the match number fills in the team for that position and shows it big, in the alliance's colour, to check against the robot's bumpers. The scout can still change it. This is `MatchTeamFields.tsx`.
+  - The schedule comes from `loadSchedule()` when the form opens. It saves the qualification matches on the phone (`scheduleStore`), so it keeps working with no Wi-Fi once it's loaded. With no saved copy (no Wi-Fi the first time, or The Blue Alliance doesn't have the schedule yet) the form says so, and the scout types the team in.
+  - `teamFor()` finds the team for a match and position.
 - Save entry: `saveEntry()` in `data.ts` keeps the entry on this device, marked Waiting. It refuses an entry with no team or match number, or no driver skill chosen.
 - A list of the entries saved on this device, newest first, each Waiting or Synced
 - Syncing (#31): Waiting entries are sent to the team database by themselves, with nothing to press:
@@ -28,7 +31,6 @@ Don't raise `entryStore`'s version while entries are waiting on phones: entries 
 - A form for one robot in one match, with big buttons for phones
 - Entries save on the device first and sync later
 - A QR code for a waiting entry, so another device can copy it with no network
-- The match schedule from The Blue Alliance
 - The form's fields come from a season settings file, so a new game means new settings, not new code
 - Export entries as CSV
 
