@@ -9,6 +9,7 @@ import { href, useRoute } from './core/router'
 import { resetAllStores } from './core/store'
 import { toast, useToast } from './core/toast'
 import { ErrorBoundary } from './core/ErrorBoundary'
+import { loadPage } from './core/updates'
 import { Home } from './core/pages/Home'
 import { Message } from './core/pages/Message'
 import { Notifications } from './core/pages/Notifications'
@@ -17,8 +18,9 @@ import { Checking, NoAccess, SignIn } from './core/pages/SignIn'
 
 const CONTRIBUTING = 'https://github.com/CtrlZ-FRC4096/app/blob/main/CONTRIBUTING.md'
 
-// Each module's page is loaded only when someone opens it.
-const pages = new Map(modules.map((m) => [m.id, lazy(m.load)]))
+// Each module's page is loaded only when someone opens it. If its file is
+// gone because a new version went live, loadPage reloads to get it.
+const pages = new Map(modules.map((m) => [m.id, lazy(loadPage(m.load))]))
 
 export default function App() {
   const signIn = useSignIn()
@@ -306,15 +308,17 @@ function Banner() {
           <>
             <strong>Work in progress.</strong>
             <span className="muted">Students are building this app. Found a problem or have an idea?</span>
+            <a href={href('feedback')}>Send feedback</a>
           </>
         ) : (
           <>
             <strong>Demo mode.</strong>
             <span className="muted">Example data only, saved in this browser. Try each role from the menu at the top right.</span>
             <button type="button" className="link-btn" onClick={() => { resetAllStores(); toast('Example data reset.') }}>Reset example data</button>
+            {/* Not "Send feedback": in demo mode it's only saved in this browser, so nobody on the team would see it. */}
+            <a href={CONTRIBUTING} target="_blank" rel="noopener">How to contribute</a>
           </>
         )}
-        <a href={CONTRIBUTING} target="_blank" rel="noopener">How to contribute</a>
       </div>
     </div>
   )

@@ -32,8 +32,8 @@ import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 import { currentUser } from '../../core/session'
 import { DEMO_PEOPLE } from '../../core/demo'
-import { createStore, useStore } from '../../core/store'
-import { createTable, fail, newestFirst, ok, type Result, type Row } from '../../core/table'
+import { createStore, useStore, type Store } from '../../core/store'
+import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row, type Table } from '../../core/table'
 import { toCsv } from '../attendance/data'
 import { COUNTERS, EVENT_KEY } from './season'
 
@@ -99,9 +99,9 @@ export function useEntries(): Entry[] {
   return useStore(entryStore)
 }
 
-/** The home page tile's status. */
+/** The home page tile's status. Pit entries count too. */
 export function useEntrySummary(): Notice {
-  const entries = useEntries()
+  const entries = [...useEntries(), ...usePitEntries()]
   const waiting = entries.filter((e) => !e.synced).length
   if (waiting > 0) return { tone: 'info', text: plural(waiting, 'entry waiting', 'entries waiting') }
   return { tone: 'plain', text: entries.length === 0 ? 'No entries on this device' : `${plural(entries.length, 'entry', 'entries')} saved` }
@@ -226,7 +226,8 @@ const NO_CONNECTION = "No connection. They'll send by themselves when this phone
 let inFlight: Promise<Result<number>> | null = null
 
 /**
- * Send every Waiting entry to the team database, and mark them Synced.
+ * Send every Waiting entry, match and pit, to the team database, and mark
+ * them Synced.
  * Gives back how many were sent. If it can't (no connection, or not signed
  * in), they stay Waiting and the next try sends them. If a send is already
  * under way, this waits for it, then sends whatever is still waiting, such
@@ -240,25 +241,48 @@ export function syncEntries(): Promise<Result<number>> {
   return inFlight
 }
 
+/** Whether any match or pit entry on this device is Waiting. */
+function hasWaiting(): boolean {
+  return entryStore.get().some((e) => !e.synced) || pitStore.get().some((e) => !e.synced)
+}
+
+/** Stop sending, and show why on the page. */
+function stopSending(problem: string): Result<number> {
+  syncStatus.set({ sending: false, problem })
+  return fail(problem)
+}
+
+// Sends match entries, then pit entries.
 async function send(): Promise<Result<number>> {
-  const waiting = entryStore.get().filter((e) => !e.synced)
-  if (waiting.length === 0) return ok(0)
-  if (globalThis.navigator?.onLine === false) {
-    syncStatus.set({ sending: false, problem: NO_CONNECTION })
-    return fail(NO_CONNECTION)
-  }
+  if (!hasWaiting()) return ok(0)
+  if (globalThis.navigator?.onLine === false) return stopSending(NO_CONNECTION)
   if (!currentUser()) return fail('Sign in to send your entries.')
 
   syncStatus.set({ sending: true, problem: syncStatus.get().problem })
-  const result = await entriesTable.insertOnce(waiting.map(toRow))
-  if (!result.ok) {
-    syncStatus.set({ sending: false, problem: result.error })
-    return result
-  }
+  const matches = await sendWaiting(entryStore, entriesTable, toRow)
+  if (!matches.ok) return stopSending(matches.error)
+  const pits = await sendWaiting(pitStore, pitTable, pitToRow)
+  if (!pits.ok) return stopSending(pits.error)
+  syncStatus.set({ sending: false, problem: null })
+  return ok(matches.value + pits.value)
+}
+
+/**
+ * Send one kind of entry: the Waiting ones in a store go to its table, then
+ * are marked Synced. Gives back how many were sent.
+ */
+async function sendWaiting<E extends { id: string; synced: boolean }, T extends Row>(
+  store: Store<E[]>,
+  table: Table<T>,
+  asRow: (entry: E) => Fields<T> & { id: string },
+): Promise<Result<number>> {
+  const waiting = store.get().filter((e) => !e.synced)
+  if (waiting.length === 0) return ok(0)
+  const result = await table.insertOnce(waiting.map(asRow))
+  if (!result.ok) return result
   // Mark only the ones just sent: entries saved while sending stay Waiting.
   const sent = new Set(waiting.map((e) => e.id))
-  entryStore.set((entries) => entries.map((e) => (sent.has(e.id) ? { ...e, synced: true } : e)))
-  syncStatus.set({ sending: false, problem: null })
+  store.set((entries) => entries.map((e) => (sent.has(e.id) ? { ...e, synced: true } : e)))
   return ok(waiting.length)
 }
 
@@ -273,7 +297,7 @@ export const RETRY_MS = 60 * 1000
  */
 function keepSyncing() {
   const tryNow = () => {
-    if (entryStore.get().some((e) => !e.synced)) void syncEntries()
+    if (hasWaiting()) void syncEntries()
   }
   globalThis.addEventListener('online', tryNow)
   document.addEventListener('visibilitychange', () => {
@@ -282,9 +306,6 @@ function keepSyncing() {
   setInterval(tryNow, RETRY_MS)
   setTimeout(tryNow, 0)
 }
-
-// Only in a browser: the tests call syncEntries() themselves.
-if (typeof window !== 'undefined' && typeof document !== 'undefined') keepSyncing()
 
 /** A random id like the database makes. Works on http:// pages too, unlike crypto.randomUUID(). */
 function newId(): string {
@@ -305,6 +326,8 @@ export interface PitEntry {
   id: string
   /** ISO date and time it was saved. */
   created_at: string
+  /** The event, like 2026ilch. Pit entries saved before this was added don't have one; they're sent with today's EVENT_KEY. */
+  event_key?: string
   /** The team number, like 4096. */
   team: number
   /** The qualification match it was before, or null: pit scouting often happens before any match. */
@@ -332,7 +355,7 @@ export interface PitEntry {
 }
 
 /** What the scout fills in on the pit form. savePitEntry() adds the rest. */
-export type PitFields = Omit<PitEntry, 'id' | 'created_at' | 'scouted_by' | 'synced'>
+export type PitFields = Omit<PitEntry, 'id' | 'created_at' | 'event_key' | 'scouted_by' | 'synced'>
 
 // Newest first. keepOnReset and the version: see entryStore above.
 export const pitStore = createStore<PitEntry[]>('scouting-pit-entries', 1, () => [], { keepOnReset: true })
@@ -345,12 +368,21 @@ export function usePitEntries(): PitEntry[] {
 /** Why a pit entry can't be saved, or null if it can. */
 export function checkPitEntry(fields: PitFields): string | null {
   if (!isCount(fields.team)) return 'Enter the team number first.'
-  if (fields.match !== null && !isCount(fields.match)) return 'Check the match number, or leave it blank.'
+  if (fields.team > MAX_TEAM) return `Check the team number: ${fields.team} is too big.`
+  if (fields.match !== null && !(isCount(fields.match) && fields.match <= MAX_MATCH)) return 'Check the match number, or leave it blank.'
   for (const [name, value] of [['weight', fields.weight], ['length', fields.length], ['width', fields.width], ['height', fields.height]] as const) {
-    if (value !== null && !(value > 0)) return `Check the ${name}, or leave it blank.`
+    if (value !== null && !(value > 0 && value < MAX_PIT_NUMBER)) return `Check the ${name}, or leave it blank.`
+  }
+  // The same limits as the team database, so an entry can't get stuck Waiting.
+  for (const [name, text] of [['motors', fields.motors], ['auto path', fields.auto_path], ['first strategy answer', fields.partners_do], ['second strategy answer', fields.they_do]] as const) {
+    const length = text.trim().length
+    if (length > MAX_NOTES_LENGTH) return `Keep the ${name} under ${MAX_NOTES_LENGTH} characters. This one is ${length}.`
   }
   return null
 }
+
+/** Weights and sizes must be under this. Nothing real comes close: it only stops a typo like 1155 for 115.5 from getting much worse. */
+export const MAX_PIT_NUMBER = 10000
 
 /** Save a pit entry on this device, marked as not synced yet. */
 export function savePitEntry(fields: PitFields): Result<PitEntry> {
@@ -365,11 +397,67 @@ export function savePitEntry(fields: PitFields): Result<PitEntry> {
     they_do: trim(fields.they_do),
     id: newId(),
     created_at: new Date().toISOString(),
+    event_key: EVENT_KEY,
     scouted_by: currentUser()?.id ?? null,
     synced: false,
   }
   pitStore.set((entries) => [entry, ...entries])
+  // Send it now if there's a connection. If not, it waits on this device.
+  void syncEntries()
   return ok(entry)
+}
+
+/** One row of the scouting_pit_entries table: a pit entry that reached the team database. */
+export interface ScoutingPitEntry extends Row {
+  event_key: string
+  team_number: number
+  match_number: number | null
+  drivetrain: string | null
+  weight: number | null
+  length: number | null
+  width: number | null
+  height: number | null
+  motors: string | null
+  auto_side: string | null
+  auto_path: string | null
+  partners_do: string | null
+  they_do: string | null
+  /** Who scouted it, and when, on their phone. */
+  scouted_by: string | null
+  scouted_at: string
+  /** Who sent it. Usually the scout, but a shared phone can send someone else's entries. */
+  created_by: string | null
+}
+
+// Made up, for demo mode. Team numbers in the 9990s, so nobody mistakes them for real scouting.
+const EXAMPLE_PIT_ENTRIES: ScoutingPitEntry[] = [
+  { id: '00000000-0000-4000-8000-0000000d0101', event_key: EVENT_KEY, team_number: 9991, match_number: null, drivetrain: 'Swerve', weight: 118.5, length: 28, width: 28, height: 22, motors: '8 Kraken X60 on swerve, 2 on the shooter', auto_side: 'Center', auto_path: 'Scores preload, picks up 2 from the middle', partners_do: 'Feed us fuel', they_do: 'Score from the hub', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-06T22:10:00Z', created_at: '2026-11-06T22:11:00Z', created_by: DEMO_PEOPLE.jordan },
+  { id: '00000000-0000-4000-8000-0000000d0102', event_key: EVENT_KEY, team_number: 9992, match_number: null, drivetrain: 'Tank', weight: null, length: null, width: null, height: null, motors: null, auto_side: 'Left', auto_path: null, partners_do: null, they_do: 'Play defense', scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-06T22:20:00Z', created_at: '2026-11-06T22:21:00Z', created_by: DEMO_PEOPLE.alex },
+]
+
+export const pitTable = createTable<ScoutingPitEntry>('scouting_pit_entries', { demo: EXAMPLE_PIT_ENTRIES, sort: newestFirst })
+
+/** A pit entry from this device, as a row for the team database. Blank choices and boxes are sent as empty (null). */
+export function pitToRow(entry: PitEntry): Omit<ScoutingPitEntry, 'created_at' | 'created_by'> {
+  const text = (value: string) => value.trim() || null
+  return {
+    id: entry.id,
+    event_key: entry.event_key ?? EVENT_KEY,
+    team_number: entry.team,
+    match_number: entry.match,
+    drivetrain: text(entry.drivetrain),
+    weight: entry.weight,
+    length: entry.length,
+    width: entry.width,
+    height: entry.height,
+    motors: text(entry.motors),
+    auto_side: text(entry.auto_side),
+    auto_path: text(entry.auto_path),
+    partners_do: text(entry.partners_do),
+    they_do: text(entry.they_do),
+    scouted_by: entry.scouted_by,
+    scouted_at: entry.created_at,
+  }
 }
 
 /** A number box's text as a number, or null if it's blank. */
@@ -386,6 +474,10 @@ export function numberOnly(text: string): string {
   const [whole, ...rest] = text.replace(/[^0-9.]/g, '').split('.')
   return rest.length === 0 ? whole : `${whole}.${rest.join('')}`
 }
+
+// Keep sending Waiting match and pit entries, in a browser. (The tests call
+// syncEntries() themselves.)
+if (typeof window !== 'undefined' && typeof document !== 'undefined') keepSyncing()
 
 // ---------------------------------------------------------------------------
 // The Blue Alliance.
@@ -648,6 +740,193 @@ export function picklistCsv(ranked: RankedTeam[], parts: PicklistPart[]): string
     ['Rank', 'Team', 'Score', ...parts.map((part) => part.label)],
     ...ranked.map((line) => [String(line.rank), String(line.team), number(line.score), ...parts.map((part) => number(line.parts[part.key] ?? null))]),
   ])
+}
+
+// The match schedule page: The Blue Alliance's schedule with Match 13's
+// prediction for each match. The last ones fetched are saved on this
+// device, so the schedule still shows with no connection.
+
+/** Our team, so the schedule can pick out our matches. */
+export const OUR_TEAM = 4096
+
+/** One match on the schedule page. */
+export interface ScheduleRow {
+  key: string
+  /** Like "Qual 12" or "Semifinal 3". */
+  label: string
+  /** When it's expected to start, in seconds since 1970, or null. */
+  time: number | null
+  /** Team numbers on each side. */
+  red: number[]
+  blue: number[]
+  /** The real score once the match is played, or null before. */
+  score: { red: number; blue: number } | null
+  /** Match 13's prediction, or null if it hasn't predicted this match yet. */
+  prediction: MatchPrediction | null
+  /** True when our team plays in it. */
+  ours: boolean
+}
+
+const LEVELS: TbaMatch['comp_level'][] = ['qm', 'ef', 'qf', 'sf', 'f']
+const LEVEL_NAMES: Record<TbaMatch['comp_level'], string> = { qm: 'Qual', ef: 'Eighthfinal', qf: 'Quarterfinal', sf: 'Semifinal', f: 'Final' }
+
+/** "Qual 12", "Semifinal 3", "Final 2", or "Quarterfinal 1 match 2" when a set has more than one match. */
+export function matchLabel(match: Pick<TbaMatch, 'comp_level' | 'set_number' | 'match_number'>): string {
+  const name = LEVEL_NAMES[match.comp_level] ?? match.comp_level
+  if (match.comp_level === 'qm' || match.comp_level === 'f') return `${name} ${match.match_number}`
+  return match.match_number > 1 ? `${name} ${match.set_number} match ${match.match_number}` : `${name} ${match.set_number}`
+}
+
+/**
+ * Put each match with its prediction, matched by the match key, in the
+ * order they're played: qualifications, then playoffs. A match Match 13
+ * hasn't predicted yet still shows, with no prediction. Played matches have
+ * their real score.
+ */
+export function matchesWithPredictions(schedule: TbaMatch[], predictions: MatchPrediction[], team = OUR_TEAM): ScheduleRow[] {
+  const predicted = new Map(predictions.map((p) => [p.key, p]))
+  const order = (m: TbaMatch) => LEVELS.indexOf(m.comp_level)
+  return [...schedule]
+    .sort((a, b) => order(a) - order(b) || a.set_number - b.set_number || a.match_number - b.match_number)
+    .map((m) => {
+      const red = m.alliances.red.team_keys.map(teamNumber)
+      const blue = m.alliances.blue.team_keys.map(teamNumber)
+      // TBA sends -1 (or sometimes null) until the match is played.
+      const scored = (score: number | null) => typeof score === 'number' && score >= 0
+      const played = scored(m.alliances.red.score) && scored(m.alliances.blue.score)
+      return {
+        key: m.key,
+        label: matchLabel(m),
+        time: m.predicted_time ?? null,
+        red,
+        blue,
+        score: played ? { red: m.alliances.red.score, blue: m.alliances.blue.score } : null,
+        prediction: predicted.get(m.key) ?? null,
+        ours: red.includes(team) || blue.includes(team),
+      }
+    })
+}
+
+/** Who's likely to win and their chance, like "Red 72%", or "Toss-up" when it's even. */
+export function likelyWinner(prediction: MatchPrediction): string {
+  const red = Math.round(prediction.redWinChance * 100)
+  if (red === 50) return 'Toss-up'
+  return red > 50 ? `Red ${red}%` : `Blue ${100 - red}%`
+}
+
+/** "just now", "1 minute ago", "3 hours ago", "2 days ago". */
+export function updatedAgo(at: string, now: Date = new Date()): string {
+  const minutes = Math.max(0, Math.floor((now.getTime() - Date.parse(at)) / 60_000))
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${plural(minutes, 'minute', 'minutes')} ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) return `${plural(hours, 'hour', 'hours')} ago`
+  return `${Math.floor(hours / 24)} days ago`
+}
+
+/** The schedule and predictions as last fetched, kept on this device. */
+export interface SavedSchedule {
+  event: string
+  matches: TbaMatch[]
+  predictions: MatchPrediction[]
+  /** ISO date and time they were fetched. */
+  savedAt: string
+}
+
+// Kept through "Reset example data", like entries: at an event it may be the
+// only copy of the schedule on a phone with no connection.
+export const scheduleStore = createStore<SavedSchedule | null>('scouting-schedule', 1, () => null, { keepOnReset: true })
+
+/**
+ * The schedule saved on this device for the event, or null if there isn't
+ * one yet. Anything that needs the schedule with no connection (such as
+ * filling in the team from the match number, #40) can use this.
+ */
+export function savedSchedule(event = EVENT_KEY): SavedSchedule | null {
+  const saved = scheduleStore.get()
+  return saved?.event === event ? saved : null
+}
+
+export function useSavedSchedule(event = EVENT_KEY): SavedSchedule | null {
+  const saved = useStore(scheduleStore)
+  return saved?.event === event ? saved : null
+}
+
+export interface ScheduleStatus {
+  loading: boolean
+  /** Why the last try didn't work, written for the person, or null. */
+  problem: string | null
+}
+
+// Only for this page visit: not saved.
+export const scheduleStatus = createStore<ScheduleStatus>('scouting-schedule-status', 1, () => ({ loading: false, problem: null }), { persist: false, keepOnReset: true })
+
+export function useScheduleStatus(): ScheduleStatus {
+  return useStore(scheduleStatus)
+}
+
+// The fetch under way, if there is one, so two tries at once share it.
+let scheduleInFlight: Promise<Result<SavedSchedule>> | null = null
+
+/**
+ * Get the latest schedule and predictions, and save them on this device.
+ * If the schedule can't be fetched, the saved one stays. If only the
+ * predictions can't, the schedule is saved with the last predictions.
+ */
+export function refreshSchedule(event = EVENT_KEY): Promise<Result<SavedSchedule>> {
+  scheduleInFlight ??= fetchSchedule(event).finally(() => {
+    scheduleInFlight = null
+  })
+  return scheduleInFlight
+}
+
+async function fetchSchedule(event: string): Promise<Result<SavedSchedule>> {
+  if (globalThis.navigator?.onLine === false) {
+    scheduleStatus.set({ loading: false, problem: 'No connection.' })
+    return fail('No connection.')
+  }
+  scheduleStatus.set((now) => ({ ...now, loading: true }))
+  const [schedule, predictions] = await Promise.all([getSchedule(event), getPredictions(event)])
+  if (!schedule.ok) {
+    scheduleStatus.set({ loading: false, problem: schedule.error })
+    return schedule
+  }
+  const saved: SavedSchedule = {
+    event,
+    matches: schedule.value,
+    predictions: predictions.ok ? predictions.value : (savedSchedule(event)?.predictions ?? []),
+    savedAt: new Date().toISOString(),
+  }
+  scheduleStore.set(saved)
+  scheduleStatus.set({
+    loading: false,
+    problem: predictions.ok ? null : `Couldn't get new predictions from Match 13, so these may be old. ${predictions.error}`,
+  })
+  return ok(saved)
+}
+
+/** How often the schedule page asks again. The match13 function reuses its answer for 2 minutes, so sooner doesn't help. */
+export const SCHEDULE_REFRESH_MS = 2 * 60 * 1000
+
+/**
+ * While the schedule page is open, keep it up to date: ask now, every 2
+ * minutes, when the app comes back on screen, and when the phone comes back
+ * online. Gives back a function that stops it, for when the page closes.
+ */
+export function keepScheduleFresh(event = EVENT_KEY): () => void {
+  const refresh = () => void refreshSchedule(event)
+  const onScreen = () => {
+    if (globalThis.document?.visibilityState === 'visible') refresh()
+  }
+  globalThis.addEventListener?.('online', refresh)
+  globalThis.document?.addEventListener('visibilitychange', onScreen)
+  const timer = setInterval(refresh, SCHEDULE_REFRESH_MS)
+  refresh()
+  return () => {
+    globalThis.removeEventListener?.('online', refresh)
+    globalThis.document?.removeEventListener('visibilitychange', onScreen)
+    clearInterval(timer)
+  }
 }
 
 // ---------------------------------------------------------------------------
