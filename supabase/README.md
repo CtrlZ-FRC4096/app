@@ -199,7 +199,7 @@ the functions can read.
 | `tba` | The Blue Alliance for scouting: an event's schedule and rankings, and a team's matches and name |
 | `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio. For the CNC module: parts' sizes and outlines, and where parts sit in a sheet's layout assembly |
 | `slack` | Slack messages from the team's bot: to yourself (anyone), or to people and a channel (mentors). Used through `src/core/slack.ts` |
-| `calendar` | The team's Google Calendar: everyone sees its events; mentors add events, and change or remove the ones the app added. Used through `src/core/calendar.ts` |
+| `calendar` | The team's Google Calendar: everyone sees its events; student leaders, mentors and admins add events, and change or remove the ones the app added. Used through `src/core/calendar.ts` |
 | `push` | Phone notifications (Web Push): the public key browsers need to turn them on, and a test to your own devices. Uses the `web-push` package (a mentor approved it). Used through `src/core/push.ts`. The same notifications are kept in the app too, in the `notifications` table behind the bell (`src/core/notifications.ts`) |
 
 Slack reminders that go out by themselves on a schedule don't use a server

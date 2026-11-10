@@ -1,7 +1,7 @@
 // Tests for the team calendar (calendar.ts), in demo mode.
 import { afterEach, describe, expect, it } from 'vitest'
-import { addCalendarEvent, changeCalendarEvent, checkEvent, eventTime, getCalendarEvents, removeCalendarEvent, resetDemoCalendar, type CalendarEvent } from './calendar'
-import { setDemoRole } from './demo'
+import { addCalendarEvent, canChangeEvent, changeCalendarEvent, checkEvent, eventTime, getCalendarEvents, removeCalendarEvent, resetDemoCalendar, type CalendarEvent } from './calendar'
+import { DEMO_PEOPLE, setDemoRole } from './demo'
 
 afterEach(() => {
   setDemoRole('student')
@@ -11,7 +11,7 @@ afterEach(() => {
 // Intl puts thin spaces around the dash and before AM/PM; tests compare plain ones.
 const plain = (text: string) => text.replace(/[  ]/g, ' ')
 const event = (more: Partial<CalendarEvent>): CalendarEvent => ({
-  id: 'e1', title: 'Build session', start: '2026-11-03T18:00:00-06:00', end: '2026-11-03T21:00:00-06:00', allDay: false, location: null, description: null, url: null, fromApp: false, ...more,
+  id: 'e1', title: 'Build session', start: '2026-11-03T18:00:00-06:00', end: '2026-11-03T21:00:00-06:00', allDay: false, location: null, description: null, url: null, fromApp: false, addedBy: null, signUps: false, ...more,
 })
 const meeting = { title: 'Parent meeting', start: '2026-11-05T01:00:00Z', end: '2026-11-05T02:00:00Z', allDay: false }
 
@@ -67,8 +67,44 @@ describe('adding, changing and removing', () => {
     expect(after.ok && after.value).toEqual([])
   })
 
-  it("doesn't let students change the calendar", async () => {
-    expect(await addCalendarEvent(meeting)).toEqual({ ok: false, error: 'Only mentors can change the team calendar.' })
+  it("lets student leaders add events, and change and remove any the app added, keeping who added them", async () => {
+    setDemoRole('leader')
+    const added = await addCalendarEvent({ ...meeting, signUps: true })
+    if (!added.ok) throw new Error(added.error)
+    expect(added.value).toMatchObject({ fromApp: true, addedBy: DEMO_PEOPLE.casey, signUps: true })
+    expect(await changeCalendarEvent(added.value, { ...meeting, title: 'Parent night' })).toMatchObject({ ok: true, value: { title: 'Parent night', addedBy: DEMO_PEOPLE.casey } })
+    expect(await removeCalendarEvent(added.value)).toEqual({ ok: true, value: null })
+    // One a mentor added, too.
+    expect(await removeCalendarEvent(event({ fromApp: true, addedBy: DEMO_PEOPLE.pat }))).toEqual({ ok: true, value: null })
+  })
+
+  it("doesn't let students add, change or remove events, and says who to ask", async () => {
+    expect(await addCalendarEvent(meeting)).toEqual({ ok: false, error: 'Only student leaders and mentors can add events. Ask one of them.' })
+    const error = 'Only student leaders and mentors can change or remove events. Ask one of them.'
+    // Even one a student added before student leaders existed.
+    for (const addedBy of [DEMO_PEOPLE.alex, DEMO_PEOPLE.pat]) {
+      expect(await changeCalendarEvent(event({ fromApp: true, addedBy }), meeting)).toEqual({ ok: false, error })
+      expect(await removeCalendarEvent(event({ fromApp: true, addedBy }))).toEqual({ ok: false, error })
+    }
+  })
+
+  it('removes and changes the made-up events too, in demo mode', async () => {
+    const week = async () => {
+      const result = await getCalendarEvents(new Date('2026-11-02T06:00:00Z'), new Date('2026-11-09T06:00:00Z'))
+      return result.ok ? result.value : []
+    }
+    setDemoRole('mentor')
+    const [tuesday, thursday] = await week()
+    await removeCalendarEvent({ ...tuesday, fromApp: true })
+    await changeCalendarEvent({ ...thursday, fromApp: true }, { ...meeting, title: 'Build session (short)', start: thursday.start, end: thursday.end })
+    expect((await week()).map((e) => e.title)).toEqual(['Build session (short)', 'Saturday build'])
+  })
+
+  it('says who can change an event: student leaders and up, on events the app added', () => {
+    const appEvent = event({ fromApp: true, addedBy: DEMO_PEOPLE.alex })
+    expect(canChangeEvent(appEvent, { role: 'student' })).toBe(false)
+    for (const role of ['leader', 'mentor', 'admin'] as const) expect(canChangeEvent(appEvent, { role })).toBe(true)
+    expect(canChangeEvent(event({ fromApp: false }), { role: 'admin' })).toBe(false)
   })
 
   it("leaves events people made in Google Calendar alone", async () => {
