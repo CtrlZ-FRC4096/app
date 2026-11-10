@@ -67,6 +67,12 @@ enough for them to understand and for a mentor to review.
 ## Every change
 
 - **Write or update tests** in `data.test.ts` for anything in `data.ts`.
+  Write one test per rule: when a rule has several cases, put them in one
+  test as a list of inputs and expected results, not a test for each. Match
+  an error's key words, not the whole message, unless the exact text is
+  the point. Don't write a test that only copies a constant from the code,
+  and don't repeat the database's permission tests: one test per module
+  that a student is told who can do each thing is enough.
 - **Run `npm run check`** (lint, type check, tests, build) and fix
   everything it reports before saying you're done.
 - The app must work on a phone: nothing should make the page scroll
