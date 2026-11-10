@@ -4,8 +4,8 @@
 
 ## What works so far
 
-- The match form, drawn from `season.ts`
-- Save entry: `saveEntry()` in `data.ts` keeps the entry on this device, marked Waiting. It refuses an entry with no team or match number.
+- The match form, drawn from `season.ts`: counters, role (choose any), broke down, E-stop or A-stop, driver skill, endgame and notes
+- Save entry: `saveEntry()` in `data.ts` keeps the entry on this device, marked Waiting. It refuses an entry with no team or match number, or no driver skill chosen.
 - A list of the entries saved on this device, newest first
 
 Entries are kept in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. Sending Waiting entries to the team database is the next step.

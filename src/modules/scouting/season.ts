@@ -1,7 +1,7 @@
 /**
  * This season's scouting form. The form is drawn from these settings, so
- * next season only this file changes: add, remove or rename counters and
- * endgame choices here, and the page follows.
+ * next season only this file changes: add, remove or rename counters,
+ * endgame choices and roles here, and the page follows.
  *
  * 2026: REBUILT. Check these with the scouting lead before an event.
  */
@@ -22,6 +22,9 @@ export const COUNTERS: Counter[] = [
 
 /** How the robot finished the match. The first is the starting choice. */
 export const ENDGAME: string[] = ['None', 'Level 1', 'Level 2', 'Level 3']
+
+/** What the robot spent the match doing. Scouts can choose more than one, or none. */
+export const ROLES: string[] = ['Scorer', 'Defender', 'Feeder']
 
 /**
  * The event we're at, the way The Blue Alliance names it: the year and a

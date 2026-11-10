@@ -27,7 +27,20 @@ import { EVENT_KEY } from './season'
 // ---------------------------------------------------------------------------
 // Entries, saved on this device.
 
-/** What a scout recorded for one robot in one match. */
+/** Whether the robot was stopped during the match. These are FRC rules, so they don't change with the game. */
+export const STOPS = ['None', 'A-stop', 'E-stop'] as const
+export type Stop = (typeof STOPS)[number]
+
+/** Driver skill, from 1 (struggles to drive) to 5 (smooth and quick). */
+export const DRIVER_SKILLS = [1, 2, 3, 4, 5]
+
+/**
+ * What a scout recorded for one robot in one match.
+ *
+ * Entries saved before roles, broke_down, stop and driver_skill were added
+ * don't have them, and have a defense field instead. Syncing must fill in
+ * the missing ones rather than assume every entry has them.
+ */
 export interface Entry {
   /** Made on the device, so sending an entry twice can't make two rows. */
   id: string
@@ -41,7 +54,13 @@ export interface Entry {
   counts: Record<string, number>
   /** One of ENDGAME in season.ts. */
   endgame: string
-  defense: boolean
+  /** Any of ROLES in season.ts. Empty if the scout chose none. */
+  roles: string[]
+  /** The robot stopped working or lost a mechanism. */
+  broke_down: boolean
+  stop: Stop
+  /** One of DRIVER_SKILLS. */
+  driver_skill: number
   notes: string
   /** Who scouted it. Show their name with useMemberNames(). */
   scouted_by: string | null
@@ -50,7 +69,7 @@ export interface Entry {
 }
 
 /** What the scout fills in on the form. saveEntry() adds the rest. */
-export type EntryFields = Pick<Entry, 'match' | 'team' | 'counts' | 'endgame' | 'defense' | 'notes'>
+export type EntryFields = Pick<Entry, 'match' | 'team' | 'counts' | 'endgame' | 'roles' | 'broke_down' | 'stop' | 'driver_skill' | 'notes'>
 
 // Newest first. keepOnReset: "Reset example data" must never delete real
 // scouting. Don't raise the version while entries are waiting on people's
@@ -76,6 +95,7 @@ const isCount = (value: number) => Number.isInteger(value) && value > 0
 export function checkEntry(fields: EntryFields): string | null {
   if (!isCount(fields.team)) return 'Enter the team number first.'
   if (!isCount(fields.match)) return 'Enter the match number first.'
+  if (!DRIVER_SKILLS.includes(fields.driver_skill)) return 'Choose a driver skill first.'
   return null
 }
 
