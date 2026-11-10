@@ -76,54 +76,62 @@ describe('calendarRequest', () => {
   const meeting = { title: ' Parent meeting ', start: '2026-11-05T19:00:00-06:00', end: '2026-11-05T20:00:00-06:00' }
 
   it('lets anyone check and see events, the next 60 days unless asked', () => {
-    expect(calendarRequest({ kind: 'check' })).toEqual({ kind: 'check' })
-    expect(calendarRequest({ kind: 'events' }, now)).toEqual({ kind: 'events', from: '2026-11-03T12:00:00.000Z', to: '2027-01-02T12:00:00.000Z' })
-    expect(calendarRequest({ kind: 'events', from: '2026-11-01', to: '2026-12-01' })).toMatchObject({ from: '2026-11-01T00:00:00.000Z' })
+    expect(calendarRequest({ kind: 'check' }, 'student')).toEqual({ kind: 'check' })
+    expect(calendarRequest({ kind: 'events' }, 'student', now)).toEqual({ kind: 'events', from: '2026-11-03T12:00:00.000Z', to: '2027-01-02T12:00:00.000Z' })
+    expect(calendarRequest({ kind: 'events', from: '2026-11-01', to: '2026-12-01' }, 'student')).toMatchObject({ from: '2026-11-01T00:00:00.000Z' })
   })
 
   it('refuses odd ranges', () => {
-    expect(calendarRequest({ kind: 'events', from: 'soon' })).toMatchObject({ status: 400 })
-    expect(calendarRequest({ kind: 'events', from: '2026-12-01', to: '2026-11-01' })).toMatchObject({ error: 'to should be after from.' })
-    expect(calendarRequest({ kind: 'events', from: '2026-01-01', to: '2028-01-01' })).toMatchObject({ error: expect.stringMatching(/a year/) })
+    expect(calendarRequest({ kind: 'events', from: 'soon' }, 'student')).toMatchObject({ status: 400 })
+    expect(calendarRequest({ kind: 'events', from: '2026-12-01', to: '2026-11-01' }, 'student')).toMatchObject({ error: 'to should be after from.' })
+    expect(calendarRequest({ kind: 'events', from: '2026-01-01', to: '2028-01-01' }, 'student')).toMatchObject({ error: expect.stringMatching(/a year/) })
   })
 
-  it('reads asks to add, change and remove (mayChange checks who can change which event)', () => {
-    expect(calendarRequest({ kind: 'add', event: meeting })).toEqual({
+  it('lets student leaders, mentors and admins add, change and remove', () => {
+    expect(calendarRequest({ kind: 'add', event: meeting }, 'leader')).toEqual({
       kind: 'add', event: { title: 'Parent meeting', start: meeting.start, end: meeting.end, allDay: false, location: null, description: null, signUps: false },
     })
-    expect(calendarRequest({ kind: 'add', event: { ...meeting, signUps: true } })).toMatchObject({ event: { signUps: true } })
-    expect(calendarRequest({ kind: 'change', id: 'abc123_20261105', event: meeting })).toMatchObject({ kind: 'change', id: 'abc123_20261105' })
-    expect(calendarRequest({ kind: 'remove', id: 'abc123' })).toEqual({ kind: 'remove', id: 'abc123' })
+    expect(calendarRequest({ kind: 'add', event: { ...meeting, signUps: true } }, 'mentor')).toMatchObject({ event: { signUps: true } })
+    expect(calendarRequest({ kind: 'change', id: 'abc123_20261105', event: meeting }, 'leader')).toMatchObject({ kind: 'change', id: 'abc123_20261105' })
+    expect(calendarRequest({ kind: 'change', id: 'abc123_20261105', event: meeting }, 'admin')).toMatchObject({ kind: 'change' })
+    expect(calendarRequest({ kind: 'remove', id: 'abc123' }, 'leader')).toEqual({ kind: 'remove', id: 'abc123' })
+  })
+
+  it("doesn't let students add, change or remove events, and says who can", () => {
+    const refused = { error: 'Only student leaders and mentors can add, change or remove events. Ask one of them.', status: 403 }
+    expect(calendarRequest({ kind: 'add', event: meeting }, 'student')).toEqual(refused)
+    expect(calendarRequest({ kind: 'change', id: 'abc123', event: meeting }, 'student')).toEqual(refused)
+    expect(calendarRequest({ kind: 'remove', id: 'abc123' }, 'student')).toEqual(refused)
+    // Or anyone whose role the app doesn't know.
+    expect(calendarRequest({ kind: 'add', event: meeting }, '')).toEqual(refused)
   })
 
   it('refuses anything else', () => {
-    expect(calendarRequest({ kind: 'share' })).toMatchObject({ status: 400 })
-    expect(calendarRequest({ kind: 'remove', id: '../acl' })).toEqual({ error: "That isn't an event ID.", status: 400 })
+    expect(calendarRequest({ kind: 'share' }, 'admin')).toMatchObject({ status: 400 })
+    expect(calendarRequest({ kind: 'remove', id: '../acl' }, 'admin')).toEqual({ error: "That isn't an event ID.", status: 400 })
   })
 })
 
 describe('mayChange', () => {
   const regional = { title: 'Regional', start: '2027-03-12', end: '2027-03-14', allDay: true, location: null, description: null, signUps: false }
-  const student = { id: 'student-1', role: 'student' }
 
-  it('lets the person who added an event change it, and mentors change any the app added', () => {
-    const theirs = toGoogle(regional, 'student-1')
-    expect(mayChange(theirs, student)).toBeNull()
-    expect(mayChange(theirs, { id: 'mentor-1', role: 'mentor' })).toBeNull()
-    expect(mayChange(theirs, { id: 'admin-1', role: 'admin' })).toBeNull()
+  it('lets student leaders, mentors and admins change any event the app added, whoever added it', () => {
+    const casey = toGoogle(regional, 'leader-1')
+    for (const role of ['leader', 'mentor', 'admin']) expect(mayChange(casey, role)).toBeNull()
+    expect(mayChange(toGoogle(regional, null), 'leader')).toBeNull()
   })
 
-  it("doesn't let students change someone else's event, or one added before the app kept track", () => {
-    const error = 'Only the person who added this event, or a mentor, can change or remove it.'
-    expect(mayChange(toGoogle(regional, 'student-2'), student)).toBe(error)
-    expect(mayChange(toGoogle(regional, null), student)).toBe(error)
+  it("doesn't let students change or remove events, even ones they added", () => {
+    const error = 'Only student leaders and mentors can add, change or remove events. Ask one of them.'
+    expect(mayChange(toGoogle(regional, 'student-1'), 'student')).toBe(error)
+    expect(mayChange(toGoogle(regional, 'leader-1'), 'student')).toBe(error)
   })
 
   it('leaves events people made in Google Calendar alone, even for mentors', () => {
     const made = { id: 'g1', summary: 'Build session', start: { dateTime: '2026-11-03T18:00:00-06:00' } }
-    expect(mayChange(made, { id: 'mentor-1', role: 'mentor' })).toMatch(/Change this one in Google Calendar/)
+    expect(mayChange(made, 'mentor')).toMatch(/Change this one in Google Calendar/)
     // A mark that says who added it doesn't count without the app's own mark.
-    expect(mayChange({ ...made, extendedProperties: { private: { teamAppAddedBy: 'student-1' } } }, student)).toMatch(/Google Calendar/)
+    expect(mayChange({ ...made, extendedProperties: { private: { teamAppAddedBy: 'leader-1' } } }, 'leader')).toMatch(/Google Calendar/)
   })
 })
 

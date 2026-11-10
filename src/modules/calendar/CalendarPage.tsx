@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import { canChangeEvent, EVENT_LIMITS, type CalendarEvent } from '../../core/calendar'
 import { plural } from '../../core/format'
-import { useMemberNames } from '../../core/members'
-import { useSession, type User } from '../../core/session'
+import { useMemberNames, useMembers } from '../../core/members'
+import { isLeader, useSession, type User } from '../../core/session'
 import type { Result } from '../../core/table'
 import { toast } from '../../core/toast'
 import { Callout, PageHead, Panel, Pick } from '../../core/ui'
@@ -11,12 +11,14 @@ import {
   WEEKS_AHEAD,
   addEvent,
   blankEventForm,
+  canManageSignUps,
   cancelSignUp,
   changeEvent,
   eventsByDay,
   formFromEvent,
   hasEnded,
   loadEvents,
+  notSignedUp,
   removeEvent,
   shownDescription,
   signUp,
@@ -45,13 +47,14 @@ export default function CalendarPage() {
   return (
     <>
       <PageHead title="Calendar">
-        What's coming up in the next {WEEKS_AHEAD} weeks. Add an event here or in Google Calendar, and everyone sees it.
+        What's coming up in the next {WEEKS_AHEAD} weeks. Student leaders and mentors add events here or in Google Calendar, and everyone sees them.
       </PageHead>
       <div className="toolbar">
         <button type="button" className="btn btn-sm" disabled={loading} onClick={() => void loadEvents()}>
           {loading ? 'Loading…' : 'Refresh'}
         </button>
-        {!adding && (
+        {/* Only student leaders and mentors see Add event. The server function checks this too. */}
+        {isLeader(user.role) && !adding && (
           <button type="button" className="btn btn-sm btn-primary" onClick={() => setAdding(true)}>
             Add event
           </button>
@@ -122,8 +125,11 @@ function EventRow(props: { event: CalendarEvent; user: User; signUps: SignUp[]; 
   const link = signUpLink(event.description)
   const going = signUpsFor(props.signUps, event)
   const imGoing = going.some((s) => s.created_by === user.id)
-  // Only the person who added it and mentors see Change and Remove. The server function checks this too.
+  const open = event.signUps && !hasEnded(event)
+  // Only student leaders and mentors see Change, Remove and Edit list. The server function and the database check this too.
   const canChange = canChangeEvent(event, user)
+  const canEditList = open && canManageSignUps(user)
+  const [editingList, setEditingList] = useState(false)
 
   async function toggleSignUp() {
     setBusy(true)
@@ -173,9 +179,14 @@ function EventRow(props: { event: CalendarEvent; user: User; signUps: SignUp[]; 
             Sign up
           </a>
         )}
-        {event.signUps && !hasEnded(event) && (
+        {open && (
           <button type="button" className={imGoing ? 'btn btn-sm' : 'btn btn-sm btn-primary'} disabled={busy} onClick={() => void toggleSignUp()}>
             {imGoing ? 'Cancel sign-up' : 'Sign up'}
+          </button>
+        )}
+        {canEditList && (
+          <button type="button" className="btn btn-sm" aria-expanded={editingList} onClick={() => setEditingList(!editingList)}>
+            {editingList ? 'Done' : 'Edit list'}
           </button>
         )}
         {event.url && (
@@ -194,6 +205,63 @@ function EventRow(props: { event: CalendarEvent; user: User; signUps: SignUp[]; 
           </>
         )}
       </span>
+      {canEditList && editingList && <SignUpList event={event} signUps={props.signUps} />}
+    </div>
+  )
+}
+
+/** For student leaders and mentors: take anyone off an event's sign-ups, or sign someone up. */
+function SignUpList(props: { event: CalendarEvent; signUps: SignUp[] }) {
+  const { event } = props
+  const members = useMembers()
+  const nameOf = useMemberNames()
+  const [person, setPerson] = useState('')
+  const [busy, setBusy] = useState(false)
+  const going = signUpsFor(props.signUps, event)
+  const others = notSignedUp(members, props.signUps, event)
+
+  async function add(e: FormEvent) {
+    e.preventDefault()
+    if (!person) {
+      toast('Pick someone to sign up first.')
+      return
+    }
+    setBusy(true)
+    const result = await signUp(event, person)
+    setBusy(false)
+    toast(result.ok ? `${nameOf(person)} is signed up.` : result.error)
+    if (result.ok) setPerson('')
+  }
+
+  async function takeOff(personId: string) {
+    setBusy(true)
+    const result = await cancelSignUp(event, personId)
+    setBusy(false)
+    toast(result.ok ? `${nameOf(personId)} is off the list.` : result.error)
+  }
+
+  return (
+    // Its own line under the event, the whole width of the row.
+    <div style={{ flexBasis: '100%', minWidth: 0, display: 'grid', gap: 10 }}>
+      {going.map((s) => (
+        <div key={s.id} className="toolbar">
+          <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{nameOf(s.created_by)}</span>
+          <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void takeOff(s.created_by)}>
+            Take off
+          </button>
+        </div>
+      ))}
+      <form className="toolbar" onSubmit={add} aria-label={`Sign someone up for ${event.title}`}>
+        <select className="input" aria-label="Person to sign up" style={{ maxWidth: '100%' }} value={person} onChange={(e) => setPerson(e.target.value)}>
+          <option value="">{others.length ? 'Pick someone…' : 'Everyone is signed up'}</option>
+          {others.map((m) => (
+            <option key={m.id} value={m.id}>{m.name}</option>
+          ))}
+        </select>
+        <button type="submit" className="btn btn-sm btn-primary" disabled={busy || others.length === 0}>
+          Sign them up
+        </button>
+      </form>
     </div>
   )
 }

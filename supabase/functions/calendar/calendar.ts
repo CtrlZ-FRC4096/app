@@ -10,12 +10,17 @@
  *
  *   - check: which calendar it is, and whether the app may add events
  *   - events: the events between two times (anyone on the team)
- *   - add: anyone on the team. The app marks the event as its own, with
- *     who added it, and whether people sign up for it in the app.
- *   - change, remove: the person who added the event, or a mentor. The app
- *     only changes and removes events it added itself, so it can't wreck
- *     ones people made in Google Calendar.
+ *   - add: student leaders, mentors and admins. The app marks the event as
+ *     its own, with who added it, and whether people sign up for it in the
+ *     app.
+ *   - change, remove: student leaders, mentors and admins. The app only
+ *     changes and removes events it added itself, so it can't wreck ones
+ *     people made in Google Calendar.
  */
+
+/** The roles that can add, change and remove events: student leaders, mentors and admins. */
+const LEADER_ROLES = ['leader', 'mentor', 'admin']
+const LEADERS_ONLY = 'Only student leaders and mentors can add, change or remove events. Ask one of them.'
 
 export const CALENDAR_API = 'https://www.googleapis.com/calendar/v3'
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -117,10 +122,11 @@ export function eventInput(value: unknown): EventInput | { error: string } {
 
 /**
  * What the app asked for, or why it isn't allowed. Anyone on the team can
- * ask for any of these; whether they may change or remove a particular
- * event is checked with mayChange(), once the event has been looked up.
+ * check and see events; only student leaders, mentors and admins can add,
+ * change or remove them. Whether a particular event can be changed is
+ * checked with mayChange(), once the event has been looked up.
  */
-export function calendarRequest(body: unknown, now = Date.now()): CalendarRequest | { error: string; status: number } {
+export function calendarRequest(body: unknown, role: string, now = Date.now()): CalendarRequest | { error: string; status: number } {
   const r = (body ?? {}) as Record<string, unknown>
   if (r.kind === 'check') return { kind: 'check' }
   if (r.kind === 'events') {
@@ -134,6 +140,7 @@ export function calendarRequest(body: unknown, now = Date.now()): CalendarReques
   if (r.kind !== 'add' && r.kind !== 'change' && r.kind !== 'remove') {
     return { error: 'Ask for events, to add, change or remove one, or to check.', status: 400 }
   }
+  if (!LEADER_ROLES.includes(role)) return { error: LEADERS_ONLY, status: 403 }
   if (r.kind !== 'add' && !(typeof r.id === 'string' && EVENT_ID.test(r.id))) return { error: "That isn't an event ID.", status: 400 }
   if (r.kind === 'remove') return { kind: 'remove', id: r.id as string }
   const event = eventInput(r.event)
@@ -181,11 +188,14 @@ export function addedBy(item: GoogleEvent): string | null {
   return (isAppEvent(item) && item.extendedProperties?.private?.[ADDED_BY]) || null
 }
 
-/** Why `member` can't change or remove this event, or null if they can: it has to be one the app added, and theirs unless they're a mentor. */
-export function mayChange(item: GoogleEvent, member: { id: string; role: string }): string | null {
+/**
+ * Why someone with `role` can't change or remove this event, or null if
+ * they can: it has to be one the app added, and they have to be a student
+ * leader, mentor or admin. (calendarRequest() checks the role first too.)
+ */
+export function mayChange(item: GoogleEvent, role: string): string | null {
   if (!isAppEvent(item)) return 'The app only changes events it added. Change this one in Google Calendar.'
-  if (member.role === 'mentor' || member.role === 'admin') return null
-  return addedBy(item) === member.id ? null : 'Only the person who added this event, or a mentor, can change or remove it.'
+  return LEADER_ROLES.includes(role) ? null : LEADERS_ONLY
 }
 
 /** An event from Google Calendar, for the app, or null if it was cancelled. */

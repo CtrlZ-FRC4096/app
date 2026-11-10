@@ -1,20 +1,26 @@
 // Permission rules for the Calendar module's sign-ups table
 // (supabase/migrations/..._calendar_signups.sql): anyone on the team can see
-// who's signed up, people sign only themselves up, and take back only their
-// own sign-up (mentors can take back anyone's).
+// who's signed up, students sign only themselves up and take back only
+// their own sign-up, and student leaders, mentors and admins can sign
+// anyone up and take anyone off.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
 const db = setUpTestDatabase()
 let student: string
 let other: string
+let leader: string
 let mentor: string
 
 beforeEach(async () => {
   student = await db.member('Riley Park')
   other = await db.member('Casey Brooks')
+  leader = await db.member('Drew Leader', 'leader')
   mentor = await db.member('Pat Mentor', 'mentor')
 })
+
+const signUpSomeone = (by: string, person: string, eventId = 'abc123') =>
+  db.as<{ id: string; created_by: string }>(by, 'insert into public.calendar_signups (event_id, created_by) values ($1, $2) returning *', [eventId, person])
 
 const signUp = (person: string, eventId = 'abc123_20261113T000000Z') =>
   db.as<{ id: string; event_id: string; created_by: string }>(person, 'insert into public.calendar_signups (event_id) values ($1) returning *', [eventId])
@@ -26,10 +32,13 @@ describe('calendar sign-ups', () => {
     expect(row).toMatchObject({ event_id: 'abc123_20261113T000000Z', created_by: student })
   })
 
-  it("doesn't let anyone sign someone else up", async () => {
-    await expect(
-      db.as(student, 'insert into public.calendar_signups (event_id, created_by) values ($1, $2)', ['abc123', other]),
-    ).rejects.toThrow(PERMISSION_DENIED)
+  it("doesn't let a student sign someone else up", async () => {
+    await expect(signUpSomeone(student, other)).rejects.toThrow(PERMISSION_DENIED)
+  })
+
+  it('lets student leaders and mentors sign someone else up', async () => {
+    expect(await signUpSomeone(leader, student)).toMatchObject([{ created_by: student }])
+    expect(await signUpSomeone(mentor, other)).toMatchObject([{ created_by: other }])
   })
 
   it("doesn't let someone sign up twice for the same event, but they can sign up for others", async () => {
@@ -53,15 +62,24 @@ describe('calendar sign-ups', () => {
     }
   })
 
-  it("lets people take back their own sign-up but not someone else's", async () => {
+  it("lets students take back their own sign-up but not someone else's", async () => {
     const [row] = await signUp(student)
     expect(await takeBack(other, row.id)).toEqual([])
     expect(await takeBack(student, row.id)).toEqual([{ id: row.id }])
   })
 
-  it("lets a mentor take back anyone's sign-up", async () => {
+  it("lets student leaders and mentors take anyone's sign-up back", async () => {
+    const [riley] = await signUp(student)
+    const [casey] = await signUp(other)
+    expect(await takeBack(leader, riley.id)).toEqual([{ id: riley.id }])
+    expect(await takeBack(mentor, casey.id)).toEqual([{ id: casey.id }])
+  })
+
+  it("doesn't let a student leader whose access is off sign anyone up or take anyone off", async () => {
     const [row] = await signUp(student)
-    expect(await takeBack(mentor, row.id)).toEqual([{ id: row.id }])
+    await db.switchOff(leader)
+    await expect(signUpSomeone(leader, other)).rejects.toThrow(PERMISSION_DENIED)
+    expect(await takeBack(leader, row.id)).toEqual([])
   })
 
   it("can't be changed, even by a mentor", async () => {

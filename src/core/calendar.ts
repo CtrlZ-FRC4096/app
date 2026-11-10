@@ -6,9 +6,9 @@
  * (supabase/functions/calendar/), which holds the Google key:
  *
  *   - getCalendarEvents(): events between two times. Anyone on the team.
- *   - addCalendarEvent(): anyone on the team.
- *   - changeCalendarEvent(), removeCalendarEvent(): the person who added
- *     the event, or a mentor (canChangeEvent()). The app only changes and
+ *   - addCalendarEvent(): student leaders, mentors and admins (isLeader()).
+ *   - changeCalendarEvent(), removeCalendarEvent(): student leaders,
+ *     mentors and admins (canChangeEvent()). The app only changes and
  *     removes events it added itself (event.fromApp), never ones people
  *     made in Google Calendar.
  *
@@ -20,7 +20,7 @@
  */
 import { DEMO_PEOPLE } from './demo'
 import { callFunction } from './functions'
-import { isMentor } from './roles'
+import { isLeader } from './roles'
 import { currentUser, type User } from './session'
 import { fail, ok, type Result } from './table'
 
@@ -109,23 +109,30 @@ export async function getCalendarEvents(from: Date = new Date(), to: Date = new 
   return answer.ok ? ok(answer.value.events) : answer
 }
 
-/** Whether `user` can change or remove this event: one the app added, and theirs unless they're a mentor. */
-export function canChangeEvent(event: CalendarEvent, user: Pick<User, 'id' | 'role'>): boolean {
-  return event.fromApp && (isMentor(user.role) || event.addedBy === user.id)
+/** Whether `user` can change or remove this event: one the app added, and they're a student leader, mentor or admin. */
+export function canChangeEvent(event: CalendarEvent, user: Pick<User, 'role'>): boolean {
+  return event.fromApp && isLeader(user.role)
 }
 
-/** Why the signed-in person can't change or remove this event, or null if they can. The server function says the same. */
+/** Why the signed-in person can't change or remove this event, or null if they can. The server function checks the same. */
 function whyNotChange(event: CalendarEvent): string | null {
   const me = currentUser()
   if (!me) return 'Sign in first.'
   if (!event.fromApp) return 'The app only changes events it added. Change this one in Google Calendar.'
-  return canChangeEvent(event, me) ? null : 'Only the person who added this event, or a mentor, can change or remove it.'
+  return canChangeEvent(event, me) ? null : 'Only student leaders and mentors can change or remove events. Ask one of them.'
 }
 
-/** Add an event to the team calendar. Anyone on the team. */
+/** Why the signed-in person can't add an event, or null if they can. */
+function whyNotAdd(): string | null {
+  const me = currentUser()
+  if (!me) return 'Sign in first.'
+  return isLeader(me.role) ? null : 'Only student leaders and mentors can add events. Ask one of them.'
+}
+
+/** Add an event to the team calendar. Student leaders, mentors and admins. */
 export async function addCalendarEvent(event: EventInput): Promise<Result<CalendarEvent>> {
   const me = currentUser()
-  const problem = (me ? null : 'Sign in first.') ?? checkEvent(event)
+  const problem = whyNotAdd() ?? checkEvent(event)
   if (problem) return fail(problem)
   const answer = await callFunction<{ event: CalendarEvent }>('calendar', { kind: 'add', event: cleaned(event) }, () => {
     const added = { ...cleaned(event), id: `demo-added-${demoAdded.length + 1}`, url: null, fromApp: true, addedBy: me?.id ?? null } as CalendarEvent
@@ -135,7 +142,7 @@ export async function addCalendarEvent(event: EventInput): Promise<Result<Calend
   return answer.ok ? ok(answer.value.event) : answer
 }
 
-/** Change an event the app added. The person who added it, or a mentor. */
+/** Change an event the app added. Student leaders, mentors and admins. */
 export async function changeCalendarEvent(event: CalendarEvent, changes: EventInput): Promise<Result<CalendarEvent>> {
   const problem = whyNotChange(event) ?? checkEvent(changes)
   if (problem) return fail(problem)
@@ -147,7 +154,7 @@ export async function changeCalendarEvent(event: CalendarEvent, changes: EventIn
   return answer.ok ? ok(answer.value.event) : answer
 }
 
-/** Remove an event the app added. The person who added it, or a mentor. */
+/** Remove an event the app added. Student leaders, mentors and admins. */
 export async function removeCalendarEvent(event: CalendarEvent): Promise<Result> {
   const problem = whyNotChange(event)
   if (problem) return fail(problem)

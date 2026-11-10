@@ -6,11 +6,13 @@ import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { addCalendarEvent, resetDemoCalendar, type CalendarEvent } from '../../core/calendar'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
+import { membersTable } from '../../core/members'
 import CalendarPage from './CalendarPage'
 import {
   addEvent,
   blankEventForm,
   calendarNow,
+  canManageSignUps,
   cancelSignUp,
   changeEvent,
   chicagoClock,
@@ -24,6 +26,7 @@ import {
   loadEvents,
   nextEvent,
   nextEventText,
+  notSignedUp,
   plainText,
   removeEvent,
   resetCalendar,
@@ -215,7 +218,7 @@ describe('loading', () => {
 
 describe('sign-ups in demo mode', () => {
   // A made-up event tomorrow with a sign-up line, next to the demo build sessions, which have none.
-  // Only mentors can add events, so this views the app as a mentor to add it, then as a student again.
+  // Only student leaders and mentors can add events, so this views the app as a mentor to add it, then as a student again.
   async function addOutreachWithSignUp() {
     const start = new Date(Date.now() + 24 * 60 * 60 * 1000)
     setDemoRole('mentor')
@@ -336,10 +339,11 @@ describe('the event form', () => {
 describe('adding, changing and removing events', () => {
   const tonight = (title: string): EventForm => ({ ...blankEventForm(), title, startClock: '23:00', endClock: '23:30' })
 
-  it('lets a student add an event, which shows straight away, then change and remove it', async () => {
+  it('lets a student leader add an event, which shows straight away, then change and remove it', async () => {
+    setDemoRole('leader')
     const added = await addEvent(tonight('Pizza after build'))
     if (!added.ok) throw new Error(added.error)
-    expect(added.value).toMatchObject({ addedBy: DEMO_PEOPLE.alex, fromApp: true })
+    expect(added.value).toMatchObject({ addedBy: DEMO_PEOPLE.casey, fromApp: true })
     expect(calendarNow().events.map((e) => e.title)).toContain('Pizza after build')
 
     expect(await changeEvent(added.value, tonight('Pizza after build (moved)'))).toMatchObject({ ok: true })
@@ -348,17 +352,27 @@ describe('adding, changing and removing events', () => {
     expect(calendarNow().events).toEqual([])
   })
 
+  it("doesn't let a student add an event, and says who to ask", async () => {
+    expect(await addEvent(tonight('Pizza after build'))).toEqual({ ok: false, error: 'Only student leaders and mentors can add events. Ask one of them.' })
+    expect(calendarNow().events).toEqual([])
+  })
+
   it("doesn't change anything when the form has a problem", async () => {
+    setDemoRole('leader')
     expect(await addEvent(tonight(''))).toEqual({ ok: false, error: 'Give the event a title.' })
     expect(calendarNow().events).toEqual([])
   })
 
-  it("shows Change and Remove only to who added the event, and mentors", async () => {
+  it('shows Add event, Change, Remove and Edit list only to student leaders and mentors', async () => {
     await loadEvents()
-    // The made-up outreach night was added by Pat, a mentor.
-    expect(renderToString(createElement(CalendarPage))).not.toMatch(/>Change</)
-    setDemoRole('mentor')
-    expect(renderToString(createElement(CalendarPage)).match(/>Change</g)).toHaveLength(1)
+    // The made-up outreach night was added from the app, and takes sign-ups in the app.
+    const student = renderToString(createElement(CalendarPage))
+    for (const button of ['Add event', 'Change', 'Remove', 'Edit list']) expect(student).not.toContain(`>${button}<`)
+    for (const role of ['leader', 'mentor'] as const) {
+      setDemoRole(role)
+      const page = renderToString(createElement(CalendarPage))
+      for (const button of ['Add event', 'Change', 'Remove', 'Edit list']) expect(page.match(new RegExp(`>${button}<`, 'g'))).toHaveLength(1)
+    }
   })
 })
 
@@ -384,6 +398,36 @@ describe('signing up in the app', () => {
 
   it('lists who signed up for one event only', () => {
     expect(signUpsFor(signUpsTable.rows(), { ...outreach, id: 'other' })).toEqual([])
+  })
+
+  it('lets a student leader sign someone else up and take them off', async () => {
+    setDemoRole('leader')
+    expect(await signUp(outreach, DEMO_PEOPLE.alex)).toMatchObject({ ok: true, value: { created_by: DEMO_PEOPLE.alex } })
+    expect(going()).toEqual([DEMO_PEOPLE.jordan, DEMO_PEOPLE.pat, DEMO_PEOPLE.alex])
+    expect(await signUp(outreach, DEMO_PEOPLE.alex)).toEqual({ ok: false, error: "They're already signed up." })
+
+    expect(await cancelSignUp(outreach, DEMO_PEOPLE.jordan)).toEqual({ ok: true, value: null })
+    expect(going()).toEqual([DEMO_PEOPLE.pat, DEMO_PEOPLE.alex])
+    expect(await cancelSignUp(outreach, DEMO_PEOPLE.jordan)).toEqual({ ok: false, error: "They aren't signed up for this event." })
+  })
+
+  it("doesn't let a student sign someone else up or take them off", async () => {
+    expect(await signUp(outreach, DEMO_PEOPLE.morgan)).toEqual({ ok: false, error: 'Only student leaders and mentors can sign someone else up. Ask one of them.' })
+    expect(await cancelSignUp(outreach, DEMO_PEOPLE.jordan)).toEqual({ ok: false, error: 'Only student leaders and mentors can take someone else off. Ask one of them.' })
+    expect(going()).toEqual([DEMO_PEOPLE.jordan, DEMO_PEOPLE.pat])
+    // Signing yourself up is the same as leaving the person out.
+    expect(await signUp(outreach, DEMO_PEOPLE.alex)).toMatchObject({ ok: true })
+  })
+
+  it('says who can sign others up', () => {
+    expect(canManageSignUps({ role: 'student' })).toBe(false)
+    for (const role of ['leader', 'mentor', 'admin'] as const) expect(canManageSignUps({ role })).toBe(true)
+  })
+
+  it("offers a leader everyone who isn't signed up yet and whose access is on, by name", () => {
+    const names = notSignedUp(membersTable.rows(), signUpsTable.rows(), outreach).map((m) => m.name)
+    // Jordan and Pat are signed up; Sam's access is off.
+    expect(names).toEqual(['Alex Rivera', 'Casey Nguyen', 'Morgan Lee'])
   })
 })
 

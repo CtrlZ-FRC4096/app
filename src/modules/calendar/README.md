@@ -8,17 +8,19 @@ The events live in Google Calendar, not in the app's database. The page
 loads them when it opens, at most every 10 minutes, or when someone clicks
 **Refresh**.
 
-**Adding events.** Anyone on the team can click **Add event**, or add one
-in Google Calendar. The person who added an event in the app, or a mentor,
-sees **Change** and **Remove** on it. The app never changes events made in
-Google Calendar: change those in Google Calendar.
+**Adding events.** Student leaders and mentors (and admins) see **Add
+event**, and **Change** and **Remove** on events the app added. Students
+see the events and sign up, but ask a student leader or mentor to add or
+change one. The app never changes events made in Google Calendar: change
+those in Google Calendar.
 
 **Sign-ups** come two ways. Pick one under "Sign-ups" when you add an event:
 
 - **In the app.** People tap **Sign up** on the event (and **Cancel
   sign-up** to take it back), and everyone sees who's going: "Going (2):
-  Jordan Kim, Pat Chen". There are no limits on how many can sign up. These
-  are kept in the `calendar_signups` table.
+  Jordan Kim, Pat Chen". There are no limits on how many can sign up.
+  Student leaders and mentors also see **Edit list**, to sign someone else
+  up or take anyone off. These are kept in the `calendar_signups` table.
 - **With a link,** to a Google Form or Slack post. The event gets a **Sign
   up** button that opens the link. For an event made in Google Calendar,
   add a line to its description that starts with `Sign up:` and then the
@@ -48,13 +50,16 @@ them with no connection, with when they're from.
 
 ## Who can do what, and where that's checked
 
-| What | Who | Checked by |
-|:--|:--|:--|
-| See events | Everyone on the team | The `calendar` server function |
-| Add an event | Everyone on the team | The `calendar` server function |
-| Change or remove an event | Who added it in the app, or a mentor | The `calendar` server function (`mayChange()`), which marks each event the app adds with who added it |
-| See who's signed up | Everyone on the team | The `calendar_signups` table's rules |
-| Sign up, or take it back | Yourself only (mentors can take anyone's back) | The `calendar_signups` table's rules |
+| What | Students | Student leaders, mentors, admins | Checked by |
+|:--|:--|:--|:--|
+| See events and who's signed up | Yes | Yes | The `calendar` server function, and the `calendar_signups` table's rules |
+| Sign themselves up, and cancel it | Yes | Yes | The `calendar_signups` table's rules |
+| Add events | No | Yes | The `calendar` server function (`calendarRequest()`) |
+| Change and remove events the app added | No | Yes | The `calendar` server function (`calendarRequest()` and `mayChange()`) |
+| Sign someone else up, or take anyone off | No | Yes | The `calendar_signups` table's rules (`private.is_leader()`) |
+
+The app also marks each event it adds with who added it
+(`teamAppAddedBy`), as a record. It doesn't change who can edit it.
 
 The database can't see Google Calendar, so it can't check that an event
 takes sign-ups or hasn't ended. `signUp()` in `data.ts` checks those, so
