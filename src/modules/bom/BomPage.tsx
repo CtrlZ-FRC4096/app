@@ -6,7 +6,8 @@ import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
 import {
   PART_FILTERS, addPart, addRobot, addSystem, applyOnshapeImport, canEditRobotsAndParts, changePart, changeSystem, filterParts, getOnshapeBom, kindLabel,
-  nextPartNumber, partCountText, removePart, removeSystem, renameRobot, shelfText, useParts, useRobots, useSystems,
+  nextPartNumber, partCountText, removePart, removeSystem, renameRobot, shelfText, shortageFor, shortages, toOrder, toOrderCsv, useParts, useRobotParts, useRobots, useSystems,
+  type Shortage, type VendorOrder,
   type BomSystem, type Part, type PartFilter, type PartKind, type Robot,
 } from './data'
 import {
@@ -67,6 +68,8 @@ export default function BomPage() {
   const requests = useRequestsByBomPart()
   // Inventory's parts, to show how many of each COTS part are on the shelf.
   const items = useItems()
+  // Each COTS part added up across the robot's systems, so a part two systems share isn't counted as enough twice.
+  const short = shortages(useRobotParts(robot?.id), items)
 
   async function readOnshape(s: BomSystem) {
     setReading(true)
@@ -252,7 +255,7 @@ export default function BomPage() {
                                 </span>
                               </>
                             )}
-                            {p.kind === 'cots' && !p.removed_in_onshape && <Shelf part={p} items={items} request={requests.get(p.id)} />}
+                            {p.kind === 'cots' && !p.removed_in_onshape && <Shelf part={p} items={items} request={requests.get(p.id)} shortage={shortageFor(p, short)} />}
                             {p.kind === 'cots' && !p.removed_in_onshape && <PurchaseStatus part={p} request={requests.get(p.id)} />}
                           </td>
                           <td className="num" style={under}>{p.quantity}</td>
@@ -279,7 +282,73 @@ export default function BomPage() {
           )}
         </Panel>
       )}
+      {systems.length > 0 && <ToOrder robot={robot} orders={toOrder(short, requests)} />}
     </>
+  )
+}
+
+/** The robot's To order list: the COTS parts it's short of, by vendor, with a button to copy them as CSV. */
+function ToOrder(props: { robot: Robot; orders: VendorOrder[] }) {
+  const { orders } = props
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(toOrderCsv(orders))
+      toast('Copied. Paste it into a spreadsheet or an order.')
+    } catch {
+      toast("Couldn't copy the list. Check the browser is allowed to use the clipboard, then try again.")
+    }
+  }
+
+  return (
+    <Panel
+      title="To order"
+      aside={orders.length > 0 && <button type="button" className="btn btn-sm" onClick={() => void copy()}>Copy as CSV</button>}
+    >
+      {orders.length === 0 ? (
+        <p className="panel-body muted">Nothing to order: the shelf and Purchasing cover every COTS part in {props.robot.name}.</p>
+      ) : (
+        <>
+          <p className="panel-body note">
+            COTS parts {props.robot.name} needs more of than Inventory has, added up across its systems, less what's already in Purchasing.
+          </p>
+          {/* Two columns, so the table fits on a phone. The numbers behind each line sit under the part's name. */}
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Part</th>
+                  <th className="num">To order</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orders.map((order) => (
+                  <Fragment key={order.vendor}>
+                    <tr>
+                      <th colSpan={2} scope="rowgroup">{order.vendor}</th>
+                    </tr>
+                    {order.lines.map((line) => (
+                      <tr key={line.parts[0].id}>
+                        <td>
+                          {line.name}
+                          <br />
+                          <span className="note">
+                            {line.vendor_part_number && `${line.vendor_part_number} · `}
+                            Robot needs {line.needed} · On the shelf: {line.on_shelf}
+                            {line.in_purchasing > 0 && ` · In Purchasing: ${line.in_purchasing}`}
+                          </span>
+                        </td>
+                        <td className="num">{line.to_order}</td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </Panel>
   )
 }
 
@@ -619,8 +688,8 @@ function StationPicker(props: { value: Station; onChange: (station: Station) => 
 }
 
 /** How many of a COTS part Inventory has and where, and how many are missing or being ordered. */
-function Shelf(props: { part: Part; items: Item[]; request: PurchaseItem | undefined }) {
-  const text = shelfText(props.part, props.items, props.request)
+function Shelf(props: { part: Part; items: Item[]; request: PurchaseItem | undefined; shortage: Shortage | undefined }) {
+  const text = shelfText(props.part, props.items, props.request, props.shortage)
   if (!text) return null
   return (
     <>
