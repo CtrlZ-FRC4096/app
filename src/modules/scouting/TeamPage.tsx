@@ -5,6 +5,7 @@ import { href, navigate } from '../../core/router'
 import { toast } from '../../core/toast'
 import { Bar, PageHead, Panel, Pill } from '../../core/ui'
 import { useScoutedTeams, useTeamSummary, type Tally, type TeamSummary } from './data'
+import TeamVideos from './TeamVideos'
 
 /** "Team 9991", as a link to its team page. */
 export function TeamLink(props: { team: number }) {
@@ -88,6 +89,7 @@ function TeamDetails(props: { team: number }) {
       {summary.matchCount > 0 && <Numbers summary={summary} />}
       {summary.matchCount + summary.pitCount > 0 && <HowOften summary={summary} />}
       {summary.written.length > 0 && <WrittenAnswers summary={summary} />}
+      <TeamVideos team={props.team} />
     </>
   )
 }
