@@ -3,7 +3,29 @@
 import { describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import ScoutingPage from './ScoutingPage'
-import { ROLES } from './season'
+import { AUTO_SIDES, DRIVETRAINS, ROLES } from './season'
+
+describe('the Match / Pit switch', () => {
+  it('starts on the match form, with the pit form hidden', () => {
+    const html = renderToString(<ScoutingPage />)
+    expect(html).toContain('aria-pressed="true">Match</button>')
+    expect(html).toMatch(/<div hidden="">.*Pit form/)
+  })
+})
+
+describe('the pit form', () => {
+  it('has a button for every drivetrain and auto side in season.ts, none chosen', () => {
+    const html = renderToString(<ScoutingPage />)
+    for (const choice of [...DRIVETRAINS, ...AUTO_SIDES]) expect(html).toContain(`aria-pressed="false">${choice}</button>`)
+  })
+
+  it('has the number boxes and text boxes', () => {
+    const html = renderToString(<ScoutingPage />)
+    for (const id of ['pit-match', 'pit-team','pit-weight', 'pit-length', 'pit-width', 'pit-height', 'pit-motors', 'pit-auto-path', 'pit-partners', 'pit-they-do']) {
+      expect(html).toContain(`id="${id}"`)
+    }
+  })
+})
 
 describe('the match form', () => {
   it('has a button for every role in season.ts, none chosen at the start', () => {

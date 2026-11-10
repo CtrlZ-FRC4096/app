@@ -5,10 +5,86 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetAllStores } from '../../core/store'
 import { DEMO_PEOPLE } from '../../core/demo'
 import {
-  MAX_NOTES_LENGTH, checkEntry, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches, saveEntry, syncEntries, syncStatus,
-  teamNumber, toRow, type EntryFields,
+  MAX_NOTES_LENGTH, blankOrNumber, checkEntry, checkPitEntry, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
+  numberOnly, pitStore, saveEntry, savePitEntry, syncEntries, syncStatus, teamNumber, toRow, type EntryFields, type PitFields,
 } from './data'
 import { EVENT_KEY } from './season'
+
+// A filled-in pit form. Each test changes only the part it's about.
+const PIT: PitFields = {
+  team: 9992,
+  match: null,
+  drivetrain: 'Swerve',
+  weight: 115.5,
+  length: 28,
+  width: 28,
+  height: 36,
+  motors: '  4 drive motors, 2 on the shooter  ',
+  auto_side: 'Left',
+  auto_path: 'Scores 3, then drives out',
+  partners_do: 'Play defense',
+  they_do: 'Score fuel',
+}
+
+describe('savePitEntry', () => {
+  beforeEach(() => {
+    pitStore.reset()
+  })
+
+  it('saves the pit form, newest first, marked as not synced yet', () => {
+    const first = savePitEntry(PIT)
+    const second = savePitEntry({ ...PIT, team: 9993, match: 4 })
+    if (!first.ok || !second.ok) throw new Error('should save')
+    expect(pitStore.get()).toEqual([second.value, first.value])
+    expect(first.value).toMatchObject({ ...PIT, motors: '4 drive motors, 2 on the shooter', synced: false })
+    expect(second.value.match).toBe(4)
+  })
+
+  it('needs a team number, but not a match number', () => {
+    expect(checkPitEntry({ ...PIT, team: 0 })).toBe('Enter the team number first.')
+    expect(checkPitEntry({ ...PIT, match: null })).toBeNull()
+    expect(checkPitEntry({ ...PIT, match: 2.5 })).toBe('Check the match number, or leave it blank.')
+  })
+
+  it('takes blank weight and size, but not zero', () => {
+    expect(checkPitEntry({ ...PIT, weight: null, length: null, width: null, height: null })).toBeNull()
+    expect(checkPitEntry({ ...PIT, weight: 0 })).toBe('Check the weight, or leave it blank.')
+    expect(checkPitEntry({ ...PIT, height: Number.NaN })).toBe('Check the height, or leave it blank.')
+  })
+
+  it('saves nothing when the form has a problem', () => {
+    const result = savePitEntry({ ...PIT, team: 0 })
+    expect(result.ok).toBe(false)
+    expect(pitStore.get()).toEqual([])
+  })
+})
+
+describe('blankOrNumber', () => {
+  it('reads a number box, with blank as null', () => {
+    expect(blankOrNumber('115.5')).toBe(115.5)
+    expect(blankOrNumber('')).toBeNull()
+    expect(blankOrNumber('  ')).toBeNull()
+  })
+})
+
+describe('numberOnly', () => {
+  it('keeps whole numbers and decimals', () => {
+    expect(numberOnly('120')).toBe('120')
+    expect(numberOnly('115.5')).toBe('115.5')
+    expect(numberOnly('')).toBe('')
+  })
+
+  it('takes out anything that is not part of a number', () => {
+    expect(numberOnly('about 120 lbs')).toBe('120')
+    expect(numberOnly('-28')).toBe('28')
+    expect(numberOnly('2e3')).toBe('23')
+  })
+
+  it('keeps only the first decimal point', () => {
+    expect(numberOnly('1.2.3')).toBe('1.23')
+    expect(numberOnly('..5')).toBe('.5')
+  })
+})
 
 // A filled-in form. Each test changes only the part it's about.
 const FORM: EntryFields = {

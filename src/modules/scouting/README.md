@@ -14,6 +14,8 @@
   - every minute while any are waiting
 
   A **Send now** button is there too, but it's never needed. Entries need someone signed in on the phone to send.
+- A Match / Pit switch at the top of the page. The choice is in the address: `#/scouting` is the match form and `#/scouting/pit` the pit form. Each form is one panel, with a line between its sections (`FormSection.tsx`). The pit form (`PitForm.tsx`) asks for the team, drivetrain, weight and size, motors, preferred auto and strategy. Its choice lists are `DRIVETRAINS` and `AUTO_SIDES` in `season.ts`. Save pit entry: `savePitEntry()` in `data.ts` keeps it on this device (`pitStore`). It needs a team number; the match number is optional. Pit entries aren't sent to the team database yet: that needs its own table and migration, and is the next step.
+- The Competition menu lists Match and Pit under Scouting (`pages` in `index.ts`).
 
 Entries are kept on the device in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. `syncEntries()` sends the Waiting ones to the `scouting_entries` table (`supabase/migrations/..._scouting_entries.sql`, rules tested in `supabase/tests/scouting-entries.test.ts`) and marks them Synced.
 

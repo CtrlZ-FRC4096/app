@@ -42,6 +42,12 @@ export interface ModuleDefinition {
   purpose: string
   /** Which menu in the top bar it sits under. Leave it out and it goes under "More". */
   group?: GroupId
+  /**
+   * Pages inside the module, listed under its name in the menu, like Match
+   * and Pit under Scouting. Leave it out and the menu shows just the module.
+   * The page reads which one is open with useRoute() (src/core/router.ts).
+   */
+  pages?: ModulePage[]
   /** Who can open it. Leave it out to let everyone in. */
   roles?: Role[]
   /** Loads the page only when someone opens it, so one module can't slow the others down. */
@@ -54,6 +60,17 @@ export interface ModuleDefinition {
   useSummary?: (role: Role) => Notice
   /** Anything that needs someone's attention, shown under "Needs attention" on the home page. A hook, like useSummary. */
   useAttention?: (role: Role) => Notice[]
+}
+
+/** A page inside a module, shown under the module's name in the menu. */
+export interface ModulePage {
+  /** Shown in the menu, like "Pit". */
+  name: string
+  /**
+   * What comes after the module id in the address: 'pit' for #/scouting/pit,
+   * or '' for the module's own address, #/scouting. Lowercase letters and dashes.
+   */
+  path: string
 }
 
 /** A menu in the top bar, with the modules in it. */

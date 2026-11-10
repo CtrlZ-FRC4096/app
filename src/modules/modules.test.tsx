@@ -28,6 +28,17 @@ describe('the module list', () => {
     const inMenus = groupModules(modules).flatMap((group) => group.modules.map((m) => m.id))
     expect(inMenus.toSorted()).toEqual(modules.map((m) => m.id).toSorted())
   })
+
+  it.each(modules.filter((m) => m.pages).map((m) => [m.id, m] as const))('%s lists pages with names and usable, different addresses', (_id, m) => {
+    const pages = m.pages ?? []
+    expect(pages.length).toBeGreaterThan(0)
+    const paths = pages.map((p) => p.path)
+    expect(new Set(paths).size).toBe(paths.length)
+    for (const page of pages) {
+      expect(page.name.trim()).not.toBe('')
+      expect(page.path).toMatch(/^([a-z][a-z0-9-]*)?$/)
+    }
+  })
 })
 
 describe.each(modules.map((m) => [m.id, m] as const))('module %s', (_id, m) => {

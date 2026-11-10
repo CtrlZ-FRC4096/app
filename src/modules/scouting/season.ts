@@ -26,6 +26,12 @@ export const ENDGAME: string[] = ['None', 'Level 1', 'Level 2', 'Level 3']
 /** What the robot spent the match doing. Scouts can choose more than one, or none. */
 export const ROLES: string[] = ['Scorer', 'Defender', 'Feeder']
 
+/** Pit form: the drivetrain choices. */
+export const DRIVETRAINS: string[] = ['Swerve', 'Tank', 'Mecanum', 'H-drive', 'Other omni/holonomic']
+
+/** Pit form: which side of the field a robot starts its auto on. */
+export const AUTO_SIDES: string[] = ['Left', 'Center', 'Right']
+
 /**
  * The event we're at, the way The Blue Alliance names it: the year and a
  * short code, like 2026ilch. It's the end of the event page's address on
