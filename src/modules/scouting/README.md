@@ -80,6 +80,25 @@ They work like The Blue Alliance's above: same `EVENT_KEY`, same
 `{ ok, value }` answers, and made-up example data in demo mode. Match 13
 has no schedule or team names: get those from The Blue Alliance and match
 them up by the match `key` or the team number.
+
+### One team's numbers (#37)
+
+For a team page or the picklist, don't call `getRatings()` from the page.
+Use the saved copy instead: one request gets every team, and it still
+shows with no Wi-Fi.
+
+| In `data.ts` | Gives you |
+|:--|:--|
+| `useRatings()` | Every team's rating (Match 13) and ranking (The Blue Alliance) at `EVENT_KEY`, saved on this device. Loads when nothing's saved, when the copy is over 5 minutes old (`STALE_MS`), and when the phone comes back online. Has `loading`, `error`, `loadedAt` and `refresh()` for a Refresh button |
+| `teamRating(ratings, team)` | One team's rating, xP rank (tied teams share a rank), how many teams were rated, and the change since the event started. `null` means "No Match 13 rating yet" |
+| `teamRecord(rankings, team)` | Their wins, losses and ties, or `null` |
+| `signed(n)` | A change like "+4.6" or "−1.4" |
+| `savedWhen(loadedAt)` | When the saved numbers are from, like "Today at 3:40 PM" |
+
+If a load doesn't work, the last copy stays and `error` says why. Match 13
+having nothing for the event yet isn't an error: nobody's rated yet. A copy
+saved for another event counts as nothing saved. "Reset example data" may
+clear the copy; that's fine, it loads again.
 - Scouting data is visible to signed-in team members only.
 
 ## Where to start
