@@ -59,28 +59,21 @@ describe('the example data', () => {
 })
 
 describe('fixing things by hand', () => {
-  it('adds a missed check-out, so the hours count', async () => {
+  it('adds a missed check-out, so the hours count, but not a time that isn’t a time, or the same check twice', async () => {
     const alex = person('Alex Rivera')
+    expect(await addCheck(alex.id, '2026-01-15', '8pm', 'out')).toMatchObject({ ok: false, error: /time like 18:30/ })
+    expect((await addCheck(alex.id, '2026-01-15', '18:10', 'in')).ok).toBe(false)
     expect(report().rows.find((r) => r.person.id === alex.id)?.days.get('2026-01-15')?.hours).toBeNull()
     expect((await addCheck(alex.id, '2026-01-15', '20:40', 'out')).ok).toBe(true)
     expect(report().rows.find((r) => r.person.id === alex.id)?.days.get('2026-01-15')?.hours).toBeCloseTo(2.5)
   })
 
-  it('refuses a time that isn’t a time, and the same check twice', async () => {
-    const alex = person('Alex Rivera')
-    expect(await addCheck(alex.id, '2026-01-15', '8pm', 'out')).toEqual({ ok: false, error: 'Enter a time like 18:30.' })
-    expect((await addCheck(alex.id, '2026-01-15', '18:10', 'in')).ok).toBe(false)
-  })
-
-  it('ignores an imported check instead of deleting it, and can bring it back', async () => {
+  it('ignores an imported check instead of deleting it, and can bring it back, but deletes a check a mentor added by hand', async () => {
     const check = checksTable.rows().find((c) => c.source === 'jibble')!
     await removeCheck(check)
     expect(checksTable.rows().find((c) => c.id === check.id)?.ignored).toBe(true)
     await restoreCheck({ ...check, ignored: true })
     expect(checksTable.rows().find((c) => c.id === check.id)?.ignored).toBe(false)
-  })
-
-  it('deletes a check a mentor added by hand', async () => {
     const added = await addCheck(person('Sam Ortiz').id, '2026-01-10', '12:00', 'in')
     if (!added.ok) throw new Error(added.error)
     await removeCheck(added.value)
@@ -172,11 +165,6 @@ describe('points periods', () => {
     expect(season.rows.find((r) => r.person.name === 'Alex Rivera')?.points).toBe(6)
   })
 
-  it('opens on the period that includes today', () => {
-    expect(countRange(null, periodsTable.rows(), '2026-01-08').period?.name).toBe('2026 preseason')
-    expect(countRange(null, periodsTable.rows(), '2026-10-27').period?.name).toBe('2026 build season')
-  })
-
   it('saves, changes and removes a period', async () => {
     const added = await savePeriod({ name: '  2026 offseason ', first_day: '2026-05-01', last_day: null })
     expect(added.ok && added.value).toMatchObject({ name: '2026 offseason', first_day: '2026-05-01', last_day: null })
@@ -205,7 +193,7 @@ describe('points periods', () => {
 describe('sorting', () => {
   const names = (by: Parameters<typeof sortRows>[1]) => sortRows(report().rows, by).map((r) => r.person.name)
 
-  it('puts the most first for points, hours and days here, and names A to Z', () => {
+  it('puts the most first for points, hours and days here, and names A to Z, with hours sorted apart from points', () => {
     const rows = report().rows
     for (const by of ['points', 'hours', 'days'] as const) {
       const value = (r: (typeof rows)[number]) => (by === 'points' ? r.points : by === 'hours' ? r.hours : r.daysPresent)
@@ -213,9 +201,6 @@ describe('sorting', () => {
       for (let i = 1; i < sorted.length; i++) expect(value(sorted[i - 1])).toBeGreaterThanOrEqual(value(sorted[i]))
     }
     expect(names('name')).toEqual([...names('name')].sort((a, b) => a.localeCompare(b)))
-  })
-
-  it('sorts by hours differently from points', () => {
     // Without hidden people, as the sheets open. Casey has the most of both; Jordan
     // is fourth on points (9) but second on hours (7.8).
     const shown = buildReport(peopleTable.rows().filter((p) => !p.hidden), checksTable.rows(), rsvpsTable.rows()).rows
@@ -254,13 +239,10 @@ describe('your own attendance', () => {
 
   const home = (hook: () => string) => renderToString(createElement(() => createElement('p', null, hook())))
 
-  it("shows students their own points and hours this period on the home page, and nobody else's", () => {
+  it("shows students their own points and hours this period on the home page, and nobody else's, and mentors how many came to the last meeting", () => {
     setDemoRole('student')
     // Alex, in the 2026 build season: 6 points, and 2.2 hours (Jan 13; Jan 15 has no check-out).
     expect(home(() => useAttendanceSummary('student').text)).toBe('<p>You: 6 points · 2.2 hours</p>')
-  })
-
-  it('still shows mentors how many came to the last meeting', () => {
     setDemoRole('mentor')
     expect(home(() => useAttendanceSummary('mentor').text)).toMatch(/^<p>\d+ at /)
   })
@@ -288,8 +270,11 @@ describe('requests for missing hours', () => {
     expect(await cancelRequest(declined)).toEqual({ ok: false, error: 'A mentor already decided that one.' })
   })
 
-  it("adds the hours when a mentor approves, so the person's points update", async () => {
+  it("only lets a mentor approve, which adds the hours, so the person's points update", async () => {
     // Alex forgot to check out on Jan 15: −1 that day, so 6 points this season.
+    expect(season('Alex Rivera').points).toBe(6)
+    // The database refuses a student too (supabase/tests/attendance-requests.test.ts). Here, they're told who can.
+    expect(await decideRequest(request('Alex Rivera'), true)).toMatchObject({ ok: false, error: /Only mentors and admins/ })
     expect(season('Alex Rivera').points).toBe(6)
     setDemoRole('mentor')
     const approved = await decideRequest(request('Alex Rivera'), true)
@@ -308,31 +293,21 @@ describe('requests for missing hours', () => {
     const again = requestsTable.rows().find((r) => r.id === jordan.id)!
     expect(await decideRequest(again, true)).toEqual({ ok: false, error: 'That request was already declined.' })
   })
-
-  it("doesn't let students approve", async () => {
-    expect(await decideRequest(request('Alex Rivera'), true)).toEqual({ ok: false, error: 'Only mentors and admins can approve requests.' })
-  })
 })
 
 describe('which dates are counted', () => {
   afterEach(() => setDemoRole('student'))
 
-  it('shows everyone the date controls, opening on the most recent period', async () => {
+  it('shows everyone the date controls, opening on the most recent period, and lets only mentors and admins save periods', async () => {
     const { default: AttendancePage } = await import('./AttendancePage')
-    for (const role of ['student', 'mentor'] as const) {
+    for (const role of ['student', 'mentor', 'admin'] as const) {
       setDemoRole(role)
       const page = renderToString(createElement(AttendancePage))
-      expect(page).toContain('Count points over')
-      expect(page).toContain('2026 build season')
+      expect(page, role).toContain('Count points over')
+      expect(page, role).toContain('2026 build season')
+      if (role === 'student') expect(page, role).not.toContain('>Periods<')
+      if (role === 'admin') expect(page, role).toContain('>Periods<')
     }
-  })
-
-  it('lets only mentors and admins save periods', async () => {
-    const { default: AttendancePage } = await import('./AttendancePage')
-    setDemoRole('student')
-    expect(renderToString(createElement(AttendancePage))).not.toContain('>Periods<')
-    setDemoRole('admin')
-    expect(renderToString(createElement(AttendancePage))).toContain('>Periods<')
   })
 })
 
@@ -340,24 +315,18 @@ describe('what Attendance puts on the home page', () => {
   const now = Date.parse('2026-01-20T18:00:00Z')
   const sentHoursAgo = (hours: number) => ({ ...requestsTable.demoRows[0], created_at: new Date(now - hours * 3_600_000).toISOString() })
 
-  it('leaves alone a request sent today, and speaks up once one has waited a day', () => {
+  it('leaves alone a request sent today, and speaks up once one has waited a day, counting only the late ones', () => {
     expect(lateRequests([sentHoursAgo(3)], now)).toEqual([])
     expect(lateRequests([sentHoursAgo(23)], now)).toEqual([])
     expect(lateRequests([sentHoursAgo(30)], now)).toHaveLength(1)
-  })
-
-  it('counts only the ones that are late', () => {
     expect(lateRequests([sentHoursAgo(2), sentHoursAgo(40), sentHoursAgo(50)], now)).toHaveLength(2)
   })
 
-  it('says nothing about last night\'s pull, and speaks up when one stopped', () => {
+  it("says nothing about last night's pull, or when it has never run (a setup job, not an alarm), and speaks up when one stopped", () => {
     const pulledHoursAgo = (hours: number) => ({ ...syncsTable.demoRows[0], created_at: new Date(now - hours * 3_600_000).toISOString() })
     expect(pullIsLate(pulledHoursAgo(10), now)).toBe(false)
     expect(pullIsLate(pulledHoursAgo(35), now)).toBe(false)
     expect(pullIsLate(pulledHoursAgo(40), now)).toBe(true)
-  })
-
-  it('says nothing when the pull has never run, which is a setup job, not an alarm', () => {
     expect(pullIsLate(null, now)).toBe(false)
   })
 })

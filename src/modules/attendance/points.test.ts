@@ -3,24 +3,22 @@ import { BASE_POINTS, buildReport, dayPoints, hoursOf, sessions } from './points
 import { teamInstant } from './time'
 
 describe('dayPoints: a full session is 2 hours or more', () => {
-  it.each([
-    ['yes', null, -1],
-    ['yes', 1.0, 1],
-    ['yes', 1.5, 1],
-    ['yes', 1.99, 1],
-    ['yes', 2.0, 3],
-    ['no', null, 1],
-    ['no', 1.5, 1],
-    ['no', 2.0, 2],
-    [null, null, 0],
-    [null, 1.5, 0],
-    [null, 2.0, 1],
-  ] as const)('RSVP %s, %s hours → %i', (rsvp, hours, points) => {
-    expect(dayPoints(rsvp, hours)).toBe(points)
-  })
-
-  it('counts a check-out at the same second as the check-in as staying 0 hours, not as missing', () => {
-    expect(dayPoints('yes', 0)).toBe(1)
+  it('scores each RSVP and number of hours the way the old spreadsheet did', () => {
+    const cases = [
+      ['yes', null, -1],
+      ['yes', 0, 1], // a check-out at the same second as the check-in is staying 0 hours, not missing
+      ['yes', 1.0, 1],
+      ['yes', 1.5, 1],
+      ['yes', 1.99, 1],
+      ['yes', 2.0, 3],
+      ['no', null, 1],
+      ['no', 1.5, 1],
+      ['no', 2.0, 2],
+      [null, null, 0],
+      [null, 1.5, 0],
+      [null, 2.0, 1],
+    ] as const
+    for (const [rsvp, hours, points] of cases) expect(dayPoints(rsvp, hours), `RSVP ${rsvp}, ${hours} hours`).toBe(points)
   })
 })
 
@@ -28,8 +26,9 @@ const at = (clock: string) => teamInstant('2026-01-09', clock)
 const check = (direction: 'in' | 'out', clock: string) => ({ direction, at: at(clock) })
 
 describe('sessions and hours', () => {
-  it('pairs each check-in with the next check-out', () => {
+  it('pairs each check-in with the next check-out, adding up every visit in a day', () => {
     expect(hoursOf(sessions([check('in', '18:00'), check('out', '20:30')]))).toBeCloseTo(2.5)
+    expect(hoursOf(sessions([check('in', '10:00'), check('out', '12:00'), check('in', '13:00'), check('out', '15:30')]))).toBeCloseTo(4.5)
   })
 
   it('handles the double taps from the old notebook example the same way', () => {
@@ -45,18 +44,10 @@ describe('sessions and hours', () => {
     expect(hoursOf(list)).toBeCloseTo(1.896, 2)
   })
 
-  it('adds up two visits in one day', () => {
-    const list = sessions([check('in', '10:00'), check('out', '12:00'), check('in', '13:00'), check('out', '15:30')])
-    expect(hoursOf(list)).toBeCloseTo(4.5)
-  })
-
-  it('gives no hours to someone who never checked out, and says they are still in', () => {
+  it('gives no hours to someone who never checked out, saying they are still in, and ignores a check-out with no check-in before it', () => {
     const list = sessions([check('in', '18:00')])
     expect(hoursOf(list)).toBeNull()
     expect(list).toEqual([{ in: at('18:00'), out: null }])
-  })
-
-  it('ignores a check-out with no check-in before it', () => {
     expect(hoursOf(sessions([check('out', '17:00'), check('in', '18:00'), check('out', '19:00')]))).toBeCloseTo(1)
   })
 })
@@ -78,21 +69,18 @@ describe('buildReport', () => {
     { person_id: 'b', day: '2026-01-08', coming: true },
   ]
 
-  it('scores everyone on every meeting day, starting from the base points', () => {
+  it("scores everyone on every meeting day, starting from the base points, leaving out people with nothing in range, and ignored check-ins don't count", () => {
     const report = buildReport(people, checks, rsvps)
     expect(report.days).toEqual(['2026-01-08', '2026-01-09'])
     // Alex: yes and 2 hours (3) + nothing on the 9th (0). Blake: yes but didn't come (−1) + still in on the 9th (0).
+    // Casey has nothing, so isn't in the report.
     expect(report.rows.map((r) => [r.person.name, r.points])).toEqual([
       ['Alex', BASE_POINTS + 3],
       ['Blake', BASE_POINTS - 1],
     ])
     expect(report.rows[1].days.get('2026-01-09')?.stillIn).toBe(true)
-  })
-
-  it("leaves out people with nothing in range, and ignored check-ins don't count", () => {
-    const report = buildReport(people, checks, rsvps)
-    expect(report.rows.find((r) => r.person.name === 'Casey')).toBeUndefined()
-    expect(report.rows.find((r) => r.person.name === 'Blake')?.hours).toBe(0)
+    // Blake's check-out was ignored, so it gives no hours.
+    expect(report.rows[1].hours).toBe(0)
   })
 
   it('limits the report to a range of days', () => {

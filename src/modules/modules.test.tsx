@@ -5,23 +5,27 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import { modules } from '.'
-import { ROLES, canOpen } from '../core/session'
+import { ROLES, canOpen, type Role } from '../core/session'
 import { groupModules } from '../core/registry'
 import { setDemoRole } from '../core/demo'
 import type { Notice } from '../core/registry'
 
 afterAll(() => setDemoRole('student'))
 
+// expect.soft keeps going after a failure, so one run reports every module
+// that breaks a rule, not just the first.
 describe('the module list', () => {
   it('has no two modules with the same id', () => {
     const ids = modules.map((m) => m.id)
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it.each(modules.map((m) => [m.id, m] as const))('%s has a usable id, a name and a purpose', (_id, m) => {
-    expect(m.id).toMatch(/^[a-z][a-z0-9-]*$/)
-    expect(m.name.trim()).not.toBe('')
-    expect(m.purpose.trim()).not.toBe('')
+  it('gives every module a usable id, a name and a purpose', () => {
+    for (const m of modules) {
+      expect.soft(m.id, 'an id like "pit-checklist"').toMatch(/^[a-z][a-z0-9-]*$/)
+      expect.soft(m.name.trim(), `${m.id}'s name`).not.toBe('')
+      expect.soft(m.purpose.trim(), `${m.id}'s purpose`).not.toBe('')
+    }
   })
 
   it('shows every module in one of the menus in the top bar', () => {
@@ -29,44 +33,61 @@ describe('the module list', () => {
     expect(inMenus.toSorted()).toEqual(modules.map((m) => m.id).toSorted())
   })
 
-  it.each(modules.filter((m) => m.pages).map((m) => [m.id, m] as const))('%s lists pages with names and usable, different addresses', (_id, m) => {
-    const pages = m.pages ?? []
-    expect(pages.length).toBeGreaterThan(0)
-    const paths = pages.map((p) => p.path)
-    expect(new Set(paths).size).toBe(paths.length)
-    for (const page of pages) {
-      expect(page.name.trim()).not.toBe('')
-      expect(page.path).toMatch(/^([a-z][a-z0-9-]*)?$/)
+  it('gives every page a name and a usable address, different from its other pages', () => {
+    for (const m of modules.filter((m) => m.pages)) {
+      const pages = m.pages ?? []
+      expect.soft(pages.length, `${m.id}'s pages`).toBeGreaterThan(0)
+      const paths = pages.map((p) => p.path)
+      expect.soft(new Set(paths).size, `${m.id}'s page addresses`).toBe(paths.length)
+      for (const page of pages) {
+        expect.soft(page.name.trim(), `the name of ${m.id}/${page.path}`).not.toBe('')
+        expect.soft(page.path, `the address of ${m.id}'s ${page.name} page`).toMatch(/^([a-z][a-z0-9-]*)?$/)
+      }
     }
   })
 })
 
-describe.each(modules.map((m) => [m.id, m] as const))('module %s', (_id, m) => {
-  it.each(ROLES.filter((role) => canOpen(role, m.roles)))('draws its page for a %s without crashing', async (role) => {
+/** Do `check` signed in as each role, and say which role it was if it fails. */
+function asEach(roles: Role[], check: (role: Role) => void) {
+  for (const role of roles) {
     setDemoRole(role)
+    try {
+      check(role)
+    } catch (error) {
+      if (error instanceof Error) error.message = `As a ${role}: ${error.message}`
+      throw error
+    }
+  }
+}
+
+describe.each(modules.map((m) => [m.id, m] as const))('module %s', (_id, m) => {
+  it('draws its page for everyone who can open it, without crashing', async () => {
     const { default: Page } = await m.load()
-    expect(renderToString(<Page />).length).toBeGreaterThan(0)
+    asEach(ROLES.filter((role) => canOpen(role, m.roles)), () => {
+      expect(renderToString(<Page />).length).toBeGreaterThan(0)
+    })
   })
 
-  it.each(ROLES)('gives the home page a status and attention items for a %s without crashing', (role) => {
-    setDemoRole(role)
-    let summary: Notice | undefined
-    let attention: Notice[] = []
-    function Summary() {
-      summary = m.useSummary!(role)
-      return null
-    }
-    function Attention() {
-      attention = m.useAttention!(role)
-      return null
-    }
-    if (m.useSummary) {
-      renderToString(<Summary />)
-      expect(summary?.text.trim()).not.toBe('')
-    }
-    if (m.useAttention) {
-      renderToString(<Attention />)
-      for (const notice of attention) expect(notice.text.trim()).not.toBe('')
-    }
+  it('gives the home page a status and attention items for everyone, without crashing', () => {
+    asEach(ROLES, (role) => {
+      let summary: Notice | undefined
+      let attention: Notice[] = []
+      function Summary() {
+        summary = m.useSummary!(role)
+        return null
+      }
+      function Attention() {
+        attention = m.useAttention!(role)
+        return null
+      }
+      if (m.useSummary) {
+        renderToString(<Summary />)
+        expect(summary?.text.trim()).not.toBe('')
+      }
+      if (m.useAttention) {
+        renderToString(<Attention />)
+        for (const notice of attention) expect(notice.text.trim()).not.toBe('')
+      }
+    })
   })
 })

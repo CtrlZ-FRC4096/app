@@ -18,38 +18,34 @@ describe('finding someone to assign', () => {
     { id: 'c', name: 'Pat Morgan' },
   ]
 
-  it('shows everyone when the search is empty or only spaces', () => {
-    expect(matchMembers(people, '')).toEqual(people)
-    expect(matchMembers(people, '   ')).toEqual(people)
-  })
-
-  it('narrows by any part of a name, ignoring capitals and spaces at the ends', () => {
-    expect(matchMembers(people, 'lee').map((p) => p.id)).toEqual(['b'])
-    expect(matchMembers(people, ' MORG ').map((p) => p.id)).toEqual(['c'])
-    expect(matchMembers(people, 'r').map((p) => p.id)).toEqual(['a', 'b', 'c'])
+  it('narrows by any part of a name, ignoring capitals and spaces at the ends, showing everyone for an empty search', () => {
+    const searches: [string, string[]][] = [
+      ['', ['a', 'b', 'c']],
+      ['   ', ['a', 'b', 'c']],
+      ['lee', ['b']],
+      [' MORG ', ['c']],
+      ['r', ['a', 'b', 'c']],
+      ['zzz', []],
+    ]
+    for (const [search, ids] of searches) expect(matchMembers(people, search).map((p) => p.id), `"${search}"`).toEqual(ids)
     expect(nameMatches('Alex Rivera', 'x r')).toBe(true)
-  })
-
-  it('returns no one when nobody matches', () => {
-    expect(matchMembers(people, 'zzz')).toEqual([])
     expect(nameMatches('Alex Rivera', 'zzz')).toBe(false)
   })
 
-  it('always keeps chosen people, in their usual order, so searching never hides an assignment', () => {
+  it('always keeps chosen people, in their usual order, so searching never hides an assignment, without changing the list it was given', () => {
+    const before = structuredClone(people)
     expect(matchMembers(people, 'lee', ['c']).map((p) => p.id)).toEqual(['b', 'c'])
     expect(matchMembers(people, 'zzz', ['a', 'c']).map((p) => p.id)).toEqual(['a', 'c'])
-  })
-
-  it('does not change the list it was given', () => {
-    const before = structuredClone(people)
-    matchMembers(people, 'lee', ['a'])
     expect(people).toEqual(before)
   })
 })
 
 describe('pit checklist', () => {
-  it('adds a trimmed, unchecked item after the existing items', () => {
-    const previous = [...checklistStore.get()]
+  it('adds a trimmed, unchecked item after the existing items, and rejects blank or oversized items without changing the list', () => {
+    const previous = checklistStore.get()
+    expect(addPitItem(' \n ')).toMatchObject({ ok: false, error: /Write a checklist item/ })
+    expect(addPitItem('x'.repeat(MAX_ITEM_LENGTH + 1)).ok).toBe(false)
+    expect(checklistStore.get()).toBe(previous)
     const result = addPitItem('  Check tire wear  ')
     expect(result.ok).toBe(true)
     expect(checklistStore.get().slice(0, -1)).toEqual(previous)
@@ -57,29 +53,19 @@ describe('pit checklist', () => {
     const second = addPitItem('Check tire wear')
     if (!result.ok || !second.ok) throw new Error('Expected items to be added')
     expect(second.value.id).not.toBe(result.value.id)
-  })
-
-  it('rejects blank or oversized items without changing the list', () => {
-    const previous = checklistStore.get()
-    expect(addPitItem(' \n ')).toEqual({ ok: false, error: 'Write a checklist item first.' })
-    expect(addPitItem('x'.repeat(MAX_ITEM_LENGTH + 1)).ok).toBe(false)
-    expect(checklistStore.get()).toBe(previous)
     expect(addPitItem('x'.repeat(MAX_ITEM_LENGTH)).ok).toBe(true)
   })
 
-  it('checks and unchecks only the requested item', () => {
+  it('checks and unchecks only the requested item, and reports missing items without changing the list', () => {
     const [first, ...others] = checklistStore.get()
+    const previous = checklistStore.get()
+    expect(setPitItemCompleted('missing', true).ok).toBe(false)
+    expect(checklistStore.get()).toBe(previous)
     expect(setPitItemCompleted(first.id, true).ok).toBe(true)
     expect(checklistStore.get()[0].completed).toBe(true)
     expect(checklistStore.get().slice(1)).toEqual(others)
     expect(setPitItemCompleted(first.id, false).ok).toBe(true)
     expect(checklistStore.get()[0]).toEqual(first)
-  })
-
-  it('reports missing items without changing the list', () => {
-    const previous = checklistStore.get()
-    expect(setPitItemCompleted('missing', true).ok).toBe(false)
-    expect(checklistStore.get()).toBe(previous)
   })
 
   it('allows only assignees to check and uncheck, including for mentors', () => {

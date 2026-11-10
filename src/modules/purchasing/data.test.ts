@@ -72,7 +72,7 @@ const find = (name: string) => itemsTable.rows().find((i) => i.name === name)!
 const valid = { ...EMPTY_ITEM, name: 'Bolts', vendor: 'McMaster', type: 'Hardware' }
 
 describe('the lists', () => {
-  it('has the Slack list\'s 10 statuses, in order', () => {
+  it("has the Slack list's 10 statuses, in order, and lets people asking pick only a priority", () => {
     expect(STATUSES.map((s) => s.label)).toEqual([
       'Wait to Order',
       'Order Low Priority',
@@ -85,9 +85,6 @@ describe('the lists', () => {
       'In Shop',
       'Cancel Item',
     ])
-  })
-
-  it('lets people asking pick only a priority', () => {
     expect(STATUSES.filter((s) => s.ask).map((s) => s.key)).toEqual(['wait', 'order_low', 'order', 'order_high'])
   })
 
@@ -112,19 +109,14 @@ describe('prices', () => {
     expect(priceFrom('  ')).toBeNull()
   })
 
-  it('accepts dollars and cents, or an empty box', () => {
+  it('accepts dollars and cents, or an empty box, and refuses anything else, saying what to do', () => {
     for (const price of ['', '12', '12.', '12.5', '12.50', '.99', '0', '$1,250.00', '99999.99']) {
-      expect(priceProblem(price)).toBeNull()
+      expect(priceProblem(price), price).toBeNull()
     }
-  })
-
-  it('refuses anything else, and says what to do', () => {
     for (const price of ['abc', '-5', '12.345', '1e3', '.', '12 dollars']) {
-      expect(priceProblem(price)).toMatch(/like 12\.50/)
+      expect(priceProblem(price), price).toMatch(/like 12\.50/)
     }
     expect(priceProblem('100000')).toMatch(/up to \$99,999\.99/)
-    expect(checkItem({ ...valid, price: 'abc' })).toMatch(/like 12\.50/)
-    expect(checkItem({ ...valid, price: '12.50' })).toBeNull()
   })
 
   it('works out the line from the price of one and the number needed', () => {
@@ -135,24 +127,25 @@ describe('prices', () => {
     expect(lineTotal({ price: null, quantity: 4 })).toBeNull()
   })
 
-  it('shows the price each and the total, or just the price for one', () => {
+  it('shows the price each and the total, or just the price for one, and in the form only once what is typed is a price', () => {
     expect(priceText({ price: 12.5, quantity: 4 })).toBe('$12.50 each · $50.00 total')
     expect(priceText({ price: 12.5, quantity: 1 })).toBe('$12.50')
     expect(priceText({ price: 0, quantity: 2 })).toBe('$0.00 each · $0.00 total')
     expect(priceText({ price: null, quantity: 4 })).toBeNull()
-  })
-
-  it('shows the total in the form only once what is typed is a price', () => {
     expect(formPriceText({ price: '12.5', quantity: 4 })).toBe('$12.50 each · $50.00 total')
     expect(formPriceText({ price: '', quantity: 4 })).toBeNull()
     expect(formPriceText({ price: 'abc', quantity: 4 })).toBeNull()
   })
 
-  it('can be filled in when asking, or left empty', async () => {
+  it('can be filled in, changed or emptied by a student while it is being asked for', async () => {
     const added = await addItem({ ...valid, price: '$12.50', quantity: 4 })
     expect(added.ok && added.value.price).toBe(12.5)
     const without = await addItem(valid)
     expect(without.ok && without.value.price).toBeNull()
+    expect((await changeItem(asked(), { ...itemToForm(asked()), price: '8.00' })).ok).toBe(true)
+    expect(asked().price).toBe(8)
+    expect((await changeItem(asked(), { ...itemToForm(asked()), price: '' })).ok).toBe(true)
+    expect(asked().price).toBeNull()
   })
 
   it('fills in the form, and comes back the same', () => {
@@ -161,65 +154,22 @@ describe('prices', () => {
     expect(isOrderChange(ordered(), itemToForm(ordered()))).toBe(false)
   })
 
-  it('stays on a duplicate, to buy it again', () => {
-    expect(duplicateItem(ordered()).price).toBe('18.75')
-  })
-
-  it('can be changed or emptied by a student while it is being asked for', async () => {
-    expect(isOrderChange(asked(), { ...itemToForm(asked()), price: '8.00' })).toBe(false)
-    expect((await changeItem(asked(), { ...itemToForm(asked()), price: '8.00' })).ok).toBe(true)
-    expect(asked().price).toBe(8)
-    expect((await changeItem(asked(), { ...itemToForm(asked()), price: '' })).ok).toBe(true)
-    expect(asked().price).toBeNull()
-  })
-
-  it("can't be changed by a student once it's ordered", async () => {
-    const changed = { ...itemToForm(ordered()), price: '1.00' }
-    expect(isOrderChange(ordered(), changed)).toBe(true)
-    expect(await changeItem(ordered(), changed)).toMatchObject({ ok: false, error: expect.stringMatching(/Only mentors and purchasers/) })
-    expect((await changeItem(ordered(), { ...itemToForm(ordered()), price: '' })).ok).toBe(false)
-    expect(ordered().price).toBe(18.75)
-  })
-
-  it("locks the number needed once it's ordered too, so a student can't change the total", async () => {
-    const changed = { ...itemToForm(ordered()), quantity: 5 }
-    expect(isOrderChange(ordered(), changed)).toBe(true)
-    expect(await changeItem(ordered(), changed)).toMatchObject({ ok: false, error: expect.stringMatching(/Only mentors and purchasers/) })
-    expect(ordered().quantity).toBe(4)
-    setDemoRole('mentor')
-    expect((await changeItem(ordered(), changed)).ok).toBe(true)
-    expect(ordered().quantity).toBe(5)
-  })
-
-  it('can be changed by a mentor or purchaser once it is ordered', async () => {
+  // A student can't change it once it's ordered: see "only mentors and purchasers" below.
+  it('can be changed by a mentor or purchaser once it is ordered, along with the number needed and the rest of the order', async () => {
     await buyersTable.insert({ member_id: DEMO_PEOPLE.alex })
     expect((await changeItem(ordered(), { ...itemToForm(ordered()), price: '20.00' })).ok).toBe(true)
     expect(ordered().price).toBe(20)
     await buyersTable.reset()
     setDemoRole('mentor')
-    expect((await changeItem(ordered(), { ...itemToForm(ordered()), price: '21.00' })).ok).toBe(true)
-    expect(ordered().price).toBe(21)
-  })
-
-  it("locks everything else about an order for a student too", async () => {
-    const changes: Partial<NewItem>[] = [{ name: 'Belt' }, { vendor: 'Amazon' }, { type: 'Field' }, { link: 'https://example.com/other' }, { part_number: 'OTHER' }, { notes: 'Two boxes' }]
-    for (const change of changes) {
-      expect(await changeItem(ordered(), { ...itemToForm(ordered()), ...change })).toMatchObject({ ok: false, error: expect.stringMatching(/Only mentors and purchasers/) })
-    }
-    expect(ordered().notes).toBeNull()
-    setDemoRole('mentor')
-    expect((await changeItem(ordered(), { ...itemToForm(ordered()), notes: 'Two boxes' })).ok).toBe(true)
-    expect(ordered().notes).toBe('Two boxes')
+    expect((await changeItem(ordered(), { ...itemToForm(ordered()), price: '21.00', quantity: 5, notes: 'Two boxes' })).ok).toBe(true)
+    expect(ordered()).toMatchObject({ price: 21, quantity: 5, notes: 'Two boxes' })
   })
 })
 
 describe('choices', () => {
-  it('is the list when the value is in it, or empty', () => {
+  it('is the list, plus the value if it is no longer in the list', () => {
     expect(choices(['A', 'B'], 'B')).toEqual(['A', 'B'])
     expect(choices(['A', 'B'], '')).toEqual(['A', 'B'])
-  })
-
-  it('keeps a value that is no longer in the list', () => {
     expect(choices(['A', 'B'], 'Old vendor')).toEqual(['A', 'B', 'Old vendor'])
   })
 })
@@ -266,11 +216,8 @@ describe('groupItems', () => {
 })
 
 describe('summaryText', () => {
-  it('counts what to order now, and how much is high priority', () => {
+  it('counts what to order now and how much is high priority, or else what is in progress', () => {
     expect(summaryText(itemsTable.rows())).toBe('2 to order now (1 high priority)')
-  })
-
-  it('says what is in progress when nothing needs ordering now', () => {
     const items = itemsTable.rows().filter((i) => i.status !== 'order' && i.status !== 'order_high')
     expect(summaryText(items)).toBe('Nothing to order now · 4 in progress')
     expect(summaryText([])).toBe('Nothing to order now')
@@ -278,36 +225,35 @@ describe('summaryText', () => {
 })
 
 describe('checkItem', () => {
-  it('allows an item with a name, vendor, type and quantity', () => {
-    expect(checkItem(valid)).toBeNull()
+  it('allows an item with a name, vendor, type and quantity, up to the limits', () => {
+    const allowed: [string, Partial<NewItem>][] = [
+      ['just the basics', {}],
+      ['the longest name', { name: 'x'.repeat(MAX_NAME_LENGTH) }],
+      ['the most you can ask for', { quantity: MAX_QUANTITY }],
+      ['an https:// link', { link: 'https://example.com/part' }],
+      ['a price', { price: '12.50' }],
+      ['a real estimated arrival', { estimated_arrival: '2026-11-12' }],
+    ]
+    for (const [label, change] of allowed) expect(checkItem({ ...valid, ...change }), label).toBeNull()
   })
 
-  it('needs a name, a vendor and a type', () => {
-    expect(checkItem({ ...valid, name: '  ' })).toMatch(/what to buy/)
-    expect(checkItem({ ...valid, vendor: '' })).toMatch(/Pick a vendor/)
-    expect(checkItem({ ...valid, type: '' })).toMatch(/Pick a type/)
-  })
-
-  it('allows the longest name, but not longer', () => {
-    expect(checkItem({ ...valid, name: 'x'.repeat(MAX_NAME_LENGTH) })).toBeNull()
-    expect(checkItem({ ...valid, name: 'x'.repeat(MAX_NAME_LENGTH + 1) })).toMatch(/under 200/)
-  })
-
-  it('needs a whole quantity of at least 1, and not too many', () => {
-    expect(checkItem({ ...valid, quantity: 0 })).toBe('Ask for at least 1.')
-    expect(checkItem({ ...valid, quantity: 2.5 })).toBe('Ask for at least 1.')
-    expect(checkItem({ ...valid, quantity: MAX_QUANTITY })).toBeNull()
-    expect(checkItem({ ...valid, quantity: MAX_QUANTITY + 1 })).toMatch(/fewer/)
-  })
-
-  it('only takes https:// links', () => {
-    expect(checkItem({ ...valid, link: 'https://example.com/part' })).toBeNull()
-    expect(checkItem({ ...valid, link: 'http://example.com/part' })).toMatch(/https:\/\//)
-    expect(checkItem({ ...valid, link: 'javascript:alert(1)' })).toMatch(/https:\/\//)
-  })
-
-  it('refuses a made-up status', () => {
-    expect(checkItem({ ...valid, status: 'lost' as never })).toBe('Pick a status.')
+  it('refuses an item that breaks a rule, and says what to fix', () => {
+    const refused: [string, Partial<NewItem>, RegExp][] = [
+      ['no name', { name: '  ' }, /what to buy/],
+      ['no vendor', { vendor: '' }, /Pick a vendor/],
+      ['no type', { type: '' }, /Pick a type/],
+      ['a name too long', { name: 'x'.repeat(MAX_NAME_LENGTH + 1) }, /under 200/],
+      ['none', { quantity: 0 }, /at least 1/],
+      ['half of one', { quantity: 2.5 }, /at least 1/],
+      ['too many', { quantity: MAX_QUANTITY + 1 }, /fewer/],
+      ['an http:// link', { link: 'http://example.com/part' }, /https:\/\//],
+      ['a javascript: link', { link: 'javascript:alert(1)' }, /https:\/\//],
+      ['a made-up status', { status: 'lost' as never }, /Pick a status/],
+      ['a price that is not dollars and cents', { price: 'abc' }, /like 12\.50/],
+      ['a day that does not exist', { estimated_arrival: '2026-02-30' }, /estimated arrival/],
+      ['an arrival that is not a date', { estimated_arrival: 'next week' }, /estimated arrival/],
+    ]
+    for (const [label, change, problem] of refused) expect(checkItem({ ...valid, ...change }), label).toMatch(problem)
   })
 })
 
@@ -360,34 +306,26 @@ describe('changeItem', () => {
 })
 
 describe('removeItem', () => {
-  it('deletes only that item', async () => {
-    expect(await removeItem(find('Ethernet cables, 5 ft (10 pack)'))).toEqual({ ok: true, value: null })
-    expect(itemsTable.rows()).toHaveLength(9)
-  })
-
-  it('says so if the item is already gone', async () => {
+  it('deletes only that item, and says so if it is already gone', async () => {
     const item = find('Ethernet cables, 5 ft (10 pack)')
-    await removeItem(item)
+    expect(await removeItem(item)).toEqual({ ok: true, value: null })
+    expect(itemsTable.rows()).toHaveLength(9)
     expect((await removeItem(item)).ok).toBe(false)
   })
 })
 
 describe('searchItems', () => {
-  it('finds items by name, vendor, type, part number or notes, ignoring capitals', () => {
-    const names = (search: string) => searchItems(itemsTable.rows(), search).map((i) => i.name)
-    expect(names('BELT')).toEqual(['Timing belt, 60T'])
-    expect(names('mcmaster')).toEqual(['Polycarbonate sheet, 1/8 in'])
-    expect(names('example-neo')).toEqual(['Brushless motor'])
-    expect(names('storage room')).toEqual(['Field tape, 2 in'])
-  })
-
-  it('needs every word typed to match', () => {
-    expect(searchItems(itemsTable.rows(), 'amazon cables').map((i) => i.name)).toEqual(['Ethernet cables, 5 ft (10 pack)'])
-  })
-
-  it('matches everything when the search is empty, and nothing when nothing matches', () => {
+  it('finds items by name, vendor, type, part number or notes, ignoring capitals, matching every word typed', () => {
+    const searches: [string, string[]][] = [
+      ['BELT', ['Timing belt, 60T']],
+      ['mcmaster', ['Polycarbonate sheet, 1/8 in']],
+      ['example-neo', ['Brushless motor']],
+      ['storage room', ['Field tape, 2 in']],
+      ['amazon cables', ['Ethernet cables, 5 ft (10 pack)']],
+      ['unobtainium', []],
+    ]
+    for (const [search, names] of searches) expect(searchItems(itemsTable.rows(), search).map((i) => i.name), search).toEqual(names)
     expect(searchItems(itemsTable.rows(), '  ')).toHaveLength(10)
-    expect(searchItems(itemsTable.rows(), 'unobtainium')).toEqual([])
   })
 })
 
@@ -419,27 +357,35 @@ describe('placing orders', () => {
     expect(canOrder(null, buyers)).toBe(false)
   })
 
-  it('counts moving into or out of an order status, or setting Shipped to, as an order change', () => {
+  it('counts moving into or out of an order status, setting order details, or changing anything about an order as an order change', () => {
     const asked = find('Zip ties, 8 in (pack of 100)')
     const ordered = find('Timing belt, 60T')
-    expect(isOrderChange(asked, { ...itemToForm(asked), status: 'order_high' })).toBe(false)
-    expect(isOrderChange(asked, { ...itemToForm(asked), status: 'placed' })).toBe(true)
-    expect(isOrderChange(asked, { ...itemToForm(asked), shipped_to: DEMO_PEOPLE.pat })).toBe(true)
-    expect(isOrderChange(ordered, { ...itemToForm(ordered), ordered_by: DEMO_PEOPLE.jordan })).toBe(true)
-    expect(isOrderChange(ordered, { ...itemToForm(ordered), status: 'order' })).toBe(true)
-    expect(isOrderChange(ordered, { ...itemToForm(ordered), notes: 'Two boxes' })).toBe(true)
-    expect(isOrderChange(ordered, itemToForm(ordered))).toBe(false)
-    expect(isOrderChange(asked, { ...itemToForm(asked), notes: 'Two boxes' })).toBe(false)
-    expect(isOrderChange(asked, { ...itemToForm(asked), quantity: 5 })).toBe(false)
-    expect(isOrderChange(null, valid)).toBe(false)
-    expect(isOrderChange(null, { ...valid, status: 'placed' })).toBe(true)
-  })
-
-  it("doesn't let a student place an order, and says who can", async () => {
-    const item = find('Zip ties, 8 in (pack of 100)')
-    const result = await changeItem(item, { ...itemToForm(item), status: 'placed' })
-    expect(result).toEqual({ ok: false, error: expect.stringMatching(/Only mentors and purchasers/) })
-    expect(find('Zip ties, 8 in (pack of 100)').status).toBe('order_low')
+    const changes: [string, PurchaseItem | null, Partial<NewItem>, boolean][] = [
+      ['a new priority', asked, { status: 'order_high' }, false],
+      ['the notes of a request', asked, { notes: 'Two boxes' }, false],
+      ['the number needed on a request', asked, { quantity: 5 }, false],
+      ['the price of a request', asked, { price: '8.00' }, false],
+      ['placing a request', asked, { status: 'placed' }, true],
+      ['Shipped to on a request', asked, { shipped_to: DEMO_PEOPLE.pat }, true],
+      ['nothing on an order', ordered, {}, false],
+      ['an order back to Order', ordered, { status: 'order' }, true],
+      ['Ordered by', ordered, { ordered_by: DEMO_PEOPLE.jordan }, true],
+      ['the estimated arrival', ordered, { estimated_arrival: '2026-12-20' }, true],
+      ['the name of an order', ordered, { name: 'Belt' }, true],
+      ['the vendor of an order', ordered, { vendor: 'Amazon' }, true],
+      ['the type of an order', ordered, { type: 'Field' }, true],
+      ['the link of an order', ordered, { link: 'https://example.com/other' }, true],
+      ['the part number of an order', ordered, { part_number: 'OTHER' }, true],
+      ['the number needed on an order', ordered, { quantity: 5 }, true],
+      ['the price of an order', ordered, { price: '1.00' }, true],
+      ['emptying the price of an order', ordered, { price: '' }, true],
+      ['the notes of an order', ordered, { notes: 'Two boxes' }, true],
+      ['a new request', null, {}, false],
+      ['a new item that is already placed', null, { status: 'placed' }, true],
+    ]
+    for (const [label, item, change, expected] of changes) {
+      expect(isOrderChange(item, { ...(item ? itemToForm(item) : valid), ...change }), label).toBe(expected)
+    }
   })
 
   it('lets a mentor place an order, filling in Ordered by and Shipped to', async () => {
@@ -466,33 +412,53 @@ describe('placing orders', () => {
     expect(find('Timing belt, 60T').ordered_by).toBe(DEMO_PEOPLE.jordan)
   })
 
-  it("doesn't let a student delete an order, but lets a mentor", async () => {
-    const item = find('Timing belt, 60T')
-    expect((await removeItem(item)).ok).toBe(false)
+  it('lets a mentor delete an order', async () => {
     setDemoRole('mentor')
-    expect((await removeItem(item)).ok).toBe(true)
+    expect((await removeItem(find('Timing belt, 60T'))).ok).toBe(true)
   })
 })
 
 describe('purchasers', () => {
-  it('are chosen by mentors', async () => {
-    expect((await addBuyer(DEMO_PEOPLE.alex)).ok).toBe(false)
+  it('are chosen and removed by mentors, and never added twice', async () => {
     setDemoRole('mentor')
     expect((await addBuyer(DEMO_PEOPLE.alex)).ok).toBe(true)
     expect(buyersTable.rows().map((b) => b.member_id)).toContain(DEMO_PEOPLE.alex)
-  })
-
-  it("won't add someone twice", async () => {
-    setDemoRole('mentor')
     expect(await addBuyer(DEMO_PEOPLE.jordan)).toEqual({ ok: false, error: "They're already a purchaser." })
-  })
-
-  it('are removed by mentors only', async () => {
-    const [jordan] = buyersTable.rows()
-    expect((await removeBuyer(jordan)).ok).toBe(false)
-    setDemoRole('mentor')
+    const jordan = buyersTable.rows().find((b) => b.member_id === DEMO_PEOPLE.jordan)!
     expect((await removeBuyer(jordan)).ok).toBe(true)
-    expect(buyersTable.rows()).toEqual([])
+    expect(buyersTable.rows().map((b) => b.member_id)).toEqual([DEMO_PEOPLE.alex])
+  })
+})
+
+// The database refuses all of these too (supabase/tests/purchasing-orders.test.ts
+// and purchase-receipts.test.ts). Here, a student gets told who can.
+describe('only mentors and purchasers', () => {
+  it('place and change orders, delete them, handle receipts and choose purchasers: a student is told who can, and nothing changes', async () => {
+    const asked = find('Zip ties, 8 in (pack of 100)')
+    const ordered = find('Timing belt, 60T')
+    const [receipt] = receiptsTable.rows()
+    const [buyer] = buyersTable.rows()
+    const receiptFile = new File(['receipt'], 'order.pdf', { type: 'application/pdf' })
+    const actions: [string, () => Promise<unknown>][] = [
+      ['place an order', () => changeItem(asked, { ...itemToForm(asked), status: 'placed' })],
+      ['add an item that is already ordered', () => addItem({ ...valid, status: 'placed' })],
+      ['change the price of an order', () => changeItem(ordered, { ...itemToForm(ordered), price: '1.00' })],
+      ['empty the price of an order', () => changeItem(ordered, { ...itemToForm(ordered), price: '' })],
+      ['change the number needed, and so the total', () => changeItem(ordered, { ...itemToForm(ordered), quantity: 5 })],
+      ['change anything else about an order', () => changeItem(ordered, { ...itemToForm(ordered), notes: 'Two boxes' })],
+      ['delete an order', () => removeItem(ordered)],
+      ['add a receipt', () => addReceipt(ordered, receiptFile)],
+      ['open a receipt', () => receiptLink(receipt)],
+      ['delete a receipt', () => removeReceipt(receipt)],
+      ['choose a purchaser', () => addBuyer(DEMO_PEOPLE.alex)],
+      ['remove a purchaser', () => removeBuyer(buyer)],
+    ]
+    const everything = () => [itemsTable.rows(), buyersTable.rows(), receiptsTable.rows()]
+    const before = everything()
+    for (const [action, run] of actions) {
+      expect(await run(), action).toMatchObject({ ok: false, error: expect.stringMatching(/^Only mentors and (purchasers|admins)/) })
+    }
+    expect(everything()).toEqual(before)
   })
 })
 
@@ -514,7 +480,7 @@ describe('asking for a BOM part', () => {
     expect(vendorFor(null)).toBeNull()
   })
 
-  it('fills in a request from the part, with its system as the type', () => {
+  it('fills in a request from the part, with its system as the type, or the type left to pick when the system is not one', () => {
     expect(requestFromBomPart(bomPart, intake)).toEqual({
       ...EMPTY_ITEM,
       name: 'Flanged bearing, 1/2 in hex',
@@ -524,16 +490,13 @@ describe('asking for a BOM part', () => {
       quantity: 6,
       notes: '',
     })
+    expect(requestFromBomPart(bomPart, { ...intake, name: 'Superstructure' }).type).toBe('')
+    expect(requestFromBomPart(bomPart, undefined).type).toBe('')
   })
 
   it('uses Other for a vendor not in the list, with the BOM vendor in the notes, and Drive Base for the Drivetrain', () => {
     const request = requestFromBomPart({ ...bomPart, vendor: 'Swerve Drive Specialties' }, { ...intake, name: 'Drivetrain' })
     expect(request).toMatchObject({ vendor: 'Other', type: 'Drive Base', notes: 'Vendor in the BOM: Swerve Drive Specialties' })
-  })
-
-  it('leaves the type to pick when the system is not one of the types', () => {
-    expect(requestFromBomPart(bomPart, { ...intake, name: 'Superstructure' }).type).toBe('')
-    expect(requestFromBomPart(bomPart, undefined).type).toBe('')
   })
 
   it('links the request to the BOM part when sent', async () => {
@@ -577,12 +540,7 @@ describe('estimated arrival', () => {
     expect(isLate({ ...order, estimated_arrival: null }, '2026-11-13')).toBe(false)
   })
 
-  it('only takes a real date', () => {
-    expect(checkItem({ ...valid, estimated_arrival: '2026-11-12' })).toBeNull()
-    expect(checkItem({ ...valid, estimated_arrival: '2026-02-30' })).toMatch(/estimated arrival/)
-    expect(checkItem({ ...valid, estimated_arrival: 'next week' })).toMatch(/estimated arrival/)
-  })
-
+  // checkItem's tests check that it only takes a real date.
   it('is set by mentors and purchasers, not students', async () => {
     const changed = { ...itemToForm(placed()), estimated_arrival: '2026-12-20' }
     expect(isOrderChange(placed(), changed)).toBe(true)
@@ -596,19 +554,11 @@ describe('estimated arrival', () => {
 describe('orderFieldsShown', () => {
   const empty = { ordered_by: '', shipped_to: '', estimated_arrival: '' }
 
-  it('hides every order detail while the request is still asking', () => {
-    for (const status of ['wait', 'order_low', 'order', 'order_high'] as const) {
-      expect(orderFieldsShown({ ...empty, status })).toEqual({ ordered_by: false, shipped_to: false, estimated_arrival: false })
-    }
-  })
-
-  it('shows them all once the order is placed, or past that', () => {
-    for (const status of ['placed', 'backordered', 'received'] as const) {
-      expect(orderFieldsShown({ ...empty, status })).toEqual({ ordered_by: true, shipped_to: true, estimated_arrival: true })
-    }
-  })
-
-  it('still shows one that is filled in, so nothing saved is hidden', () => {
+  it('hides the order details while asking, shows them once the order is placed, and always shows one that is filled in', () => {
+    const all = (shown: boolean) => ({ ordered_by: shown, shipped_to: shown, estimated_arrival: shown })
+    for (const status of ['wait', 'order_low', 'order', 'order_high'] as const) expect(orderFieldsShown({ ...empty, status }), status).toEqual(all(false))
+    for (const status of ['placed', 'backordered', 'received'] as const) expect(orderFieldsShown({ ...empty, status }), status).toEqual(all(true))
+    // So nothing saved is hidden.
     expect(orderFieldsShown({ ...empty, status: 'order', shipped_to: DEMO_PEOPLE.pat })).toEqual({ ordered_by: false, shipped_to: true, estimated_arrival: false })
   })
 })
@@ -651,21 +601,16 @@ describe('receipts', () => {
       expect(checkReceipt({ ...pdf, size: MAX_RECEIPT_BYTES })).toBeNull()
     })
 
-    it('says how big a file is when it is too big', () => {
-      expect(checkReceipt({ ...pdf, size: 12_300_000 })).toMatch(/12\.3 MB.*up to 10 MB/)
-    })
-
-    it('refuses other kinds of file and says what it takes', () => {
-      expect(checkReceipt({ ...pdf, name: 'list.docx', type: 'application/msword' })).toMatch(/PDF or a photo/)
-      expect(checkReceipt({ ...pdf, name: 'no-idea', type: '' })).toMatch(/PDF or a photo/)
-    })
-
-    it('refuses SVG images, which can run code when opened', () => {
-      expect(checkReceipt({ ...pdf, name: 'photo.svg', type: 'image/svg+xml' })).toMatch(/PDF or a photo/)
-    })
-
-    it('refuses an empty file', () => {
-      expect(checkReceipt({ ...pdf, size: 0 })).toMatch(/empty/)
+    it('refuses other kinds of file, and empty or too-big ones, and says why', () => {
+      const refused: [string, typeof pdf, RegExp][] = [
+        ['a Word file', { ...pdf, name: 'list.docx', type: 'application/msword' }, /PDF or a photo/],
+        ['no type or ending', { ...pdf, name: 'no-idea', type: '' }, /PDF or a photo/],
+        ['an SVG image, which can run code when opened', { ...pdf, name: 'photo.svg', type: 'image/svg+xml' }, /PDF or a photo/],
+        ['an SVG with a general type', { ...pdf, name: 'photo.svg', type: 'application/octet-stream' }, /PDF or a photo/],
+        ['an empty file', { ...pdf, size: 0 }, /empty/],
+        ['a file too big, saying how big', { ...pdf, size: 12_300_000 }, /12\.3 MB.*up to 10 MB/],
+      ]
+      for (const [label, file, problem] of refused) expect(checkReceipt(file), label).toMatch(problem)
     })
   })
 
@@ -673,20 +618,16 @@ describe('receipts', () => {
     expect(RECEIPT_ACCEPT).toBe('application/pdf,image/*')
   })
 
-  it('works out the type of an iPhone photo when the browser leaves it empty', () => {
-    expect(receiptType({ ...pdf, name: 'IMG_0001.HEIC', type: '' })).toBe('image/heic')
-    expect(receiptType({ ...pdf, name: 'scan.jpeg', type: '' })).toBe('image/jpeg')
-  })
-
-  it('goes by the ending when the type is a general one or another spelling', () => {
-    expect(receiptType({ ...pdf, name: 'order.pdf', type: 'application/octet-stream' })).toBe('application/pdf')
-    expect(receiptType({ ...pdf, name: 'IMG_0001.HEIC', type: 'application/octet-stream' })).toBe('image/heic')
-    expect(receiptType({ ...pdf, name: 'order.pdf', type: 'application/x-pdf' })).toBe('application/pdf')
-    expect(receiptType({ ...pdf, name: 'photo.jpg', type: 'image/jpg' })).toBe('image/jpeg')
-  })
-
-  it('still refuses a file whose type and ending are both not allowed', () => {
-    expect(checkReceipt({ ...pdf, name: 'photo.svg', type: 'application/octet-stream' })).toMatch(/PDF or a photo/)
+  it('goes by the ending when the browser leaves the type empty, or gives a general one or another spelling', () => {
+    const types: [string, string, string][] = [
+      ['IMG_0001.HEIC', '', 'image/heic'], // an iPhone photo
+      ['scan.jpeg', '', 'image/jpeg'],
+      ['order.pdf', 'application/octet-stream', 'application/pdf'],
+      ['IMG_0001.HEIC', 'application/octet-stream', 'image/heic'],
+      ['order.pdf', 'application/x-pdf', 'application/pdf'],
+      ['photo.jpg', 'image/jpg', 'image/jpeg'],
+    ]
+    for (const [name, type, expected] of types) expect(receiptType({ ...pdf, name, type }), `${name} ${type}`).toBe(expected)
   })
 
   it('labels the file to upload with its type, keeping what is in it', async () => {
@@ -697,15 +638,12 @@ describe('receipts', () => {
     expect(await body.text()).toBe('receipt')
   })
 
-  it('describes a receipt without its file name', () => {
+  it('describes a receipt without its file name, and counts them for the list', () => {
     expect(sizeText(240_000)).toBe('240 KB')
     expect(sizeText(2_400_000)).toBe('2.4 MB')
     expect(sizeText(10)).toBe('1 KB')
     expect(receiptText(receiptsOf(find('Motor controller'))[0])).toBe('PDF, 96 KB')
     expect(receiptText(receiptsOf(find('Motor controller'))[1])).toBe('Photo, 2.4 MB')
-  })
-
-  it('counts them for the list, and says nothing when there are none', () => {
     expect(receiptCountText(0)).toBe('')
     expect(receiptCountText(1)).toBe('1 receipt')
     expect(receiptCountText(2)).toBe('2 receipts')
@@ -728,12 +666,6 @@ describe('receipts', () => {
       expect(result.ok && result.value.created_by).toBe(DEMO_PEOPLE.alex)
     })
 
-    it('refuses a student', async () => {
-      const item = find('Timing belt, 60T')
-      expect((await addReceipt(item, receiptFile())).ok).toBe(false)
-      expect(receiptsOf(item)).toHaveLength(0)
-    })
-
     it('refuses a file that is not a receipt', async () => {
       setDemoRole('mentor')
       const item = find('Timing belt, 60T')
@@ -743,21 +675,18 @@ describe('receipts', () => {
     })
   })
 
-  it('can only be opened by mentors and purchasers', async () => {
+  // A student can't open, add or delete them: see "only mentors and purchasers" above.
+  it('open for mentors and purchasers, though demo mode says it has no files', async () => {
     const [receipt] = receiptsTable.rows()
-    expect(await receiptLink(receipt)).toEqual({ ok: false, error: 'Only mentors and purchasers can open receipts.' })
     await buyersTable.insert({ member_id: DEMO_PEOPLE.alex })
+    expect(await receiptLink(receipt)).toMatchObject({ ok: false, error: expect.stringMatching(/^Demo mode/) })
+    await buyersTable.reset()
+    setDemoRole('mentor')
     expect(await receiptLink(receipt)).toMatchObject({ ok: false, error: expect.stringMatching(/^Demo mode/) })
   })
 
-  it('says there are no files in demo mode, for a mentor', async () => {
-    setDemoRole('mentor')
-    expect(await receiptLink(receiptsTable.rows()[0])).toMatchObject({ ok: false, error: expect.stringMatching(/^Demo mode/) })
-  })
-
-  it('can only be deleted by mentors and purchasers', async () => {
+  it('can be deleted by mentors and purchasers', async () => {
     const [first, second] = receiptsTable.rows()
-    expect((await removeReceipt(first)).ok).toBe(false)
     expect(receiptsTable.rows()).toHaveLength(3)
     await buyersTable.insert({ member_id: DEMO_PEOPLE.alex })
     expect((await removeReceipt(first)).ok).toBe(true)

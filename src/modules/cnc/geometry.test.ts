@@ -7,20 +7,13 @@ import {
 } from './geometry'
 
 describe('parseInches', () => {
-  it('reads decimals, fractions, mixed numbers and millimeters', () => {
-    expect(parseInches('0.25')).toBe(0.25)
-    expect(parseInches('.25')).toBe(0.25)
-    expect(parseInches('1/4')).toBe(0.25)
-    expect(parseInches('1/4"')).toBe(0.25)
-    expect(parseInches('1/4 in')).toBe(0.25)
-    expect(parseInches('1 1/2')).toBe(1.5)
-    expect(parseInches('1-1/2 inches')).toBe(1.5)
-    expect(parseInches('48')).toBe(48)
-    expect(parseInches('6.35 mm')).toBe(0.25)
+  it("reads decimals, fractions, mixed numbers and millimeters, and is null for anything that isn't a size", () => {
+    const sizes: [string, number][] = [
+      ['0.25', 0.25], ['.25', 0.25], ['1/4', 0.25], ['1/4"', 0.25], ['1/4 in', 0.25],
+      ['1 1/2', 1.5], ['1-1/2 inches', 1.5], ['48', 48], ['6.35 mm', 0.25],
+    ]
+    for (const [text, size] of sizes) expect(parseInches(text), text).toBe(size)
     expect(inches(parseInches('3/16')!)).toBe('3/16 in')
-  })
-
-  it("is null for anything that isn't a size", () => {
     for (const text of ['', 'abc', '1/0', '-2', '1/4/8', '2 ft']) expect(parseInches(text), text).toBeNull()
   })
 })
@@ -62,11 +55,8 @@ describe('footprint', () => {
   const shape = { axis: 'z' as const, low_in: 0, outline: [[0, 0, 18, 0, 18, 6, 0, 6]] }
   const moved = (x: number, y: number) => [1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, 0, 0, 0, 0, 1]
 
-  it('puts a part where the layout moves it', () => {
+  it('puts a part where the layout moves it, and turns it with the layout', () => {
     expect(footprint(shape, moved(0.5, 7))).toEqual({ box: { x: 0.5, y: 7, length: 18, width: 6 }, outline: [[0, 0, 18, 0, 18, 6, 0, 6]], rotation: 0, flat: true })
-  })
-
-  it('turns it with the layout', () => {
     const turned = [0, -1, 0, 10, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1]
     const spot = footprint(shape, turned)!
     expect(spot.box).toEqual({ x: 4, y: 1, length: 6, width: 18 })
@@ -103,20 +93,14 @@ describe('finding room', () => {
     expect(onSheet(a, sheet, 0.5)).toBe(false)
   })
 
-  it('fills from the left end, then upward, keeping the gap', () => {
-    const taken = [{ x: 0.5, y: 0.5, length: 18, width: 6 }]
-    expect(findSpot(sheet, taken, { length: 18, width: 6 }, 0.5)).toEqual({ box: { x: 0.5, y: 7, length: 18, width: 6 }, turned: false })
-  })
-
-  it('turns a part a quarter turn when that fits further left', () => {
-    const narrow = { length_in: 48, width_in: 10 }
-    expect(findSpot(narrow, [], { length: 9, width: 30 }, 0.5)).toEqual({ box: { x: 0.5, y: 0.5, length: 30, width: 9 }, turned: true })
-  })
-
-  it("says when there's no room", () => {
-    expect(findSpot({ length_in: 10, width_in: 10 }, [], { length: 12, width: 2 }, 0.25)).toBeNull()
-    const full = [{ x: 0, y: 0, length: 48, width: 24 }]
-    expect(findSpot(sheet, full, { length: 1, width: 1 }, 0.25)).toBeNull()
+  it("fills from the left end, then upward, keeping the gap, turning a part when that fits further left, or says there's no room", () => {
+    const cases: [string, Parameters<typeof findSpot>, ReturnType<typeof findSpot>][] = [
+      ['above a part, with the gap', [sheet, [{ x: 0.5, y: 0.5, length: 18, width: 6 }], { length: 18, width: 6 }, 0.5], { box: { x: 0.5, y: 7, length: 18, width: 6 }, turned: false }],
+      ['turned a quarter turn', [{ length_in: 48, width_in: 10 }, [], { length: 9, width: 30 }, 0.5], { box: { x: 0.5, y: 0.5, length: 30, width: 9 }, turned: true }],
+      ['too long for the sheet', [{ length_in: 10, width_in: 10 }, [], { length: 12, width: 2 }, 0.25], null],
+      ['on a full sheet', [sheet, [{ x: 0, y: 0, length: 48, width: 24 }], { length: 1, width: 1 }, 0.25], null],
+    ]
+    for (const [label, args, spot] of cases) expect(findSpot(...args), label).toEqual(spot)
   })
 
   it('places several parts without them overlapping', () => {
@@ -147,13 +131,10 @@ const plateShape: ShapeGeometry = {
 const aluminum: StockGeometry = { kind: 'plate', thickness_in: 0.25, sheet_width_in: 24, sheet_length_in: 48, bit_in: 0.25, feed_ipm: 60, depth_per_pass_in: 0.0625 }
 
 describe('router time', () => {
-  it('goes round once per pass at the feed', () => {
+  it("goes round once per pass at the feed, and can't say without a feed and depth", () => {
     // 0.25 thick at 0.0625 a pass is 4 passes: 60 in × 4 / 60 in a minute.
     expect(routerMinutes(plateShape, aluminum)).toBe(4)
     expect(routerMinutes({ ...plateShape, thickness_in: 0.26 }, aluminum)).toBe(5)
-  })
-
-  it("can't say without a feed and depth", () => {
     expect(routerMinutes(plateShape, { ...aluminum, feed_ipm: null })).toBeNull()
     expect(routerMinutes({ ...plateShape, cut_length_in: 0 }, aluminum)).toBeNull()
   })
@@ -167,10 +148,6 @@ describe('router time', () => {
 })
 
 describe('designChecks', () => {
-  it('finds nothing wrong with a plain plate', () => {
-    expect(designChecks(plateShape, aluminum)).toEqual([])
-  })
-
   it('flags the wrong thickness, slots the bit cannot fit, and parts too big for a sheet', () => {
     const checks = designChecks({ ...plateShape, thickness_in: 0.125, narrowest_gap_in: 0.2, length_in: 50, width_in: 30 }, aluminum)
     expect(checks.map((c) => c.tone)).toEqual(['crit', 'crit', 'crit'])
@@ -192,7 +169,8 @@ describe('designChecks', () => {
     expect(designChecks(big, { ...aluminum, sheet_length_in: null, sheet_width_in: null }, [{ length_in: 20, width_in: 30 }])).toEqual([])
   })
 
-  it('only checks plates, and says when there is no outline', () => {
+  it('finds nothing wrong with a plain plate, only checks plates, and says when there is no outline', () => {
+    expect(designChecks(plateShape, aluminum)).toEqual([])
     expect(designChecks({ ...plateShape, thickness_in: 1 }, { ...aluminum, kind: 'tube' })).toEqual([])
     expect(designChecks({ ...plateShape, outline: [] }, aluminum)[0].text).toContain("Couldn't find a flat outline")
   })
@@ -212,17 +190,17 @@ describe('matching parts to stock', () => {
     expect([...materialWords('6061 Aluminium, 1/4" sheet')]).toEqual(['6061', 'aluminum', '0.25', 'plate'])
   })
 
-  it("picks the stock from the part's material in the BOM", () => {
-    expect(guess('6061 aluminum, 1/4 in plate')).toBe('al250')
-    expect(guess('Polycarbonate, 1/8 in sheet')).toBe('pc125')
-    expect(guess('2 x 1 in aluminum tube, 1/16 in wall')).toBe('tube')
-    expect(guess('Lexan 0.25"')).toBe('pc250')
-  })
-
-  it("doesn't guess when it can't tell", () => {
-    expect(guess('Aluminum')).toBeNull()
-    expect(guess('Nylon 6/6 rod, 3/4 in')).toBeNull()
-    expect(guess(null)).toBeNull()
+  it("picks the stock from the part's material in the BOM, and doesn't guess when it can't tell", () => {
+    const guesses: [string | null, string | null][] = [
+      ['6061 aluminum, 1/4 in plate', 'al250'],
+      ['Polycarbonate, 1/8 in sheet', 'pc125'],
+      ['2 x 1 in aluminum tube, 1/16 in wall', 'tube'],
+      ['Lexan 0.25"', 'pc250'],
+      ['Aluminum', null], // no thickness
+      ['Nylon 6/6 rod, 3/4 in', null],
+      [null, null],
+    ]
+    for (const [material, stock] of guesses) expect(guess(material), String(material)).toBe(stock)
   })
 })
 
