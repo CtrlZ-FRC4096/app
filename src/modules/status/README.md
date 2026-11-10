@@ -33,6 +33,11 @@ can edit them under Person assignment > Edit subgroup members. Changing a tag or
 removing a subgroup member removes incompatible assignments and clears completion
 if an assigned person was removed. Membership edits apply to every matching item
 in this browser and persist across reloads.
+Every list of people (adding an item, Person assignment, and Edit subgroup
+members) has a **Find someone** box that narrows the list by name, ignoring
+capitals. Searching only hides names: people already chosen always stay in the
+list, and "No one matches" shows when no name fits. The matching is
+`matchMembers()` in `data.ts`; the box and list are `MemberPicker.tsx`.
 Choose one or more active team members when
 adding an item. Only assigned people can check or uncheck it; mentors and admins
 can reassign existing items, which marks them incomplete. Older saved items are

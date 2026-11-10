@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findAccess } from './session'
+import { effectiveSignIn, findAccess } from './session'
 import { explainSignInError } from './supabase'
 import { DEMO_PEOPLE } from './demo'
 import type { Member } from './members'
@@ -59,5 +59,28 @@ describe('explainSignInError', () => {
 
   it('explains a cancelled sign-in', () => {
     expect(explainSignInError('access_denied', 'The user denied the request')).toMatch(/cancelled/)
+  })
+})
+
+describe('effectiveSignIn', () => {
+  const me = '00000000-0000-4000-8000-000000000001'
+
+  it('goes by the real sign-in when there is a connection', () => {
+    expect(effectiveSignIn({ status: 'checking' }, true, me)).toEqual({ status: 'checking' })
+    expect(effectiveSignIn({ status: 'signed-out', error: null }, true, me)).toEqual({ status: 'signed-out', error: null })
+  })
+
+  it('opens as the last person signed in on this device when there is no connection', () => {
+    expect(effectiveSignIn({ status: 'checking' }, false, me)).toEqual({ status: 'signed-in', userId: me })
+    expect(effectiveSignIn({ status: 'signed-out', error: null }, false, me)).toEqual({ status: 'signed-in', userId: me })
+  })
+
+  it("doesn't sign anyone in offline if nobody has signed in on this device, or they signed out", () => {
+    expect(effectiveSignIn({ status: 'checking' }, false, null)).toEqual({ status: 'checking' })
+  })
+
+  it('keeps a real sign-in as it is, offline too', () => {
+    const someoneElse = { status: 'signed-in' as const, userId: '00000000-0000-4000-8000-000000000002' }
+    expect(effectiveSignIn(someoneElse, false, me)).toEqual(someoneElse)
   })
 })
