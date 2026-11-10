@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import ScoutingPage from './ScoutingPage'
 import RankingsPage from './RankingsPage'
-import { rankingsStore } from './data'
+import { rankingsStore, refreshRankings } from './data'
 import { EVENT_KEY } from './season'
 import Schedule from './Schedule'
 import TeamPage from './TeamPage'
@@ -112,5 +112,36 @@ describe('the rankings page', () => {
     expect(html).not.toContain('Team 9991')
     expect(html).toContain('No rankings on this phone yet')
     rankingsStore.reset()
+  })
+
+  it("opens a team's page when its row is tapped", () => {
+    rankingsStore.set({ event: EVENT_KEY, rankings: [ranking], checked_at: new Date().toISOString() })
+    expect(renderToString(<RankingsPage />)).toContain('href="#/scouting/team/9991"')
+    rankingsStore.reset()
+  })
+})
+
+describe("the team's event rank", () => {
+  it('shows at the top of the team page, with the record', async () => {
+    // The example rankings (demo mode), as the Rankings page saves them.
+    const result = await refreshRankings()
+    if (!result.ok) throw new Error(result.error)
+    // In the example rankings 4096 is third, having won one and lost one.
+    const html = renderToString(<TeamPage team={4096} />)
+    expect(html).toContain('Rank 3 of 6 · 1-1-0')
+    expect(html).toContain('Rankings updated just now')
+    // Just under the team's name, above everything else.
+    expect(html.indexOf('Rank 3 of 6')).toBeLessThan(html.indexOf('Find a team'))
+    rankingsStore.reset()
+  })
+
+  it('says when a team is not ranked, and shows nothing when no rankings are saved', () => {
+    const ranking = { rank: 1, team_key: 'frc9991', record: { wins: 5, losses: 1, ties: 0 }, matches_played: 6, extra_stats: [17] }
+    rankingsStore.set({ event: EVENT_KEY, rankings: [ranking], checked_at: new Date().toISOString() })
+    expect(renderToString(<TeamPage team={1234} />)).toContain('Not in the event rankings yet')
+    rankingsStore.reset()
+    const html = renderToString(<TeamPage team={1234} />)
+    expect(html).not.toContain('Rank ')
+    expect(html).not.toContain('Not in the event rankings yet')
   })
 })

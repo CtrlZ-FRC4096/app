@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { href } from '../../core/router'
 import { PageHead, Panel } from '../../core/ui'
 import { teamNumber, updatedAgo, useRankings, type TbaRanking } from './data'
 
@@ -28,7 +29,7 @@ export default function RankingsPage() {
   return (
     <>
       <PageHead title="Rankings">
-        The event's rankings from The Blue Alliance. They update by themselves after each match. RP is ranking points.
+        The event's rankings from The Blue Alliance. They update by themselves after each match. RP is ranking points. Tap a team to see everything about them.
       </PageHead>
       <Panel title="Event rankings" aside={<span className="note" aria-live="polite">{when}</span>}>
         {status.problem && <p className="panel-body note" style={{ margin: 0 }}>Not updated. {status.problem}</p>}
@@ -37,16 +38,17 @@ export default function RankingsPage() {
         )}
         {saved && saved.rankings.length > 0 && (
           <div className="row-list">
+            {/* Each row is a link to that team's page: the whole row, so it's easy to tap. */}
             {saved.rankings.map((r) => (
-              <div key={r.team_key}>
+              <a key={r.team_key} href={href('scouting', 'team', String(teamNumber(r.team_key)))} style={{ minHeight: 44, color: 'inherit', textDecoration: 'none' }}>
                 <span className="mono" style={{ minWidth: '3ch', fontSize: 18 }}>{r.rank}</span>
                 <span>
-                  Team {teamNumber(r.team_key)}
+                  <span style={{ color: 'var(--orange-text)', textDecoration: 'underline', textUnderlineOffset: 2 }}>Team {teamNumber(r.team_key)}</span>
                   <br />
                   <span className="note">{recordText(r)} · {r.matches_played} played</span>
                 </span>
                 <span className="mono" style={{ marginLeft: 'auto' }}>{r.extra_stats?.[0] ?? '–'} RP</span>
-              </div>
+              </a>
             ))}
           </div>
         )}
