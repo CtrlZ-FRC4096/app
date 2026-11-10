@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import { allTables, type Row, type Table } from '../../src/core/table'
 import { DEMO_PEOPLE } from '../../src/core/demo'
-import { migrations, setUpTestDatabase } from './database'
+import { setUpTestDatabase } from './database'
 
 // Load every module's data.ts so all their tables are made.
 import.meta.glob('../../src/modules/*/data.ts', { eager: true })
@@ -14,22 +14,8 @@ import '../../src/core/notifications'
 const db = setUpTestDatabase()
 const tables = allTables()
 
-// Supabase keeps track of which migrations it has run by the number at the
-// start of each file name. Two files with the same number means one is
-// skipped, or the Deploy fails. The tests here can't see that by
-// themselves: they run every file, in name order.
-describe('the migrations', () => {
-  it('each have their own number', () => {
-    const numbers = migrations.map((m) => m.file.split('_')[0])
-    const repeated = migrations.filter((_, i) => numbers.indexOf(numbers[i]) !== i).map((m) => m.file)
-    expect(repeated, "Another migration starts with the same number. Rename the one that isn't merged yet to a later time.").toEqual([])
-  })
-
-  it('are named like 20261110120000_what_it_does.sql', () => {
-    const misnamed = migrations.map((m) => m.file).filter((file) => !/^\d{14}_[a-z0-9_]+\.sql$/.test(file))
-    expect(misnamed, 'Name migrations with the date and time, then what they do, like 20261110120000_student_leaders.sql').toEqual([])
-  })
-})
+// Migration file names (each with its own number) are checked in
+// migrations.test.ts.
 
 describe('every table in the database', () => {
   it('has row level security on, so only its rules let anyone in', async () => {
