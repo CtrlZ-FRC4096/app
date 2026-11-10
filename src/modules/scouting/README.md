@@ -41,6 +41,22 @@ Each returns `{ ok: true, value }` or `{ ok: false, error }`. The event is
 `EVENT_KEY` in `season.ts`: change it before each event. In demo mode they
 return made-up example teams and matches, so you can build pages without a
 key.
+
+## Match 13
+
+[Match 13](https://match13.com) rates each team with **xP** ("expected
+points"): how many points it adds to its alliance's score. `data.ts` gets
+these through the `match13` server function, which holds the team's key:
+
+| Function | Gives you |
+|:--|:--|
+| `getRatings()` | Every team's rating at the event, best first. Each also has Statbotics' EPA and The Blue Alliance's OPR to compare |
+| `getPredictions()` | Each match's predicted scores, and the chance red wins |
+
+They work like The Blue Alliance's above: same `EVENT_KEY`, same
+`{ ok, value }` answers, and made-up example data in demo mode. Match 13
+has no schedule or team names: get those from The Blue Alliance and match
+them up by the match `key` or the team number.
 - Scouting data is visible to signed-in team members only.
 
 ## Where to start

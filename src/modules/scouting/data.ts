@@ -15,6 +15,12 @@
  *
  * The types are the parts of TBA's answers we use. TBA sends more; see
  * https://www.thebluealliance.com/apidocs/v3 for everything.
+ *
+ * Match 13 (match13.com): each team's rating at the event, and who's
+ * predicted to win each match. These come through the `match13` server
+ * function (supabase/functions/match13/) in the same way, with made-up
+ * example data in demo mode. See https://match13.com/docs/api for
+ * everything Match 13 sends.
  */
 import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
@@ -186,6 +192,61 @@ export function getTeam(team: number): Promise<Result<TbaTeam>> {
 }
 
 // ---------------------------------------------------------------------------
+// Match 13: team ratings and match predictions.
+
+/**
+ * One team's Match 13 rating at the event. The numbers are points. xP
+ * ("expected points") is how many points the team adds to its alliance's
+ * score.
+ */
+export interface Match13Rating {
+  teamNumber: number
+  /** The rating going into the event. */
+  xpStart: number
+  /** The rating now (or at the end of the event). Rank teams by this one. */
+  xpEnd: number
+  /** The parts of xpEnd: auto, teleop and endgame. */
+  xAuto: number | null
+  xTele: number | null
+  xEnd: number | null
+  /** Statbotics' EPA, and The Blue Alliance's OPR and DPR, for comparison. */
+  epa: number | null
+  opr: number | null
+  dpr: number | null
+}
+
+/** Who Match 13 thinks will win a match, and by how much. */
+export interface MatchPrediction {
+  /** Like 2026ilch_qm12: the same as TbaMatch's key, so you can match them up. */
+  key: string
+  /** The chance red wins, from 0 to 1. Blue's chance is 1 minus this. */
+  redWinChance: number
+  redScore: number
+  blueScore: number
+}
+
+/** What Match 13 sends for predictions: the parts we use. */
+interface Match13Matches {
+  matches: { key: string; pred: { winProb: number; redScore: number; blueScore: number } }[]
+}
+
+/** Every team's Match 13 rating at the event, best first. Match 13 sends them in no order. */
+export async function getRatings(event = EVENT_KEY): Promise<Result<Match13Rating[]>> {
+  const result = await callFunction<{ teams: Match13Rating[] } | null>('match13', { kind: 'ratings', event }, () => ({ teams: demoRatings() }))
+  if (!result.ok) return result
+  return ok([...(result.value?.teams ?? [])].sort((a, b) => b.xpEnd - a.xpEnd || a.teamNumber - b.teamNumber))
+}
+
+/** Match 13's prediction for each of the event's matches. */
+export async function getPredictions(event = EVENT_KEY): Promise<Result<MatchPrediction[]>> {
+  const result = await callFunction<Match13Matches | null>('match13', { kind: 'predictions', event }, () => demoPredictions(event))
+  if (!result.ok) return result
+  return ok(
+    (result.value?.matches ?? []).map(({ key, pred }) => ({ key, redWinChance: pred.winProb, redScore: pred.redScore, blueScore: pred.blueScore })),
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Example data for demo mode. Made up: the other teams and the video don't exist.
 
 const DEMO_TEAMS: [number, string][] = [
@@ -225,6 +286,44 @@ function demoMatches(event: string): TbaMatchWithVideos[] {
     predicted_time: DEMO_START + i * 8 * 60,
     videos: redScore < 0 ? [] : [{ type: 'youtube', key: 'example-video' }],
   }))
+}
+
+// Made-up Match 13 ratings, in no order like the real ones: [team, xpStart, xpEnd].
+const DEMO_RATINGS: [team: number, start: number, end: number][] = [
+  [9993, 31.2, 30.4],
+  [4096, 44.0, 48.6],
+  [9995, 20.1, 22.8],
+  [9991, 40.3, 41.7],
+  [9994, 27.5, 26.1],
+  [9992, 33.9, 35.2],
+]
+
+function demoRatings(): Match13Rating[] {
+  const round = (n: number) => Math.round(n * 10) / 10
+  return DEMO_RATINGS.map(([teamNumber, xpStart, xpEnd]) => ({
+    teamNumber,
+    xpStart,
+    xpEnd,
+    xAuto: round(xpEnd * 0.25),
+    xTele: round(xpEnd * 0.6),
+    xEnd: round(xpEnd * 0.15),
+    epa: round(xpEnd * 0.95),
+    opr: round(xpEnd * 1.05),
+    dpr: round(30 - xpEnd * 0.2),
+  }))
+}
+
+/** Made-up predictions for the example schedule: each alliance's ratings added up. */
+function demoPredictions(event: string): Match13Matches {
+  const rating = new Map(demoRatings().map((r) => [r.teamNumber, r.xpEnd]))
+  const total = (teams: number[]) => Math.round(teams.reduce((sum, team) => sum + (rating.get(team) ?? 0), 0))
+  return {
+    matches: DEMO_SCHEDULE.map(([red, blue], i) => {
+      const redScore = total(red)
+      const blueScore = total(blue)
+      return { key: `${event}_qm${i + 1}`, pred: { winProb: Math.round((redScore / (redScore + blueScore)) * 100) / 100, redScore, blueScore } }
+    }),
+  }
 }
 
 function demoRankings(): TbaRanking[] {
