@@ -1,9 +1,25 @@
 import { useEffect, useState } from 'react'
 import { shortDate } from '../format'
 import { toast } from '../toast'
-import { PageHead, Panel } from '../ui'
+import { PageHead, Panel, Pill } from '../ui'
+import { navigate, parseRoute } from '../router'
 import { SHOWN_NOTIFICATIONS, deleteNotification, markAllRead, markRead, notificationHref, unreadCount, useNotifications, type AppNotification } from '../notifications'
-import { BLOCKED_TEXT, IPHONE_STEPS, SUPPORT_TEXT, pushKey, pushState, sendTest, turnOffPush, turnOnPush, type PushState } from '../push'
+import {
+  BLOCKED_TEXT,
+  IPHONE_STEPS,
+  SUPPORT_TEXT,
+  detailLines,
+  pushDetails,
+  pushKey,
+  pushState,
+  sendTest,
+  showTestHere,
+  turnOffPush,
+  turnOnPush,
+  type DetailLine,
+  type PushDetails,
+  type PushState,
+} from '../push'
 
 type Outcome = { ok: true; value: unknown } | { ok: false; error: string }
 
@@ -48,7 +64,10 @@ function List(props: { busy: boolean; onTest: () => void }) {
     const result = await markRead(notification)
     if (!result.ok) toast(result.error)
     const link = notificationHref(notification.url)
-    if (link && link !== location.hash) location.hash = link
+    if (link && link !== location.hash) {
+      const { id, rest } = parseRoute(link)
+      navigate(id, ...rest)
+    }
   }
 
   async function remove(notification: AppNotification) {
@@ -138,7 +157,54 @@ function ThisDevice(props: { state: PushState | null; busy: boolean; run: (actio
           </ol>
         )}
         <p className="note">Turn them on separately on each phone or computer you use.</p>
+        <Details state={state} busy={busy} run={run} />
       </div>
     </Panel>
+  )
+}
+
+const PILL_TEXT: Record<DetailLine['tone'], string> = { ok: 'OK', warn: 'Fix', plain: 'Not yet' }
+
+/**
+ * What's going on with notifications on this device, for when they don't
+ * pop up. It works without DevTools, which some computers block.
+ */
+function Details(props: { state: PushState | null; busy: boolean; run: (action: () => Promise<Outcome>, done: string) => Promise<void> }) {
+  const { state, busy, run } = props
+  const [details, setDetails] = useState<PushDetails | null>(null)
+
+  // Checked again whenever notifications are turned on or off, or a button finishes.
+  useEffect(() => {
+    if (!busy) void pushDetails().then(setDetails)
+  }, [state, busy])
+
+  const canTest = state === 'on' || state === 'off' || state === 'blocked'
+
+  return (
+    <details>
+      <summary style={{ cursor: 'pointer', minHeight: 44, paddingBlock: 12 }}>Details, for when notifications don't pop up</summary>
+      <div style={{ display: 'grid', gap: 10 }}>
+        {details === null ? (
+          <p className="muted" style={{ margin: 0 }}>Checking…</p>
+        ) : (
+          detailLines(details).map((line) => (
+            <p key={line.label} style={{ margin: 0, overflowWrap: 'anywhere' }}>
+              <Pill tone={line.tone}>{PILL_TEXT[line.tone]}</Pill> <strong>{line.label}:</strong> {line.text}
+            </p>
+          ))
+        )}
+        {canTest && (
+          <>
+            <p className="note" style={{ margin: 0 }}>
+              Show a test here makes this device show a notification by itself, with no server. If it pops up but Send me a
+              test doesn't, the problem is getting messages to this device, not showing them.
+            </p>
+            <div className="toolbar">
+              <button type="button" className="btn" disabled={busy} onClick={() => void run(showTestHere, 'Shown.')}>Show a test here</button>
+            </div>
+          </>
+        )}
+      </div>
+    </details>
   )
 }
