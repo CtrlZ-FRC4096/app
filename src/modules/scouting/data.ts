@@ -560,6 +560,56 @@ export function getTeam(team: number): Promise<Result<TbaTeam>> {
 }
 
 // ---------------------------------------------------------------------------
+// Filling in the team from the schedule (#40). A scout picks their position
+// once, and the match form fills in the team for that position from the
+// schedule. The schedule is saved on this device, so it still works with no
+// Wi-Fi once it's been loaded.
+
+/** Where a scout sits: which robot they watch in every match. */
+export const POSITIONS = ['Red 1', 'Red 2', 'Red 3', 'Blue 1', 'Blue 2', 'Blue 3'] as const
+export type Position = (typeof POSITIONS)[number]
+
+// '' until the scout picks one. keepOnReset: it belongs to this device, not the example data.
+export const positionStore = createStore<Position | ''>('scouting-position', 1, () => '', { keepOnReset: true })
+
+/** This device's position, or '' if the scout hasn't picked one. */
+export function usePosition(): Position | '' {
+  return useStore(positionStore)
+}
+
+/** Remember this device's position. */
+export function setPosition(position: Position) {
+  positionStore.set(position)
+}
+
+/**
+ * Get the latest schedule for the match form. It uses the schedule page's
+ * saved copy (savedSchedule() and refreshSchedule() below), so there's one
+ * schedule on the phone. If the latest can't be fetched (no Wi-Fi, say) but
+ * a copy for this event is saved, that copy is used, so the form keeps
+ * working.
+ */
+export async function loadSchedule(): Promise<Result<SavedSchedule>> {
+  const result = await refreshSchedule()
+  const saved = savedSchedule()
+  if (saved && saved.matches.length > 0) return ok(saved)
+  if (!result.ok) return fail(`Couldn't get the match schedule. ${result.error}`)
+  // TBA has no schedule until shortly before the event.
+  return fail("The Blue Alliance doesn't have the match schedule yet.")
+}
+
+/** The team in `position` in qualification match `match`, or null if the schedule doesn't say. */
+export function teamFor(schedule: SavedSchedule | null, match: number, position: Position | ''): number | null {
+  if (!schedule || !position) return null
+  // Only qualification matches: the form's match number is one of those.
+  const found = schedule.matches.find((m) => m.comp_level === 'qm' && m.match_number === match)
+  if (!found) return null
+  const [color, spot] = position.split(' ')
+  const team = (color === 'Red' ? found.alliances.red : found.alliances.blue).team_keys[Number(spot) - 1]
+  return team ? teamNumber(team) : null
+}
+
+// ---------------------------------------------------------------------------
 // Match 13: team ratings and match predictions.
 
 /**
@@ -763,6 +813,12 @@ async function fetchSchedule(event: string): Promise<Result<SavedSchedule>> {
   if (!schedule.ok) {
     scheduleStatus.set({ loading: false, problem: schedule.error })
     return schedule
+  }
+  // TBA has no schedule until shortly before the event. Don't swap a saved one for an empty one.
+  const previous = savedSchedule(event)
+  if (schedule.value.length === 0 && previous && previous.matches.length > 0) {
+    scheduleStatus.set({ loading: false, problem: null })
+    return ok(previous)
   }
   const saved: SavedSchedule = {
     event,
