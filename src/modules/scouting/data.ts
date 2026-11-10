@@ -100,9 +100,9 @@ export function useEntries(): Entry[] {
   return useStore(entryStore)
 }
 
-/** The home page tile's status. */
+/** The home page tile's status. Pit entries count too. */
 export function useEntrySummary(): Notice {
-  const entries = useEntries()
+  const entries = [...useEntries(), ...usePitEntries()]
   const waiting = entries.filter((e) => !e.synced).length
   if (waiting > 0) return { tone: 'info', text: plural(waiting, 'entry waiting', 'entries waiting') }
   return { tone: 'plain', text: entries.length === 0 ? 'No entries on this device' : `${plural(entries.length, 'entry', 'entries')} saved` }
@@ -227,7 +227,8 @@ const NO_CONNECTION = "No connection. They'll send by themselves when this phone
 let inFlight: Promise<Result<number>> | null = null
 
 /**
- * Send every Waiting entry to the team database, and mark them Synced.
+ * Send every Waiting entry, match and pit, to the team database, and mark
+ * them Synced.
  * Gives back how many were sent. If it can't (no connection, or not signed
  * in), they stay Waiting and the next try sends them. If a send is already
  * under way, this waits for it, then sends whatever is still waiting, such
@@ -243,7 +244,8 @@ export function syncEntries(): Promise<Result<number>> {
 
 async function send(): Promise<Result<number>> {
   const waiting = entryStore.get().filter((e) => !e.synced)
-  if (waiting.length === 0) return ok(0)
+  const pitWaiting = pitStore.get().filter((e) => !e.synced)
+  if (waiting.length + pitWaiting.length === 0) return ok(0)
   if (globalThis.navigator?.onLine === false) {
     syncStatus.set({ sending: false, problem: NO_CONNECTION })
     return fail(NO_CONNECTION)
@@ -251,16 +253,29 @@ async function send(): Promise<Result<number>> {
   if (!currentUser()) return fail('Sign in to send your entries.')
 
   syncStatus.set({ sending: true, problem: syncStatus.get().problem })
-  const result = await entriesTable.insertOnce(waiting.map(toRow))
-  if (!result.ok) {
-    syncStatus.set({ sending: false, problem: result.error })
-    return result
-  }
   // Mark only the ones just sent: entries saved while sending stay Waiting.
-  const sent = new Set(waiting.map((e) => e.id))
-  entryStore.set((entries) => entries.map((e) => (sent.has(e.id) ? { ...e, synced: true } : e)))
+  const markSent = <T extends { id: string; synced: boolean }>(sent: T[]) => {
+    const ids = new Set(sent.map((e) => e.id))
+    return (entries: T[]) => entries.map((e) => (ids.has(e.id) ? { ...e, synced: true } : e))
+  }
+  if (waiting.length > 0) {
+    const result = await entriesTable.insertOnce(waiting.map(toRow))
+    if (!result.ok) {
+      syncStatus.set({ sending: false, problem: result.error })
+      return result
+    }
+    entryStore.set(markSent(waiting))
+  }
+  if (pitWaiting.length > 0) {
+    const result = await pitTable.insertOnce(pitWaiting.map(pitToRow))
+    if (!result.ok) {
+      syncStatus.set({ sending: false, problem: result.error })
+      return result
+    }
+    pitStore.set(markSent(pitWaiting))
+  }
   syncStatus.set({ sending: false, problem: null })
-  return ok(waiting.length)
+  return ok(waiting.length + pitWaiting.length)
 }
 
 /** How often to try again while entries are waiting. */
@@ -274,7 +289,7 @@ export const RETRY_MS = 60 * 1000
  */
 function keepSyncing() {
   const tryNow = () => {
-    if (entryStore.get().some((e) => !e.synced)) void syncEntries()
+    if ([...entryStore.get(), ...pitStore.get()].some((e) => !e.synced)) void syncEntries()
   }
   globalThis.addEventListener('online', tryNow)
   document.addEventListener('visibilitychange', () => {
@@ -283,9 +298,6 @@ function keepSyncing() {
   setInterval(tryNow, RETRY_MS)
   setTimeout(tryNow, 0)
 }
-
-// Only in a browser: the tests call syncEntries() themselves.
-if (typeof window !== 'undefined' && typeof document !== 'undefined') keepSyncing()
 
 /** A random id like the database makes. Works on http:// pages too, unlike crypto.randomUUID(). */
 function newId(): string {
@@ -306,6 +318,8 @@ export interface PitEntry {
   id: string
   /** ISO date and time it was saved. */
   created_at: string
+  /** The event, like 2026ilch. Pit entries saved before this was added don't have one; they're sent with today's EVENT_KEY. */
+  event_key?: string
   /** The team number, like 4096. */
   team: number
   /** The qualification match it was before, or null: pit scouting often happens before any match. */
@@ -333,7 +347,7 @@ export interface PitEntry {
 }
 
 /** What the scout fills in on the pit form. savePitEntry() adds the rest. */
-export type PitFields = Omit<PitEntry, 'id' | 'created_at' | 'scouted_by' | 'synced'>
+export type PitFields = Omit<PitEntry, 'id' | 'created_at' | 'event_key' | 'scouted_by' | 'synced'>
 
 // Newest first. keepOnReset and the version: see entryStore above.
 export const pitStore = createStore<PitEntry[]>('scouting-pit-entries', 1, () => [], { keepOnReset: true })
@@ -346,12 +360,21 @@ export function usePitEntries(): PitEntry[] {
 /** Why a pit entry can't be saved, or null if it can. */
 export function checkPitEntry(fields: PitFields): string | null {
   if (!isCount(fields.team)) return 'Enter the team number first.'
-  if (fields.match !== null && !isCount(fields.match)) return 'Check the match number, or leave it blank.'
+  if (fields.team > MAX_TEAM) return `Check the team number: ${fields.team} is too big.`
+  if (fields.match !== null && !(isCount(fields.match) && fields.match <= MAX_MATCH)) return 'Check the match number, or leave it blank.'
   for (const [name, value] of [['weight', fields.weight], ['length', fields.length], ['width', fields.width], ['height', fields.height]] as const) {
-    if (value !== null && !(value > 0)) return `Check the ${name}, or leave it blank.`
+    if (value !== null && !(value > 0 && value < MAX_PIT_NUMBER)) return `Check the ${name}, or leave it blank.`
+  }
+  // The same limits as the team database, so an entry can't get stuck Waiting.
+  for (const [name, text] of [['motors', fields.motors], ['auto path', fields.auto_path], ['first strategy answer', fields.partners_do], ['second strategy answer', fields.they_do]] as const) {
+    const length = text.trim().length
+    if (length > MAX_NOTES_LENGTH) return `Keep the ${name} under ${MAX_NOTES_LENGTH} characters. This one is ${length}.`
   }
   return null
 }
+
+/** Weights and sizes must be under this. Nothing real comes close: it only stops a typo like 1155 for 115.5 from getting much worse. */
+export const MAX_PIT_NUMBER = 10000
 
 /** Save a pit entry on this device, marked as not synced yet. */
 export function savePitEntry(fields: PitFields): Result<PitEntry> {
@@ -366,11 +389,67 @@ export function savePitEntry(fields: PitFields): Result<PitEntry> {
     they_do: trim(fields.they_do),
     id: newId(),
     created_at: new Date().toISOString(),
+    event_key: EVENT_KEY,
     scouted_by: currentUser()?.id ?? null,
     synced: false,
   }
   pitStore.set((entries) => [entry, ...entries])
+  // Send it now if there's a connection. If not, it waits on this device.
+  void syncEntries()
   return ok(entry)
+}
+
+/** One row of the scouting_pit_entries table: a pit entry that reached the team database. */
+export interface ScoutingPitEntry extends Row {
+  event_key: string
+  team_number: number
+  match_number: number | null
+  drivetrain: string | null
+  weight: number | null
+  length: number | null
+  width: number | null
+  height: number | null
+  motors: string | null
+  auto_side: string | null
+  auto_path: string | null
+  partners_do: string | null
+  they_do: string | null
+  /** Who scouted it, and when, on their phone. */
+  scouted_by: string | null
+  scouted_at: string
+  /** Who sent it. Usually the scout, but a shared phone can send someone else's entries. */
+  created_by: string | null
+}
+
+// Made up, for demo mode. Team numbers in the 9990s, so nobody mistakes them for real scouting.
+const EXAMPLE_PIT_ENTRIES: ScoutingPitEntry[] = [
+  { id: '00000000-0000-4000-8000-0000000d0101', event_key: EVENT_KEY, team_number: 9991, match_number: null, drivetrain: 'Swerve', weight: 118.5, length: 28, width: 28, height: 22, motors: '8 Kraken X60 on swerve, 2 on the shooter', auto_side: 'Center', auto_path: 'Scores preload, picks up 2 from the middle', partners_do: 'Feed us fuel', they_do: 'Score from the hub', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-06T22:10:00Z', created_at: '2026-11-06T22:11:00Z', created_by: DEMO_PEOPLE.jordan },
+  { id: '00000000-0000-4000-8000-0000000d0102', event_key: EVENT_KEY, team_number: 9992, match_number: null, drivetrain: 'Tank', weight: null, length: null, width: null, height: null, motors: null, auto_side: 'Left', auto_path: null, partners_do: null, they_do: 'Play defense', scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-06T22:20:00Z', created_at: '2026-11-06T22:21:00Z', created_by: DEMO_PEOPLE.alex },
+]
+
+export const pitTable = createTable<ScoutingPitEntry>('scouting_pit_entries', { demo: EXAMPLE_PIT_ENTRIES, sort: newestFirst })
+
+/** A pit entry from this device, as a row for the team database. Blank choices and boxes are sent as empty (null). */
+export function pitToRow(entry: PitEntry): Omit<ScoutingPitEntry, 'created_at' | 'created_by'> {
+  const text = (value: string) => value.trim() || null
+  return {
+    id: entry.id,
+    event_key: entry.event_key ?? EVENT_KEY,
+    team_number: entry.team,
+    match_number: entry.match,
+    drivetrain: text(entry.drivetrain),
+    weight: entry.weight,
+    length: entry.length,
+    width: entry.width,
+    height: entry.height,
+    motors: text(entry.motors),
+    auto_side: text(entry.auto_side),
+    auto_path: text(entry.auto_path),
+    partners_do: text(entry.partners_do),
+    they_do: text(entry.they_do),
+    scouted_by: entry.scouted_by,
+    scouted_at: entry.created_at,
+  }
 }
 
 /** A number box's text as a number, or null if it's blank. */
@@ -387,6 +466,10 @@ export function numberOnly(text: string): string {
   const [whole, ...rest] = text.replace(/[^0-9.]/g, '').split('.')
   return rest.length === 0 ? whole : `${whole}.${rest.join('')}`
 }
+
+// Keep sending Waiting match and pit entries, in a browser. (The tests call
+// syncEntries() themselves.)
+if (typeof window !== 'undefined' && typeof document !== 'undefined') keepSyncing()
 
 // ---------------------------------------------------------------------------
 // The Blue Alliance.

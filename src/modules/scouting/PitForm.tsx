@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from 'react'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
-import { blankOrNumber, numberOnly, savePitEntry } from './data'
+import { blankOrNumber, numberOnly, savePitEntry, usePitEntries } from './data'
 import FormSection from './FormSection'
+import SavedOnDevice from './SavedOnDevice'
 import { AUTO_SIDES, DRIVETRAINS } from './season'
 
 // Big enough to tap, and 16px text so phones don't zoom in on the box.
@@ -38,8 +39,10 @@ function TextBox(props: { id: string; label: string; value: string; onChange: (v
 
 // The pit form, for talking to a team in their pit before matches. The
 // choices come from season.ts. Saving goes through savePitEntry() in
-// data.ts, which keeps the entry on this device.
+// data.ts, which keeps the entry on this device and sends it to the team
+// database whenever there's a connection, the same way as match entries.
 export default function PitForm() {
+  const entries = usePitEntries()
   const [match, setMatch] = useState('')
   const [team, setTeam] = useState('')
   // '' until the scout chooses, so no button is pressed.
@@ -82,7 +85,7 @@ export default function PitForm() {
   return (
     <>
       <PageHead title="Pit form">
-        Ask a team about their robot in their pit, before matches. Entries save on this device, so it works with no Wi-Fi.
+        Ask a team about their robot in their pit, before matches. Entries save on this device, so it works with no Wi-Fi, and send to the team by themselves once there's a connection.
       </PageHead>
       <form onSubmit={save}>
         <Panel>
@@ -121,6 +124,10 @@ export default function PitForm() {
           </FormSection>
         </Panel>
       </form>
+      <SavedOnDevice
+        rows={entries.map((e) => ({ id: e.id, label: `Team ${e.team}${e.drivetrain ? ` · ${e.drivetrain}` : ''}`, created_at: e.created_at, synced: e.synced }))}
+        emptyText="No pit entries yet. Fill in the form and press Save Entry."
+      />
     </>
   )
 }

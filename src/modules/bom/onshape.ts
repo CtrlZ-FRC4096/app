@@ -13,10 +13,14 @@
  * - New parts are added, and names, quantities and materials updated to
  *   what Onshape has. Where Onshape has nothing (no material yet, say),
  *   what's already in the app stays.
+ * - A new part with a vendor's part number in its number or name, like
+ *   WCP-0123, is COTS with that vendor (identifyCots() in data.ts, #20).
+ *   Parts already in the app keep the kind they have, so changing a wrong
+ *   guess by hand sticks.
  * - Parts no longer in Onshape are marked "Removed in Onshape", not
  *   deleted, so their history stays. If they come back, the mark goes.
  */
-import { nextPartNumber, partsTable, type BomSystem, type Part, type PartKind } from './data'
+import { identifyCots, nextPartNumber, partsTable, type BomSystem, type Part, type PartKind } from './data'
 
 /** One part from Onshape. The same shape is in supabase/functions/onshape/onshape.ts. */
 export interface OnshapeLine {
@@ -102,8 +106,10 @@ export function planOnshapeImport(system: BomSystem, bom: OnshapeBom, allParts: 
       seen.add(existing.id)
       typedIn.delete(existing.part_number)
     }
-    // Bought if it's standard content or has a vendor (or was already marked bought).
-    const kind: PartKind = line.standard || line.vendor || existing?.kind === 'cots' ? 'cots' : 'made'
+    // A vendor's part number in a new part's number or name. Parts already here keep the kind they have.
+    const recognized = existing ? null : identifyCots(line)
+    // Bought if it's standard content, has a vendor or a vendor's part number (or was already marked bought).
+    const kind: PartKind = line.standard || line.vendor || recognized || existing?.kind === 'cots' ? 'cots' : 'made'
     // A made part's Onshape part number is ours, if no other part has it. A
     // bought part's is usually the vendor's, so it gets a team number too.
     const fromOnshape = kind === 'made' ? fit(line.part_number, 40) : null
@@ -118,8 +124,8 @@ export function planOnshapeImport(system: BomSystem, bom: OnshapeBom, allParts: 
       kind,
       material: kind === 'made' ? (fit(line.material, 100) ?? existing?.material ?? null) : null,
       quantity: Math.max(1, Math.round(line.quantity) || 1),
-      vendor: kind === 'cots' ? (fit(line.vendor, 100) ?? existing?.vendor ?? null) : null,
-      vendor_part_number: kind === 'cots' ? (fit(line.part_number, 100) ?? existing?.vendor_part_number ?? null) : null,
+      vendor: kind === 'cots' ? (fit(line.vendor, 100) ?? recognized?.vendor ?? existing?.vendor ?? null) : null,
+      vendor_part_number: kind === 'cots' ? (recognized?.vendor_part_number ?? fit(line.part_number, 100) ?? existing?.vendor_part_number ?? null) : null,
       onshape_url: line.url,
       onshape_id: line.onshape_id,
       removed_in_onshape: false,
