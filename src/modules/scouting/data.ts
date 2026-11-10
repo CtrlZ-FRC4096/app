@@ -32,6 +32,7 @@ import { TEAM_TIME_ZONE } from '../../core/calendar'
 import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
+import { isMentor } from '../../core/roles'
 import { currentUser, onSignedIn } from '../../core/session'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore, type Store } from '../../core/store'
@@ -39,8 +40,150 @@ import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row,
 import { toCsv } from '../attendance/data'
 import { COUNTERS, DRIVETRAINS, ENDGAME, EVENT_KEY, ROLES, type Counter } from './season'
 
-/** The event we're at, from season.ts, for other modules. */
+/** The event we're at until a mentor picks one in the app, from season.ts, for other modules. */
 export { EVENT_KEY }
+
+// ---------------------------------------------------------------------------
+// The event the team is scouting.
+//
+// A mentor picks it in the app (EventPicker.tsx), and every phone uses it:
+// the schedule, rankings and Match 13 numbers are for it, and entries are
+// saved under it. Each pick is a row in scouting_events
+// (supabase/migrations/..._scouting_events.sql), and the newest one is the
+// current event. Until a mentor picks one, it's EVENT_KEY from season.ts.
+//
+// The match form has to work with no Wi-Fi, so it never waits on the table:
+// the current event is kept on this phone too (eventStore), and EventSync
+// in EventPicker.tsx keeps that copy up to date while Scouting is open.
+
+/** One time a mentor picked the event. */
+export interface ScoutingEvent {
+  id: string
+  /** Like 2026ilch. */
+  event_key: string
+  /** Like "Midwest Regional". */
+  name: string
+  created_at: string
+  created_by: string | null
+}
+
+/** Every time a mentor picked the event, newest first. */
+export const eventsTable = createTable<ScoutingEvent>('scouting_events', {
+  demo: [{ id: '00000000-0000-4000-8000-0000000e0201', event_key: EVENT_KEY, name: 'Example Regional', created_at: '2026-11-01T18:00:00Z', created_by: DEMO_PEOPLE.pat }],
+  sort: newestFirst,
+  keepOffline: true,
+})
+
+/** The event the team is scouting: its key, and its name once a mentor has picked it in the app. */
+export interface CurrentEvent {
+  key: string
+  name: string | null
+}
+
+/** This phone's copy of the current event. Empty until Scouting has been open with a connection. */
+export const eventStore = createStore<CurrentEvent | null>('scouting-event', 1, () => null)
+
+/** The newest pick in the table, or nothing if a mentor hasn't picked one. */
+export function latestEvent(rows: ScoutingEvent[]): CurrentEvent | null {
+  const latest = rows[0]
+  return latest ? { key: latest.event_key, name: latest.name } : null
+}
+
+/** The event the team is scouting, like 2026ilch. For code outside a page; pages use useCurrentEvent(). */
+export function currentEvent(): string {
+  return eventStore.get()?.key ?? EVENT_KEY
+}
+
+/** The event the team is scouting, for a page. It redraws when a mentor picks another event. */
+export function useCurrentEvent(): CurrentEvent {
+  return useStore(eventStore) ?? { key: EVENT_KEY, name: null }
+}
+
+/** Pick the event the whole team scouts. Only mentors and admins can; the database's rules check that too. */
+export async function chooseEvent(event: Pick<TbaEvent, 'key' | 'name'>): Promise<Result<CurrentEvent>> {
+  const role = currentUser()?.role
+  if (!role || !isMentor(role)) return fail('Only a mentor can change the event. Ask a mentor to pick it.')
+  const result = await eventsTable.insert({ event_key: event.key, name: event.name })
+  if (!result.ok) return result
+  const chosen = { key: event.key, name: event.name }
+  eventStore.set(chosen)
+  return ok(chosen)
+}
+
+/** An event from The Blue Alliance, for looking one up. */
+export interface TbaEvent {
+  /** Like 2026ilch. */
+  key: string
+  name: string
+  city: string | null
+  state_prov: string | null
+  country: string | null
+  /** Like 2026-03-12. */
+  start_date: string
+  end_date: string
+  year: number
+}
+
+/** The seasons to look in: this year's and next year's, since next season's events are listed in the fall. */
+export function lookupSeasons(today = new Date()): number[] {
+  const year = today.getFullYear()
+  return [year, year + 1]
+}
+
+/** Our team's events in a season, soonest first. */
+export async function getOurEvents(year: number): Promise<Result<TbaEvent[]>> {
+  const result = await callFunction<TbaEvent[] | null>('tba', { kind: 'team-events', team: OUR_TEAM, year }, () => demoEvents(year).filter((e) => e.ours))
+  return result.ok ? ok(byDate(result.value ?? [])) : result
+}
+
+/** Every event in a season, soonest first. A few hundred, so search them with searchEvents(). */
+export async function getAllEvents(year: number): Promise<Result<TbaEvent[]>> {
+  const result = await callFunction<TbaEvent[] | null>('tba', { kind: 'events', year }, () => demoEvents(year))
+  return result.ok ? ok(byDate(result.value ?? [])) : result
+}
+
+const byDate = (events: TbaEvent[]) => [...events].sort((a, b) => a.start_date.localeCompare(b.start_date) || a.name.localeCompare(b.name))
+
+/**
+ * The events that match what someone typed: every word has to be in the
+ * name, city, state, country or key, ignoring capitals. Nothing typed
+ * gives nothing, since a whole season is too many to scroll through.
+ */
+export function searchEvents(events: TbaEvent[], text: string, limit = 20): TbaEvent[] {
+  const words = text.toLowerCase().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return []
+  return events
+    .filter((e) => {
+      const about = [e.name, e.city, e.state_prov, e.country, e.key].filter(Boolean).join(' ').toLowerCase()
+      return words.every((w) => about.includes(w))
+    })
+    .slice(0, limit)
+}
+
+/** "Mar 12–14, 2026 · Peoria, Illinois" */
+export function eventWhenWhere(event: TbaEvent): string {
+  const day = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+  const start = day(event.start_date)
+  const end = day(event.end_date)
+  const sameMonth = start.split(' ')[0] === end.split(' ')[0]
+  const dates = event.start_date === event.end_date ? start : `${start}–${sameMonth ? end.split(' ')[1] : end}`
+  const where = [event.city, event.state_prov].filter(Boolean).join(', ')
+  return `${dates}, ${event.year}${where ? ` · ${where}` : ''}`
+}
+
+// Made-up events for demo mode. The first is EVENT_KEY, so demo mode's
+// example schedule and entries are for an event in the list.
+function demoEvents(year: number): (TbaEvent & { ours: boolean })[] {
+  const event = (key: string, name: string, city: string, state: string, start: string, end: string, ours: boolean) => ({
+    key, name, city, state_prov: state, country: 'USA', start_date: `${year}-${start}`, end_date: `${year}-${end}`, year, ours,
+  })
+  return [
+    event(year === Number(EVENT_KEY.slice(0, 4)) ? EVENT_KEY : `${year}demo1`, 'Example Regional', 'Champaign', 'Illinois', '03-12', '03-14', true),
+    event(`${year}demo2`, 'Sample District Event', 'Peoria', 'Illinois', '03-26', '03-28', true),
+    event(`${year}demo3`, 'Demo Valley Regional', 'Springfield', 'Missouri', '03-30', '04-02', false),
+    event(`${year}demo4`, 'Placeholder Championship', 'Houston', 'Texas', '04-15', '04-18', false),
+  ]
+}
 
 // ---------------------------------------------------------------------------
 // Entries, saved on this device.
@@ -66,7 +209,7 @@ export interface Entry {
   created_at: string
   /**
    * The event it was scouted at, like 2026ilch. Entries saved before this
-   * was added don't have one; they're sent with today's EVENT_KEY.
+   * was added don't have one; they're sent with the current event.
    */
   event_key?: string
   /** The qualification match number. */
@@ -141,7 +284,7 @@ export function saveEntry(fields: EntryFields): Result<Entry> {
     notes: fields.notes.trim(),
     id: newId(),
     created_at: new Date().toISOString(),
-    event_key: EVENT_KEY,
+    event_key: currentEvent(),
     scouted_by: currentUser()?.id ?? null,
     synced: false,
   }
@@ -197,7 +340,7 @@ export function toRow(saved: Entry | OlderEntry): Omit<ScoutingEntry, 'created_a
   const entry = saved as OlderEntry
   return {
     id: entry.id,
-    event_key: entry.event_key ?? EVENT_KEY,
+    event_key: entry.event_key ?? currentEvent(),
     match_number: entry.match,
     team_number: entry.team,
     counts: entry.counts,
@@ -333,7 +476,7 @@ export interface PitEntry {
   id: string
   /** ISO date and time it was saved. */
   created_at: string
-  /** The event, like 2026ilch. Pit entries saved before this was added don't have one; they're sent with today's EVENT_KEY. */
+  /** The event, like 2026ilch. Pit entries saved before this was added don't have one; they're sent with the current event. */
   event_key?: string
   /** The team number, like 4096. */
   team: number
@@ -404,7 +547,7 @@ export function savePitEntry(fields: PitFields): Result<PitEntry> {
     they_do: trim(fields.they_do),
     id: newId(),
     created_at: new Date().toISOString(),
-    event_key: EVENT_KEY,
+    event_key: currentEvent(),
     scouted_by: currentUser()?.id ?? null,
     synced: false,
   }
@@ -449,7 +592,7 @@ export function pitToRow(entry: PitEntry): Omit<ScoutingPitEntry, 'created_at' |
   const text = (value: string) => value.trim() || null
   return {
     id: entry.id,
-    event_key: entry.event_key ?? EVENT_KEY,
+    event_key: entry.event_key ?? currentEvent(),
     team_number: entry.team,
     match_number: entry.match,
     drivetrain: text(entry.drivetrain),
@@ -573,7 +716,7 @@ export function pitDrivetrain(pit: PitRow): string | null {
 function thisEvent<T extends { id: string; event_key: string }>(entries: T[]): T[] {
   const seen = new Set<string>()
   return entries.filter((e) => {
-    if (e.event_key !== EVENT_KEY || seen.has(e.id)) return false
+    if (e.event_key !== currentEvent() || seen.has(e.id)) return false
     seen.add(e.id)
     return true
   })
@@ -592,7 +735,7 @@ function tally(options: string[], answers: string[], outOf: number): Tally[] {
   })
 }
 
-/** Everything scouted about one team at this event (EVENT_KEY), added up. */
+/** Everything scouted about one team at the current event, added up. */
 export function teamSummary(team: number, entries: MatchRow[], pitEntries: PitRow[], counters: Counter[] = COUNTERS): TeamSummary {
   const mine = thisEvent(entries)
     .filter((e) => e.team_number === team)
@@ -640,8 +783,10 @@ function useScoutingRows(): { entries: MatchRow[]; pitEntries: PitRow[] } {
   const saved = useEntries()
   const syncedPit = pitTable.useRows()
   const savedPit = usePitEntries()
-  const entries = useMemo(() => [...synced, ...saved.filter((e) => !e.synced).map(toRow)], [synced, saved])
-  const pitEntries = useMemo(() => [...syncedPit, ...savedPit.filter((e) => !e.synced).map(pitToRow)], [syncedPit, savedPit])
+  // Only the current event's, so the sums change when a mentor picks another event.
+  const event = useCurrentEvent().key
+  const entries = useMemo(() => [...synced, ...saved.filter((e) => !e.synced).map(toRow)].filter((e) => e.event_key === event), [synced, saved, event])
+  const pitEntries = useMemo(() => [...syncedPit, ...savedPit.filter((e) => !e.synced).map(pitToRow)].filter((e) => e.event_key === event), [syncedPit, savedPit, event])
   return { entries, pitEntries }
 }
 
@@ -716,19 +861,19 @@ export function teamNumber(teamKey: string): number {
 }
 
 /** The event's match schedule, in TBA's order. Empty until TBA has it. */
-export async function getSchedule(event = EVENT_KEY): Promise<Result<TbaMatch[]>> {
+export async function getSchedule(event = currentEvent()): Promise<Result<TbaMatch[]>> {
   const result = await callFunction<TbaMatch[] | null>('tba', { kind: 'schedule', event }, () => demoMatches(event))
   return result.ok ? ok(result.value ?? []) : result
 }
 
 /** The event's rankings, best first. Empty until the event starts. */
-export async function getRankings(event = EVENT_KEY): Promise<Result<TbaRanking[]>> {
+export async function getRankings(event = currentEvent()): Promise<Result<TbaRanking[]>> {
   const result = await callFunction<{ rankings: TbaRanking[] } | null>('tba', { kind: 'rankings', event }, () => ({ rankings: demoRankings() }))
   return result.ok ? ok(result.value?.rankings ?? []) : result
 }
 
 /** One team's matches at the event, with their videos. */
-export async function getTeamMatches(team: number, event = EVENT_KEY): Promise<Result<TbaMatchWithVideos[]>> {
+export async function getTeamMatches(team: number, event = currentEvent()): Promise<Result<TbaMatchWithVideos[]>> {
   const result = await callFunction<TbaMatchWithVideos[] | null>('tba', { kind: 'team-matches', team, event }, () =>
     demoMatches(event).filter((m) => [...m.alliances.red.team_keys, ...m.alliances.blue.team_keys].includes(`frc${team}`)),
   )
@@ -741,13 +886,13 @@ export function getTeam(team: number): Promise<Result<TbaTeam>> {
 }
 
 /** Every team registered for an event, by number. TBA lists them before the schedule is out. */
-export async function getEventTeams(event = EVENT_KEY): Promise<Result<TbaTeam[]>> {
+export async function getEventTeams(event = currentEvent()): Promise<Result<TbaTeam[]>> {
   const result = await callFunction<TbaTeam[] | null>('tba', { kind: 'teams', event }, () => DEMO_TEAMS.map(([team]) => demoTeam(team)))
   return result.ok ? ok([...(result.value ?? [])].sort((a, b) => a.team_number - b.team_number)) : result
 }
 
 /** A team's page on The Blue Alliance, for the season of `event` (like 2026ilch → 2026). */
-export function tbaTeamUrl(team: number, event = EVENT_KEY): string {
+export function tbaTeamUrl(team: number, event = currentEvent()): string {
   return `https://www.thebluealliance.com/team/${team}/${event.slice(0, 4)}`
 }
 
@@ -839,7 +984,7 @@ const RANKINGS_OFFLINE = "No connection. They'll update by themselves when this 
  * can't (no connection, or TBA has a problem), the last ones stay, and the
  * status says why.
  */
-export async function refreshRankings(event = EVENT_KEY): Promise<Result<SavedRankings>> {
+export async function refreshRankings(event = currentEvent()): Promise<Result<SavedRankings>> {
   if (globalThis.navigator?.onLine === false) {
     rankingsStatus.set({ checking: false, problem: RANKINGS_OFFLINE })
     return fail(RANKINGS_OFFLINE)
@@ -861,7 +1006,7 @@ export async function refreshRankings(event = EVENT_KEY): Promise<Result<SavedRa
  * on screen, when it comes back on screen, and when the phone comes back
  * online. Gives back a function that stops it, for when the page closes.
  */
-export function watchRankings(event = EVENT_KEY): () => void {
+export function watchRankings(event = currentEvent()): () => void {
   const check = () => void refreshRankings(event)
   const onScreen = () => {
     if (document.visibilityState === 'visible') check()
@@ -879,10 +1024,11 @@ export function watchRankings(event = EVENT_KEY): () => void {
 
 /** The saved rankings for this event, or null if there are none yet. They update by themselves while the page is open. */
 export function useRankings(): { saved: SavedRankings | null; status: RankingsStatus } {
-  useEffect(() => watchRankings(), [])
+  const event = useCurrentEvent().key
+  useEffect(() => watchRankings(event), [event])
   const saved = useStore(rankingsStore)
   const status = useStore(rankingsStatus)
-  return { saved: saved?.event === EVENT_KEY ? saved : null, status }
+  return { saved: saved?.event === event ? saved : null, status }
 }
 
 /** One team's ranking, or null if they aren't ranked. For the team page. */
@@ -968,12 +1114,13 @@ interface LoadedVideos {
  * change during the event, so it always asks TBA.
  */
 export function useTeamQualVideos(team: number): TeamQualVideos {
+  const event = useCurrentEvent().key
   const [tries, setTries] = useState(0)
   const [loaded, setLoaded] = useState<LoadedVideos | null>(null)
   useEffect(() => {
     // If the team changes before TBA answers, this answer is for the old team: ignore it.
     let current = true
-    void getTeamMatches(team).then((result) => {
+    void getTeamMatches(team, event).then((result) => {
       if (!current) return
       setLoaded((prev) => {
         // If it didn't work, keep showing this team's matches from last time.
@@ -984,7 +1131,7 @@ export function useTeamQualVideos(team: number): TeamQualVideos {
     return () => {
       current = false
     }
-  }, [team, tries])
+  }, [team, tries, event])
   const reload = useCallback(() => setTries((n) => n + 1), [])
   const loading = loaded?.team !== team || loaded.tries !== tries
   return {
@@ -1035,14 +1182,14 @@ interface Match13Matches {
 }
 
 /** Every team's Match 13 rating at the event, best first. Match 13 sends them in no order. */
-export async function getRatings(event = EVENT_KEY): Promise<Result<Match13Rating[]>> {
+export async function getRatings(event = currentEvent()): Promise<Result<Match13Rating[]>> {
   const result = await callFunction<{ teams: Match13Rating[] } | null>('match13', { kind: 'ratings', event }, () => ({ teams: demoRatings() }))
   if (!result.ok) return result
   return ok([...(result.value?.teams ?? [])].sort((a, b) => b.xpEnd - a.xpEnd || a.teamNumber - b.teamNumber))
 }
 
 /** Match 13's prediction for each of the event's matches. */
-export async function getPredictions(event = EVENT_KEY): Promise<Result<MatchPrediction[]>> {
+export async function getPredictions(event = currentEvent()): Promise<Result<MatchPrediction[]>> {
   const result = await callFunction<Match13Matches | null>('match13', { kind: 'predictions', event }, () => demoPredictions(event))
   if (!result.ok) return result
   return ok(
@@ -1191,7 +1338,7 @@ export function picklistTeams(ratings: Match13Rating[], entries: MatchRow[], pit
     const rating = ratings.find((r) => r.teamNumber === team)
     const summary = teamSummary(team, entries, pitEntries)
     // Two scouts watching the same robot in the same match is still one match.
-    const matches = new Set(entries.filter((e) => e.event_key === EVENT_KEY && e.team_number === team).map((e) => e.match_number))
+    const matches = new Set(entries.filter((e) => e.event_key === currentEvent() && e.team_number === team).map((e) => e.match_number))
     return {
       team,
       values: {
@@ -1353,14 +1500,15 @@ export const scheduleStore = createStore<SavedSchedule | null>('scouting-schedul
  * one yet. Anything that needs the schedule with no connection (such as
  * filling in the team from the match number, #40) can use this.
  */
-export function savedSchedule(event = EVENT_KEY): SavedSchedule | null {
+export function savedSchedule(event = currentEvent()): SavedSchedule | null {
   const saved = scheduleStore.get()
   return saved?.event === event ? saved : null
 }
 
-export function useSavedSchedule(event = EVENT_KEY): SavedSchedule | null {
+export function useSavedSchedule(event?: string): SavedSchedule | null {
+  const current = useCurrentEvent().key
   const saved = useStore(scheduleStore)
-  return saved?.event === event ? saved : null
+  return saved?.event === (event ?? current) ? saved : null
 }
 
 export interface ScheduleStatus {
@@ -1384,7 +1532,7 @@ let scheduleInFlight: Promise<Result<SavedSchedule>> | null = null
  * If the schedule can't be fetched, the saved one stays. If only the
  * predictions can't, the schedule is saved with the last predictions.
  */
-export function refreshSchedule(event = EVENT_KEY): Promise<Result<SavedSchedule>> {
+export function refreshSchedule(event = currentEvent()): Promise<Result<SavedSchedule>> {
   scheduleInFlight ??= fetchSchedule(event).finally(() => {
     scheduleInFlight = null
   })
@@ -1430,7 +1578,7 @@ export const SCHEDULE_REFRESH_MS = 2 * 60 * 1000
  * minutes, when the app comes back on screen, and when the phone comes back
  * online. Gives back a function that stops it, for when the page closes.
  */
-export function keepScheduleFresh(event = EVENT_KEY): () => void {
+export function keepScheduleFresh(event = currentEvent()): () => void {
   const refresh = () => void refreshSchedule(event)
   const onScreen = () => {
     if (globalThis.document?.visibilityState === 'visible') refresh()
@@ -1531,15 +1679,15 @@ export const ratingsStore = createStore<RatingsState>('scouting-ratings', 1, noR
 // Only for this page visit: not saved.
 const ratingsLoading = createStore('scouting-ratings-loading', 1, () => false, { persist: false, keepOnReset: true })
 
-/** The saved copy for this event (EVENT_KEY), for code outside a page. A copy for another event gives nothing saved. */
+/** The saved copy for the current event, for code outside a page. A copy for another event gives nothing saved. */
 export function savedRatings(): RatingsState {
   const saved = ratingsStore.get()
-  return saved.event === EVENT_KEY ? saved : noRatings()
+  return saved.event === currentEvent() ? saved : noRatings()
 }
 
 /** Whether to load again: nothing saved for this event, or the copy is older than STALE_MS. */
 export function needsLoading(saved: RatingsState, now: Date = new Date()): boolean {
-  return saved.event !== EVENT_KEY || !saved.loadedAt || now.getTime() - Date.parse(saved.loadedAt) > STALE_MS
+  return saved.event !== currentEvent() || !saved.loadedAt || now.getTime() - Date.parse(saved.loadedAt) > STALE_MS
 }
 
 // What the match13 function says when Match 13 has no ratings for the
@@ -1567,13 +1715,14 @@ export function loadRatings(now: Date = new Date()): Promise<void> {
 }
 
 async function load(now: Date): Promise<void> {
-  const [ratings, rankings] = await Promise.all([getRatings(EVENT_KEY), getRankings(EVENT_KEY)])
+  const event = currentEvent()
+  const [ratings, rankings] = await Promise.all([getRatings(event), getRankings(event)])
   const notRatedYet = !ratings.ok && NOT_RATED_YET.test(ratings.error)
   const rated: Result<Match13Rating[]> = notRatedYet ? ok([]) : ratings
   // Start from this event's copy, so another event's numbers never mix in.
   const prev = savedRatings()
   ratingsStore.set({
-    event: EVENT_KEY,
+    event,
     ratings: rated.ok ? rated.value : prev.ratings,
     rankings: rankings.ok ? rankings.value : prev.rankings,
     loadedAt: rated.ok ? now.toISOString() : prev.loadedAt,
@@ -1593,15 +1742,16 @@ export function resetRatings() {
  * phone comes back online. `refresh` is for a Refresh button.
  */
 export function useRatings(): RatingsState & { loading: boolean; refresh: () => void } {
+  const event = useCurrentEvent().key
   const saved = useStore(ratingsStore)
-  const state = saved.event === EVENT_KEY ? saved : noRatings()
+  const state = saved.event === event ? saved : noRatings()
   const isLoading = useStore(ratingsLoading)
   useEffect(() => {
     if (needsLoading(ratingsStore.get())) void loadRatings()
     const reload = () => void loadRatings()
     globalThis.addEventListener('online', reload)
     return () => globalThis.removeEventListener('online', reload)
-  }, [])
+  }, [event])
   return { ...state, loading: isLoading, refresh: () => void loadRatings() }
 }
 
@@ -1751,13 +1901,14 @@ const EXAMPLE_PICKLIST: PicklistRow[] = [
 export const picklistTable = createTable<PicklistRow>('scouting_picklist', { demo: EXAMPLE_PICKLIST, sort: byPosition })
 
 /** One event's picklist, top first. */
-export function picklist(event = EVENT_KEY): PicklistRow[] {
+export function picklist(event = currentEvent()): PicklistRow[] {
   return picklistTable.rows().filter((row) => row.event_key === event)
 }
 
 /** One event's picklist, top first, for a page. */
-export function usePicklist(event = EVENT_KEY): PicklistRow[] {
-  return picklistTable.useRows().filter((row) => row.event_key === event)
+export function usePicklist(event?: string): PicklistRow[] {
+  const current = useCurrentEvent().key
+  return picklistTable.useRows().filter((row) => row.event_key === (event ?? current))
 }
 
 /**
@@ -1791,7 +1942,7 @@ function rowsBelow(teams: number[], last: number | undefined, event: string) {
  * list). Only for an empty list: once it's started, the order is the
  * strategy team's, so this never replaces it.
  */
-export async function startPicklist(teams: number[], event = EVENT_KEY): Promise<Result<PicklistRow[]>> {
+export async function startPicklist(teams: number[], event = currentEvent()): Promise<Result<PicklistRow[]>> {
   if (teams.length === 0) return fail('There are no teams to start the picklist with.')
   const problem = checkTeams(teams)
   if (problem) return fail(problem)
@@ -1803,7 +1954,7 @@ export async function startPicklist(teams: number[], event = EVENT_KEY): Promise
  * Add the teams that aren't on the event's picklist yet to the bottom, in
  * the order given. Teams already on it stay where they are.
  */
-export async function addMissingTeams(teams: number[], event = EVENT_KEY): Promise<Result<PicklistRow[]>> {
+export async function addMissingTeams(teams: number[], event = currentEvent()): Promise<Result<PicklistRow[]>> {
   const problem = checkTeams(teams)
   if (problem) return fail(problem)
   const list = picklist(event)

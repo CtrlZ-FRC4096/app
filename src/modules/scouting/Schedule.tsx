@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { PageHead, Panel, Pill } from '../../core/ui'
 import {
-  OUR_TEAM, keepScheduleFresh, likelyWinner, matchesWithPredictions, updatedAgo, useSavedSchedule, useScheduleStatus, type ScheduleRow,
+  OUR_TEAM, keepScheduleFresh, likelyWinner, matchesWithPredictions, updatedAgo, useCurrentEvent, useSavedSchedule, useScheduleStatus, type ScheduleRow,
 } from './data'
 
 /** "10:24 AM", in the phone's own time zone, which is the event's when you're there. */
@@ -57,13 +57,15 @@ function Match(props: { row: ScheduleRow }) {
  * data.ts), and with no connection it shows what was saved on this phone.
  */
 export default function Schedule() {
+  const event = useCurrentEvent().key
   const saved = useSavedSchedule()
   const status = useScheduleStatus()
   const [justOurs, setJustOurs] = useState(false)
   // Ticks so "Updated 2 minutes ago" stays right without a reload.
   const [now, setNow] = useState(() => new Date())
 
-  useEffect(() => keepScheduleFresh(), [])
+  // Starts again for the new event when a mentor picks another.
+  useEffect(() => keepScheduleFresh(event), [event])
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 30_000)
     return () => clearInterval(timer)

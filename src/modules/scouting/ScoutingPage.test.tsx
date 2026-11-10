@@ -3,7 +3,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import { setDemoRole } from '../../core/demo'
-import { POSITIONS, getRatings, picklistParts, picklistTable, ratingsStore, resetRatings, setWeight, weightsStore } from './data'
+import { POSITIONS, eventStore, getRatings, picklistParts, picklistTable, ratingsStore, resetRatings, setWeight, weightsStore } from './data'
+import EventPicker from './EventPicker'
 import Picklist from './Picklist'
 import ScoutingPage from './ScoutingPage'
 import RankingsPage from './RankingsPage'
@@ -258,5 +259,36 @@ describe("the team's event rank", () => {
     const html = renderToString(<TeamPage team={1234} />)
     expect(html).not.toContain('Rank ')
     expect(html).not.toContain('Not in the event rankings yet')
+  })
+})
+
+describe('the event picker', () => {
+  beforeEach(() => eventStore.reset())
+  afterEach(() => setDemoRole('student'))
+
+  it("shows a student which event it is, and that a mentor picks it, with no way to change it", () => {
+    const html = renderToString(<EventPicker />)
+    expect(html).toContain(EVENT_KEY)
+    expect(html).toContain('A mentor picks the event for the whole team.')
+    expect(html).not.toContain('Change event')
+  })
+
+  it('lets a mentor change it, and says when nobody has picked one yet', () => {
+    setDemoRole('mentor')
+    const html = renderToString(<EventPicker />)
+    expect(html).toContain('Change event')
+    expect(html).toContain('Nobody has picked the event yet')
+  })
+
+  it("shows the picked event's name and key", () => {
+    eventStore.set({ key: '2027ilpe', name: 'Example Peoria Regional' })
+    const html = renderToString(<EventPicker />)
+    expect(html).toContain('Example Peoria Regional')
+    expect(html).toContain('2027ilpe')
+    expect(html).not.toContain('Nobody has picked')
+  })
+
+  it('is at the top of every Scouting page', () => {
+    expect(renderToString(<ScoutingPage />)).toContain('Event: <strong>')
   })
 })

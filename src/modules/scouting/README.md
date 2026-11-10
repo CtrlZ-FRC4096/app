@@ -81,6 +81,33 @@ Hiding the buttons is only tidiness: the table's rules are what stop anyone else
 - Test every change at phone size (browser developer tools > device toolbar).
 - Don't put a Blue Alliance key in the browser code. Use the functions in `data.ts` below instead.
 
+## The event
+
+A mentor picks the event the whole team is scouting, at the top of every
+Scouting page (**Change event**, `EventPicker.tsx`). It lists our events this
+season and next from The Blue Alliance, with a search for any other event by
+name, city or key, like a World division. Every phone switches to it
+straight away: the schedule, rankings, Match 13 numbers, team pages and
+picklists are for it, and new entries are saved under it.
+
+- **Where it's kept:** each pick is a row in the `scouting_events` table
+  (`supabase/migrations/..._scouting_events.sql`, rules tested in
+  `supabase/tests/scouting-events.test.ts`): everyone reads it, only mentors
+  and admins add to it, and nobody changes or deletes a pick. The newest is
+  the current event.
+- **In code:** `currentEvent()` in `data.ts` gives its key, and
+  `useCurrentEvent()` gives it to a page, which redraws when a mentor picks
+  another. Functions that take an event use the current one when you leave
+  it out. `chooseEvent()` picks one, and `getOurEvents()`, `getAllEvents()`
+  and `searchEvents()` look them up.
+- **With no Wi-Fi:** the match form never waits for the table. The current
+  event is kept on each phone (`eventStore`), and `EventSync` in
+  `EventPicker.tsx` keeps that copy up to date while Scouting is open with a
+  connection. So **open Scouting once with a connection after the event is
+  picked**, before going somewhere with no Wi-Fi.
+- **Until a mentor picks one,** it's `EVENT_KEY` in `season.ts`, and the
+  top of the page says so.
+
 ## The Blue Alliance
 
 `data.ts` already gets these from The Blue Alliance, through the `tba`
@@ -96,7 +123,7 @@ server function, which holds the team's key (see "Server functions" in
 | `getTeam(team)` | A team's nickname and home |
 
 Each returns `{ ok: true, value }` or `{ ok: false, error }`. The event is
-`EVENT_KEY` in `season.ts`: change it before each event. In demo mode they
+the one the team is scouting (see "The event" below). In demo mode they
 return made-up example teams and matches, so you can build pages without a
 key.
 

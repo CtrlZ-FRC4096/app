@@ -15,6 +15,8 @@ export type TbaRequest =
   | { kind: 'teams'; event: string }
   | { kind: 'team-matches'; team: number; event: string }
   | { kind: 'team'; team: number }
+  | { kind: 'events'; year: number }
+  | { kind: 'team-events'; team: number; year: number }
 
 // TBA event keys are the year and a short code, like 2026ilch.
 const EVENT_KEY = /^\d{4}[a-z0-9]{1,16}$/
@@ -25,7 +27,9 @@ export function tbaPath(request: unknown): { path: string } | { error: string } 
   const event = typeof r.event === 'string' && EVENT_KEY.test(r.event) ? r.event : null
   const team = typeof r.team === 'number' && Number.isInteger(r.team) && r.team > 0 && r.team < 100_000 ? r.team : null
   const needEvent = { error: 'Ask with an event key, like 2026ilch.' }
+  const year = typeof r.year === 'number' && Number.isInteger(r.year) && r.year >= 1992 && r.year <= 2100 ? r.year : null
   const needTeam = { error: 'Ask with a team number, like 4096.' }
+  const needYear = { error: 'Ask with a season, like 2026.' }
   switch (r.kind) {
     case 'schedule':
       return event ? { path: `/event/${event}/matches/simple` } : needEvent
@@ -38,8 +42,14 @@ export function tbaPath(request: unknown): { path: string } | { error: string } 
       return !team ? needTeam : event ? { path: `/team/frc${team}/event/${event}/matches` } : needEvent
     case 'team':
       return team ? { path: `/team/frc${team}/simple` } : needTeam
+    case 'events':
+      // Every event in a season, for finding the event the team is at.
+      return year ? { path: `/events/${year}/simple` } : needYear
+    case 'team-events':
+      // The events a team is registered for in a season.
+      return !team ? needTeam : year ? { path: `/team/frc${team}/events/${year}/simple` } : needYear
     default:
-      return { error: 'Ask for one of: schedule, rankings, teams, team-matches or team.' }
+      return { error: 'Ask for one of: schedule, rankings, teams, team-matches, team, events or team-events.' }
   }
 }
 
