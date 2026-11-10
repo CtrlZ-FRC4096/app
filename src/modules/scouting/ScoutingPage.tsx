@@ -8,6 +8,7 @@ import MatchTeamFields from './MatchTeamFields'
 import PitForm from './PitForm'
 import Schedule from './Schedule'
 import SavedOnDevice from './SavedOnDevice'
+import TeamPage, { TeamLink } from './TeamPage'
 import { COUNTERS, ENDGAME, ROLES } from './season'
 
 /** Width and height of the − and + buttons, in pixels. Big enough to tap without looking. */
@@ -48,9 +49,14 @@ const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedu
 // chosen is hidden, so switching doesn't lose what's typed. The schedule is
 // only on the page while it's chosen, so it only updates while someone's
 // looking at it.
+//
+// #/scouting/team/9991 is the team page for team 9991 (TeamPage.tsx), with
+// both forms hidden. It's only drawn while open: it waits for the team
+// database, and the forms must work with no connection.
 export default function ScoutingPage() {
-  const rest = useRoute().rest[0] ?? ''
-  const view = VIEWS.find((v) => PATHS[v] === rest) ?? 'Match'
+  const [rest = '', teamText] = useRoute().rest
+  const view = rest === 'team' ? 'Team' : VIEWS.find((v) => PATHS[v] === rest) ?? 'Match'
+  const team = Number(teamText)
   return (
     <>
       <div style={{ marginBottom: 12 }}>
@@ -59,6 +65,7 @@ export default function ScoutingPage() {
       <div hidden={view !== 'Match'}><MatchForm /></div>
       <div hidden={view !== 'Pit'}><PitForm /></div>
       {view === 'Schedule' && <Schedule />}
+      {view === 'Team' && <TeamPage team={Number.isInteger(team) && team > 0 ? team : null} />}
     </>
   )
 }
@@ -171,7 +178,7 @@ function MatchForm() {
         </Panel>
       </form>
       <SavedOnDevice
-        rows={entries.map((e) => ({ id: e.id, label: `Match ${e.match} · Team ${e.team}`, created_at: e.created_at, synced: e.synced }))}
+        rows={entries.map((e) => ({ id: e.id, label: <>Match {e.match} · <TeamLink team={e.team} /></>, created_at: e.created_at, synced: e.synced }))}
         emptyText="No entries yet. Fill in the form and press Save Entry."
       />
     </>

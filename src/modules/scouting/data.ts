@@ -27,6 +27,7 @@
  * example data in demo mode. See https://match13.com/docs/api for
  * everything Match 13 sends.
  */
+import { useMemo } from 'react'
 import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
@@ -34,7 +35,7 @@ import { currentUser, onSignedIn } from '../../core/session'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore, type Store } from '../../core/store'
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row, type Table } from '../../core/table'
-import { EVENT_KEY } from './season'
+import { COUNTERS, DRIVETRAINS, ENDGAME, EVENT_KEY, ROLES, type Counter } from './season'
 
 // ---------------------------------------------------------------------------
 // Entries, saved on this device.
@@ -479,6 +480,177 @@ export function numberOnly(text: string): string {
 // Keep sending Waiting match and pit entries, in a browser. (The tests call
 // syncEntries() themselves.)
 if (typeof window !== 'undefined' && typeof document !== 'undefined') keepSyncing()
+
+// ---------------------------------------------------------------------------
+// Team summary: everything we scouted about one team at this event, added
+// up for the team page (#36). teamSummary() is a plain function, with no
+// hooks, so the picklist can use the same numbers. pitAnswers() and
+// pitDrivetrain() are the only code here that reads a pit entry's answers.
+
+/** A match entry, from the team database or still Waiting on this phone (see toRow()). */
+export type MatchRow = ReturnType<typeof toRow>
+
+/** A pit entry, from the team database or still Waiting on this phone (see pitToRow()). */
+export type PitRow = ReturnType<typeof pitToRow>
+
+/** One counter from season.ts, for one team. */
+export interface CounterSummary {
+  key: string
+  label: string
+  /** The average per match, or null if no entry has this counter. */
+  average: number | null
+  /** Each entry's count, in match order. */
+  perMatch: { match: number; count: number }[]
+}
+
+/** How often one answer came up. */
+export interface Tally {
+  option: string
+  count: number
+  /** count out of the entries it could have come up in, from 0 to 1. For <Bar>. */
+  share: number
+}
+
+/** A note from a match, or an answer from the pit form. */
+export interface WrittenAnswer {
+  kind: 'match' | 'pit'
+  question: string
+  text: string
+  /** The match number, or null if there wasn't one (pit scouting before any match). */
+  match: number | null
+  /** Who wrote it. Show their name with useMemberNames(). */
+  by: string | null
+  /** ISO date and time it was scouted. */
+  at: string
+}
+
+export interface TeamSummary {
+  team: number
+  /** Match entries. Two scouts watching the same robot count as two. */
+  matchCount: number
+  pitCount: number
+  counters: CounterSummary[]
+  endgame: Tally[]
+  /** Scouts can choose several roles, so these can add up to more than matchCount. */
+  roles: Tally[]
+  driverSkill: Tally[]
+  drivetrain: Tally[]
+  stops: Tally[]
+  /** How many entries say the robot broke down. */
+  brokeDown: number
+  /** Newest first. */
+  written: WrittenAnswer[]
+}
+
+/** A pit entry's written answers, leaving out the blank ones. The drivetrain is counted in pitDrivetrain() instead. */
+export function pitAnswers(pit: PitRow): WrittenAnswer[] {
+  const size = [pit.length, pit.width, pit.height].every((n) => n === null) ? '' : `${pit.length ?? '?'} × ${pit.width ?? '?'} × ${pit.height ?? '?'} inches (length × width × height)`
+  const answers: [question: string, text: string | null][] = [
+    ['Weight', pit.weight === null ? '' : `${pit.weight} pounds`],
+    ['Size', size],
+    ['Motors', pit.motors],
+    ['Auto starting side', pit.auto_side],
+    ['Auto path', pit.auto_path],
+    ['What they want partners to do', pit.partners_do],
+    ['What they will do', pit.they_do],
+  ]
+  return answers.flatMap(([question, text]) =>
+    text?.trim() ? [{ kind: 'pit' as const, question, text: text.trim(), match: pit.match_number, by: pit.scouted_by, at: pit.scouted_at }] : [],
+  )
+}
+
+/** A pit entry's drivetrain, or null if the scout didn't choose one. */
+export function pitDrivetrain(pit: PitRow): string | null {
+  return pit.drivetrain?.trim() || null
+}
+
+/** This event's entries, each once: an entry that's both Waiting here and in the team database is the same entry. */
+function thisEvent<T extends { id: string; event_key: string }>(entries: T[]): T[] {
+  const seen = new Set<string>()
+  return entries.filter((e) => {
+    if (e.event_key !== EVENT_KEY || seen.has(e.id)) return false
+    seen.add(e.id)
+    return true
+  })
+}
+
+/**
+ * How often each answer came up, out of `outOf`. Every option is listed, in
+ * order, even ones that never came up; an answer that isn't an option any
+ * more (renamed in season.ts) is added at the end.
+ */
+function tally(options: string[], answers: string[], outOf: number): Tally[] {
+  const all = [...options, ...new Set(answers.filter((a) => !options.includes(a)))]
+  return all.map((option) => {
+    const count = answers.filter((a) => a === option).length
+    return { option, count, share: outOf === 0 ? 0 : count / outOf }
+  })
+}
+
+/** Everything scouted about one team at this event (EVENT_KEY), added up. */
+export function teamSummary(team: number, entries: MatchRow[], pitEntries: PitRow[], counters: Counter[] = COUNTERS): TeamSummary {
+  const mine = thisEvent(entries)
+    .filter((e) => e.team_number === team)
+    .sort((a, b) => a.match_number - b.match_number || a.scouted_at.localeCompare(b.scouted_at))
+  const pits = thisEvent(pitEntries).filter((p) => p.team_number === team)
+  const skills = mine.flatMap((e) => (e.driver_skill === null ? [] : [String(e.driver_skill)]))
+  const drivetrains = pits.flatMap((p) => pitDrivetrain(p) ?? [])
+
+  const notes: WrittenAnswer[] = mine.flatMap((e) =>
+    e.notes?.trim() ? [{ kind: 'match' as const, question: 'Notes', text: e.notes.trim(), match: e.match_number, by: e.scouted_by, at: e.scouted_at }] : [],
+  )
+
+  return {
+    team,
+    matchCount: mine.length,
+    pitCount: pits.length,
+    counters: counters.map(({ key, label }) => {
+      const perMatch = mine.flatMap((e) => (typeof e.counts[key] === 'number' ? [{ match: e.match_number, count: e.counts[key] }] : []))
+      const total = perMatch.reduce((sum, m) => sum + m.count, 0)
+      return { key, label, average: perMatch.length === 0 ? null : total / perMatch.length, perMatch }
+    }),
+    endgame: tally(ENDGAME, mine.map((e) => e.endgame), mine.length),
+    roles: tally(ROLES, mine.flatMap((e) => e.roles), mine.length),
+    driverSkill: tally(DRIVER_SKILLS.map(String), skills, skills.length),
+    drivetrain: tally(DRIVETRAINS, drivetrains, drivetrains.length),
+    stops: tally([...STOPS], mine.map((e) => e.stop), mine.length),
+    brokeDown: mine.filter((e) => e.broke_down).length,
+    written: [...notes, ...pits.flatMap(pitAnswers)].sort((a, b) => b.at.localeCompare(a.at)),
+  }
+}
+
+/** Every team with a match or pit entry at this event, lowest number first. */
+export function scoutedTeams(entries: MatchRow[], pitEntries: PitRow[]): number[] {
+  const teams = new Set([...thisEvent(entries), ...thisEvent(pitEntries)].map((e) => e.team_number))
+  return [...teams].sort((a, b) => a - b)
+}
+
+/**
+ * What the team page adds up: match and pit entries from the team database,
+ * plus this phone's Waiting ones, so a scout sees their own entries straight
+ * away. In live mode the page waits for the team database to load.
+ */
+function useScoutingRows(): { entries: MatchRow[]; pitEntries: PitRow[] } {
+  const synced = entriesTable.useRows()
+  const saved = useEntries()
+  const syncedPit = pitTable.useRows()
+  const savedPit = usePitEntries()
+  const entries = useMemo(() => [...synced, ...saved.filter((e) => !e.synced).map(toRow)], [synced, saved])
+  const pitEntries = useMemo(() => [...syncedPit, ...savedPit.filter((e) => !e.synced).map(pitToRow)], [syncedPit, savedPit])
+  return { entries, pitEntries }
+}
+
+/** One team's summary, for the team page. */
+export function useTeamSummary(team: number): TeamSummary {
+  const { entries, pitEntries } = useScoutingRows()
+  return useMemo(() => teamSummary(team, entries, pitEntries), [team, entries, pitEntries])
+}
+
+/** Every team scouted at this event, for the team page's list. */
+export function useScoutedTeams(): number[] {
+  const { entries, pitEntries } = useScoutingRows()
+  return useMemo(() => scoutedTeams(entries, pitEntries), [entries, pitEntries])
+}
 
 // ---------------------------------------------------------------------------
 // The Blue Alliance.

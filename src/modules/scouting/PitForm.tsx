@@ -4,6 +4,7 @@ import { PageHead, Panel, Pick } from '../../core/ui'
 import { blankOrNumber, numberOnly, savePitEntry, usePitEntries } from './data'
 import FormSection from './FormSection'
 import SavedOnDevice from './SavedOnDevice'
+import { TeamLink } from './TeamPage'
 import { AUTO_SIDES, DRIVETRAINS } from './season'
 
 // Big enough to tap, and 16px text so phones don't zoom in on the box.
@@ -125,7 +126,7 @@ export default function PitForm() {
         </Panel>
       </form>
       <SavedOnDevice
-        rows={entries.map((e) => ({ id: e.id, label: `Team ${e.team}${e.drivetrain ? ` · ${e.drivetrain}` : ''}`, created_at: e.created_at, synced: e.synced }))}
+        rows={entries.map((e) => ({ id: e.id, label: <><TeamLink team={e.team} />{e.drivetrain ? ` · ${e.drivetrain}` : ''}</>, created_at: e.created_at, synced: e.synced }))}
         emptyText="No pit entries yet. Fill in the form and press Save Entry."
       />
     </>
