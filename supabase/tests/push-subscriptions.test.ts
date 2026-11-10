@@ -60,6 +60,18 @@ describe('push subscriptions', () => {
     expect(await db.sql('select id from public.push_subscriptions')).toHaveLength(1)
   })
 
+  // What "Remove my other devices" does (removeOtherDevices() in src/core/push.ts).
+  it('lets people remove all their devices but the one they are using', async () => {
+    await save(student, endpoint(1))
+    await save(student, endpoint(2))
+    await save(student, endpoint(3))
+    await save(other, endpoint(4))
+    const removed = await db.as<{ endpoint: string }>(student, 'delete from public.push_subscriptions where member_id = $1 and endpoint <> $2 returning endpoint', [student, endpoint(2)])
+    expect(removed.map((row) => row.endpoint).sort()).toEqual([endpoint(1), endpoint(3)])
+    expect(await mine(student)).toEqual([{ member_id: student, endpoint: endpoint(2) }])
+    expect(await mine(other)).toEqual([{ member_id: other, endpoint: endpoint(4) }])
+  })
+
   it("can't be added or changed directly, even by a mentor", async () => {
     await expect(
       db.as(mentor, 'insert into public.push_subscriptions (endpoint, p256dh, auth) values ($1, $2, $3)', [endpoint(), P256DH, AUTH]),
