@@ -18,35 +18,32 @@ describe('starting grid', () => {
   })
 })
 
-describe.each(STAGES)('advanceStage for %s', (stage) => {
+describe('advanceStage', () => {
+  // Not started → In progress → Done → back to Not started, so clicking keeps cycling.
   const transitions: [StageState, StageState][] = [
     ['Not started', 'In progress'],
     ['In progress', 'Done'],
     ['Done', 'Not started'],
   ]
 
-  it.each(transitions)('advances %s to %s without changing other cells or the input', (current, next) => {
-    const subsystems = structuredClone(SUBSYSTEMS)
-    const subsystem = subsystems[0]
-    subsystem.stages[stage] = current
-    const before = structuredClone(subsystems)
+  it('moves each stage on one step, without changing other cells or the input', () => {
+    for (const stage of STAGES) {
+      for (const [current, next] of transitions) {
+        const label = `${stage}: ${current} → ${next}`
+        const subsystems = structuredClone(SUBSYSTEMS)
+        const subsystem = subsystems[0]
+        subsystem.stages[stage] = current
+        const before = structuredClone(subsystems)
 
-    const updated = advanceStage(subsystem, stage)
+        const updated = advanceStage(subsystem, stage)
 
-    expect(updated).toEqual({
-      ...before[0], stages: { ...before[0].stages, [stage]: next },
-    })
-    expect(updated).not.toBe(subsystem)
-    expect(updated.stages).not.toBe(subsystem.stages)
-    expect(subsystems).toEqual(before)
-  })
-
-  it('can cycle repeatedly without changing the starting data', () => {
-    const original = structuredClone(SUBSYSTEMS[0])
-    let updated = original
-    for (let click = 0; click < 6; click += 1) {
-      updated = advanceStage(updated, stage)
+        expect(updated, label).toEqual({
+          ...before[0], stages: { ...before[0].stages, [stage]: next },
+        })
+        expect(updated, label).not.toBe(subsystem)
+        expect(updated.stages, label).not.toBe(subsystem.stages)
+        expect(subsystems, label).toEqual(before)
+      }
     }
-    expect(updated).toEqual(original)
   })
 })

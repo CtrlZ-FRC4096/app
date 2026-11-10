@@ -57,24 +57,22 @@ const event = (id: string, more: Partial<CalendarEvent>): CalendarEvent => ({
 const now = new Date('2026-11-03T21:00:00Z')
 
 describe('dayLabel', () => {
-  it('says Today and Tomorrow, then the day', () => {
+  it("says Today and Tomorrow, then the day, going by Chicago's day, not the server's", () => {
     expect(dayLabel('2026-11-03', '2026-11-03')).toBe('Today')
     expect(dayLabel('2026-11-04', '2026-11-03')).toBe('Tomorrow')
     expect(dayLabel('2026-11-07', '2026-11-03')).toBe('Sat, Nov 7')
     expect(dayLabel('2027-01-09', '2026-11-03')).toBe('Sat, Jan 9, 2027')
-  })
-
-  it("goes by Chicago's day, not the server's", () => {
     // 2 AM UTC on Wednesday is 8 PM Tuesday in Chicago.
     expect(chicagoDay(new Date('2026-11-04T02:00:00Z'))).toBe('2026-11-03')
   })
 })
 
 describe('eventsByDay', () => {
-  it('lists what is still to come by day, with a competition that already started under today', () => {
+  it('lists what is still to come by day, with a competition that already started under today, or nothing', () => {
+    const morning = event('morning', { title: 'Shop cleanup', start: '2026-11-03T08:00:00-06:00', end: '2026-11-03T09:00:00-06:00' })
     const events = [
       event('thu', { start: '2026-11-05T18:00:00-06:00', end: '2026-11-05T21:00:00-06:00' }),
-      event('morning', { title: 'Shop cleanup', start: '2026-11-03T08:00:00-06:00', end: '2026-11-03T09:00:00-06:00' }),
+      morning,
       event('tonight', {}),
       event('regional', { title: 'Example Regional', allDay: true, start: '2026-11-02', end: '2026-11-04' }),
     ]
@@ -82,33 +80,29 @@ describe('eventsByDay', () => {
       ['Today', ['regional', 'tonight']],
       ['Thu, Nov 5', ['thu']],
     ])
-  })
-
-  it('is empty when nothing is coming up', () => {
-    expect(eventsByDay([event('morning', { start: '2026-11-03T08:00:00-06:00', end: '2026-11-03T09:00:00-06:00' })], now)).toEqual([])
+    expect(eventsByDay([morning], now)).toEqual([])
   })
 })
 
 describe('timeOfDay', () => {
-  it('writes the times plainly', () => {
+  it('writes the times plainly, even past midnight, and says All day, and until when', () => {
     expect(plain(timeOfDay(event('a', {})))).toBe('6 – 9 PM')
     expect(plain(timeOfDay(event('a', { start: '2026-11-07T10:00:00-06:00', end: '2026-11-07T16:00:00-06:00' })))).toBe('10 AM – 4 PM')
     expect(plain(timeOfDay(event('a', { start: '2026-11-03T18:30:00-06:00' })))).toBe('6:30 – 9 PM')
     expect(plain(timeOfDay(event('a', { start: '2026-11-06T22:00:00-06:00', end: '2026-11-07T02:00:00-06:00' })))).toBe('10 PM – Sat, Nov 7, 2 AM')
-  })
-
-  it('says All day, and until when', () => {
     expect(timeOfDay(event('a', { allDay: true, start: '2026-11-07', end: '2026-11-07' }))).toBe('All day')
     expect(timeOfDay(event('a', { allDay: true, start: '2027-03-13', end: '2027-03-15' }))).toBe('All day, until Mon, Mar 15')
   })
 })
 
 describe('nextEvent and nextEventText', () => {
-  it('picks the event happening now, or the next to come', () => {
+  it('picks the event happening now, or the next to come, with an all-day event over only after its last day', () => {
     const over = event('over', { start: '2026-11-03T08:00:00-06:00', end: '2026-11-03T09:00:00-06:00' })
     const later = event('later', { start: '2026-11-05T18:00:00-06:00', end: '2026-11-05T21:00:00-06:00' })
     expect(nextEvent([later, over, event('tonight', {})], now)?.id).toBe('tonight')
     expect(nextEvent([over], now)).toBeNull()
+    expect(hasEnded(event('a', { allDay: true, start: '2026-11-02', end: '2026-11-03' }), now)).toBe(false)
+    expect(hasEnded(event('a', { allDay: true, start: '2026-11-01', end: '2026-11-02' }), now)).toBe(true)
   })
 
   it('says when, briefly, for the home page', () => {
@@ -119,11 +113,6 @@ describe('nextEvent and nextEventText', () => {
     expect(nextEventText(event('a', { start: '2026-11-03T14:00:00-06:00', end: '2026-11-03T17:00:00-06:00' }), now)).toBe('Build session, now')
     expect(nextEventText(event('a', { title: 'Example Regional', allDay: true, start: '2027-03-13', end: '2027-03-15' }), now)).toBe('Example Regional, Mar 13')
     expect(nextEventText(event('a', { title: 'Example Regional', allDay: true, start: '2026-11-02', end: '2026-11-04' }), now)).toBe('Example Regional, today')
-  })
-
-  it('counts an all-day event as over only after its last day', () => {
-    expect(hasEnded(event('a', { allDay: true, start: '2026-11-02', end: '2026-11-03' }), now)).toBe(false)
-    expect(hasEnded(event('a', { allDay: true, start: '2026-11-01', end: '2026-11-02' }), now)).toBe(true)
   })
 })
 
@@ -137,46 +126,48 @@ describe('plainText', () => {
 })
 
 describe('signUpLink', () => {
-  it('finds a "Sign up:" line, in upper or lower case, with or without the space', () => {
-    expect(signUpLink('Robot demo at the library.\nSign up: https://forms.gle/abc123')).toBe('https://forms.gle/abc123')
-    expect(signUpLink('signup: https://forms.gle/abc123')).toBe('https://forms.gle/abc123')
-    expect(signUpLink('SIGN UP:https://forms.gle/abc123 by Friday')).toBe('https://forms.gle/abc123')
+  it('finds the link on a "Sign up:" line, however it is written, and however Google Calendar wraps it', () => {
+    const found: [string, string, string][] = [
+      ['on its own line', 'Robot demo at the library.\nSign up: https://forms.gle/abc123', 'https://forms.gle/abc123'],
+      ['in lower case, with no space', 'signup: https://forms.gle/abc123', 'https://forms.gle/abc123'],
+      ['in capitals, with words after', 'SIGN UP:https://forms.gle/abc123 by Friday', 'https://forms.gle/abc123'],
+      ['wrapped in HTML', 'Bring a laptop.<br>Sign up: <a href="https://forms.gle/abc123">https://forms.gle/abc123</a>', 'https://forms.gle/abc123'],
+      [
+        'wrapped in HTML, with different words shown',
+        '<p>Bring a laptop.</p><p>Sign up: <a href="https://example.com/form?a=1&amp;b=2" target="_blank">the form</a></p>',
+        'https://example.com/form?a=1&b=2',
+      ],
+      ['after a non-breaking space', 'Sign up:&nbsp;<a href="https://forms.gle/abc123">https://forms.gle/abc123</a>', 'https://forms.gle/abc123'],
+      // Pasted from Google Docs or Gmail. Still https, and the redirect takes people to the form.
+      [
+        'in a Google redirect',
+        'Sign up: <a href="https://www.google.com/url?q=https://forms.gle/abc123&amp;sa=D">https://forms.gle/abc123</a>',
+        'https://www.google.com/url?q=https://forms.gle/abc123&sa=D',
+      ],
+    ]
+    for (const [label, description, link] of found) expect(signUpLink(description), label).toBe(link)
   })
 
-  it('finds a link Google Calendar wrapped in HTML, even when the words shown are different', () => {
-    expect(signUpLink('Bring a laptop.<br>Sign up: <a href="https://forms.gle/abc123">https://forms.gle/abc123</a>')).toBe('https://forms.gle/abc123')
-    expect(signUpLink('<p>Bring a laptop.</p><p>Sign up: <a href="https://example.com/form?a=1&amp;b=2" target="_blank">the form</a></p>')).toBe('https://example.com/form?a=1&b=2')
-  })
-
-  it('handles what Google Calendar adds: a non-breaking space, and links wrapped in a Google redirect', () => {
-    expect(signUpLink('Sign up:&nbsp;<a href="https://forms.gle/abc123">https://forms.gle/abc123</a>')).toBe('https://forms.gle/abc123')
-    // Pasted from Google Docs or Gmail. Still https, and the redirect takes people to the form.
-    expect(signUpLink('Sign up: <a href="https://www.google.com/url?q=https://forms.gle/abc123&amp;sa=D">https://forms.gle/abc123</a>')).toBe('https://www.google.com/url?q=https://forms.gle/abc123&sa=D')
-  })
-
-  it('ignores http and javascript links, so a bad link never becomes a button', () => {
-    expect(signUpLink('Sign up: http://forms.gle/abc123')).toBeNull()
-    expect(signUpLink('Sign up: javascript:alert(1)')).toBeNull()
-    expect(signUpLink('Sign up: <a href="javascript:alert(1)">https://forms.gle/abc123</a>')).toBeNull()
-  })
-
-  it('is null with no sign-up line', () => {
-    expect(signUpLink(null)).toBeNull()
-    expect(signUpLink('Leave from school at 6 AM.')).toBeNull()
-    expect(signUpLink('Sign up:')).toBeNull()
-    // Only a line that starts with "Sign up:" counts.
-    expect(signUpLink('Remember to sign up: https://forms.gle/abc123')).toBeNull()
+  it('is null with no sign-up line, or an http or javascript link, so a bad link never becomes a button', () => {
+    const none: [string, string | null][] = [
+      ['no description', null],
+      ['no sign-up line', 'Leave from school at 6 AM.'],
+      ['no link', 'Sign up:'],
+      ['a line that only mentions signing up', 'Remember to sign up: https://forms.gle/abc123'], // only a line that starts with "Sign up:" counts
+      ['an http link', 'Sign up: http://forms.gle/abc123'],
+      ['a javascript link', 'Sign up: javascript:alert(1)'],
+      ['a javascript link shown as https', 'Sign up: <a href="javascript:alert(1)">https://forms.gle/abc123</a>'],
+    ]
+    for (const [label, description] of none) expect(signUpLink(description), label).toBeNull()
   })
 })
 
 describe('shownDescription', () => {
-  it('leaves out the sign-up line, since the Sign up button has the link', () => {
+  it('leaves out the sign-up line, since the Sign up button has the link, but keeps one whose link was ignored', () => {
     expect(shownDescription('Robot demo at the library.\nSign up: https://forms.gle/abc123\nWear your team shirt.')).toBe('Robot demo at the library. Wear your team shirt.')
     expect(shownDescription('Bring a laptop.<br>Sign up: <a href="https://forms.gle/abc123">https://forms.gle/abc123</a>')).toBe('Bring a laptop.')
     expect(shownDescription('Sign up: https://forms.gle/abc123')).toBeNull()
-  })
-
-  it('keeps a sign-up line whose link was ignored, so nothing goes missing', () => {
+    // So nothing goes missing.
     expect(shownDescription('Sign up: http://forms.gle/abc123')).toBe('Sign up: http://forms.gle/abc123')
   })
 })
@@ -196,7 +187,10 @@ describe('loading', () => {
     expect(calendarNow().events.length).toBeGreaterThan(0)
     expect(calendarNow().error).toBeNull()
     const Tile = () => createElement('p', null, useCalendarSummary().text)
-    expect(renderToString(createElement(Tile))).toMatch(/^<p>Next: /)
+    const tile = renderToString(createElement(Tile))
+    expect(tile).toMatch(/^<p>Next: /)
+    // The next made-up event has no sign-up.
+    expect(tile).not.toContain('Sign-up open')
   })
 
   it('keeps the last events when loading stops working, and says why', async () => {
@@ -234,6 +228,7 @@ describe('sign-ups in demo mode', () => {
     await loadEvents()
   }
 
+  // The build session has no link, so this also checks that it gets no button.
   it('shows a Sign up button only on the event with a link, and not the sign-up line', async () => {
     await addOutreachWithSignUp()
     const outreach = calendarNow().events.find((e) => e.title === 'Outreach: robot demo (made up)')!
@@ -244,10 +239,6 @@ describe('sign-ups in demo mode', () => {
     expect(page).toContain('href="https://forms.gle/abc123" target="_blank"')
     expect(page).toContain('Bring your team shirt.')
     expect(page).not.toContain('Sign up:')
-  })
-
-  it('shows no Sign up button when no event has a link', async () => {
-    expect(await pageWith([event('build', { start: '2099-11-03T18:00:00-06:00', end: '2099-11-03T21:00:00-06:00' })])).not.toMatch(/>Sign up</)
   })
 
   it('shows the made-up events with both kinds of sign-up, and who is going', async () => {
@@ -275,14 +266,12 @@ async function pageWith(events: CalendarEvent[]): Promise<string> {
 }
 
 describe('chicagoTime and chicagoClock', () => {
-  it('turns a day and clock time in Chicago into a time, in winter and summer', () => {
+  it('turn a day and clock time in Chicago into a time and back, in winter and summer', () => {
     expect(chicagoTime('2026-11-03', '18:00')).toBe('2026-11-04T00:00:00.000Z')
     expect(chicagoTime('2026-07-04', '18:30')).toBe('2026-07-04T23:30:00.000Z')
     // The day the clocks go forward: 3:30 AM is already daylight time.
     expect(chicagoTime('2026-03-08', '03:30')).toBe('2026-03-08T08:30:00.000Z')
-  })
-
-  it('gives the clock time in Chicago, for the time box', () => {
+    // The clock time, for the time box.
     expect(chicagoClock(new Date('2026-11-04T00:00:00Z'))).toBe('18:00')
     expect(chicagoClock(new Date('2026-07-04T14:05:00Z'))).toBe('09:05')
   })
@@ -291,11 +280,8 @@ describe('chicagoTime and chicagoClock', () => {
 describe('the event form', () => {
   const form = (more: Partial<EventForm>): EventForm => ({ ...blankEventForm(new Date('2026-11-03T21:00:00Z')), title: 'Parent meeting', startClock: '19:00', endClock: '20:00', ...more })
 
-  it('starts on today, from 6 to 8 PM, with no sign-ups', () => {
+  it('starts on today, from 6 to 8 PM, with no sign-ups, and turns into an event, with times in Chicago', () => {
     expect(blankEventForm(now)).toMatchObject({ day: '2026-11-03', lastDay: '2026-11-03', startClock: '18:00', endClock: '20:00', signUps: 'No sign-ups' })
-  })
-
-  it('turns the form into an event, with times in Chicago', () => {
     expect(eventFromForm(form({ location: ' The shop ' }))).toEqual({
       ok: true,
       value: { title: 'Parent meeting', allDay: false, start: '2026-11-04T01:00:00.000Z', end: '2026-11-04T02:00:00.000Z', location: ' The shop ', description: '', signUps: false },
@@ -336,9 +322,11 @@ describe('the event form', () => {
   })
 })
 
-describe('adding, changing and removing events', () => {
-  const tonight = (title: string): EventForm => ({ ...blankEventForm(), title, startClock: '23:00', endClock: '23:30' })
+const tonight = (title: string): EventForm => ({ ...blankEventForm(), title, startClock: '23:00', endClock: '23:30' })
+const outreach = event('demo-outreach', { title: 'Outreach', start: '2099-11-13T18:00:00-06:00', end: '2099-11-13T20:00:00-06:00', fromApp: true, signUps: true })
+const going = () => signUpsFor(signUpsTable.rows(), outreach).map((s) => s.created_by)
 
+describe('adding, changing and removing events', () => {
   it('lets a student leader add an event, which shows straight away, then change and remove it', async () => {
     setDemoRole('leader')
     const added = await addEvent(tonight('Pizza after build'))
@@ -349,11 +337,6 @@ describe('adding, changing and removing events', () => {
     expect(await changeEvent(added.value, tonight('Pizza after build (moved)'))).toMatchObject({ ok: true })
     expect(calendarNow().events.map((e) => e.title)).toEqual(['Pizza after build (moved)'])
     expect(await removeEvent(added.value)).toEqual({ ok: true, value: null })
-    expect(calendarNow().events).toEqual([])
-  })
-
-  it("doesn't let a student add an event, and says who to ask", async () => {
-    expect(await addEvent(tonight('Pizza after build'))).toEqual({ ok: false, error: 'Only student leaders and mentors can add events. Ask one of them.' })
     expect(calendarNow().events).toEqual([])
   })
 
@@ -377,11 +360,9 @@ describe('adding, changing and removing events', () => {
 })
 
 describe('signing up in the app', () => {
-  const outreach = event('demo-outreach', { title: 'Outreach', start: '2099-11-13T18:00:00-06:00', end: '2099-11-13T20:00:00-06:00', fromApp: true, signUps: true })
-  const going = () => signUpsFor(signUpsTable.rows(), outreach).map((s) => s.created_by)
-
-  it('lets you sign up, once, and take it back', async () => {
+  it('lets you sign up, once, and take it back, listing who signed up for each event', async () => {
     expect(going()).toEqual([DEMO_PEOPLE.jordan, DEMO_PEOPLE.pat])
+    expect(signUpsFor(signUpsTable.rows(), { ...outreach, id: 'other' })).toEqual([])
     expect(await signUp(outreach)).toMatchObject({ ok: true, value: { event_id: 'demo-outreach', created_by: DEMO_PEOPLE.alex } })
     expect(going()).toEqual([DEMO_PEOPLE.jordan, DEMO_PEOPLE.pat, DEMO_PEOPLE.alex])
     expect(await signUp(outreach)).toEqual({ ok: false, error: "You're already signed up." })
@@ -396,11 +377,8 @@ describe('signing up in the app', () => {
     expect(await signUp({ ...outreach, start: '2020-11-13T18:00:00-06:00', end: '2020-11-13T20:00:00-06:00' })).toEqual({ ok: false, error: 'This event is over, so sign-ups are closed.' })
   })
 
-  it('lists who signed up for one event only', () => {
-    expect(signUpsFor(signUpsTable.rows(), { ...outreach, id: 'other' })).toEqual([])
-  })
-
-  it('lets a student leader sign someone else up and take them off', async () => {
+  it('lets a student leader, mentor or admin sign someone else up and take them off', async () => {
+    for (const role of ['leader', 'mentor', 'admin'] as const) expect(canManageSignUps({ role }), role).toBe(true)
     setDemoRole('leader')
     expect(await signUp(outreach, DEMO_PEOPLE.alex)).toMatchObject({ ok: true, value: { created_by: DEMO_PEOPLE.alex } })
     expect(going()).toEqual([DEMO_PEOPLE.jordan, DEMO_PEOPLE.pat, DEMO_PEOPLE.alex])
@@ -411,19 +389,6 @@ describe('signing up in the app', () => {
     expect(await cancelSignUp(outreach, DEMO_PEOPLE.jordan)).toEqual({ ok: false, error: "They aren't signed up for this event." })
   })
 
-  it("doesn't let a student sign someone else up or take them off", async () => {
-    expect(await signUp(outreach, DEMO_PEOPLE.morgan)).toEqual({ ok: false, error: 'Only student leaders and mentors can sign someone else up. Ask one of them.' })
-    expect(await cancelSignUp(outreach, DEMO_PEOPLE.jordan)).toEqual({ ok: false, error: 'Only student leaders and mentors can take someone else off. Ask one of them.' })
-    expect(going()).toEqual([DEMO_PEOPLE.jordan, DEMO_PEOPLE.pat])
-    // Signing yourself up is the same as leaving the person out.
-    expect(await signUp(outreach, DEMO_PEOPLE.alex)).toMatchObject({ ok: true })
-  })
-
-  it('says who can sign others up', () => {
-    expect(canManageSignUps({ role: 'student' })).toBe(false)
-    for (const role of ['leader', 'mentor', 'admin'] as const) expect(canManageSignUps({ role })).toBe(true)
-  })
-
   it("offers a leader everyone who isn't signed up yet and whose access is on, by name", () => {
     const names = notSignedUp(membersTable.rows(), signUpsTable.rows(), outreach).map((m) => m.name)
     // Jordan and Pat are signed up; Sam's access is off.
@@ -431,36 +396,45 @@ describe('signing up in the app', () => {
   })
 })
 
+// The database refuses these too (supabase/tests/calendar.test.ts and
+// calendar-signups.test.ts). Here, a student is told who to ask.
+describe('only student leaders and mentors', () => {
+  it('add events, and sign someone else up or take them off: a student is told who to ask, and nothing changes', async () => {
+    expect(canManageSignUps({ role: 'student' })).toBe(false)
+    const tries: [string, () => Promise<unknown>][] = [
+      ['add events', () => addEvent(tonight('Pizza after build'))],
+      ['sign someone else up', () => signUp(outreach, DEMO_PEOPLE.morgan)],
+      ['take someone else off', () => cancelSignUp(outreach, DEMO_PEOPLE.jordan)],
+    ]
+    for (const [doing, attempt] of tries) {
+      expect(await attempt(), doing).toEqual({ ok: false, error: expect.stringContaining(`Only student leaders and mentors can ${doing}`) })
+    }
+    expect(calendarNow().events).toEqual([])
+    expect(going()).toEqual([DEMO_PEOPLE.jordan, DEMO_PEOPLE.pat])
+    // Signing yourself up is the same as leaving the person out.
+    expect(await signUp(outreach, DEMO_PEOPLE.alex)).toMatchObject({ ok: true })
+  })
+})
+
 describe('useCalendarSummary', () => {
-  const tile = () => renderToString(createElement(() => createElement('p', null, useCalendarSummary().text)))
-
-  it('says "Sign-up open" when the next event has a sign-up link', async () => {
-    vi.resetModules()
-    const getCalendarEvents = vi.fn().mockResolvedValue({ ok: true, value: [event('outreach', { start: '2099-11-03T18:00:00-06:00', end: '2099-11-03T21:00:00-06:00', description: 'Sign up: https://forms.gle/abc123' })] })
-    vi.doMock('../../core/calendar', async (original) => ({ ...(await original<object>()), getCalendarEvents }))
-    const fresh = await import('./data')
-    fresh.resetCalendar()
-    await fresh.loadEvents()
-    expect(renderToString(createElement(() => createElement('p', null, fresh.useCalendarSummary().text)))).toMatch(/· Sign-up open<\/p>$/)
-    vi.doUnmock('../../core/calendar')
-    vi.resetModules()
-  })
-
-  it('says "Sign-up open" when the next event takes sign-ups in the app', async () => {
-    vi.resetModules()
-    const getCalendarEvents = vi.fn().mockResolvedValue({ ok: true, value: [event('outreach', { start: '2099-11-03T18:00:00-06:00', end: '2099-11-03T21:00:00-06:00', fromApp: true, signUps: true })] })
-    vi.doMock('../../core/calendar', async (original) => ({ ...(await original<object>()), getCalendarEvents }))
-    const fresh = await import('./data')
-    fresh.resetCalendar()
-    await fresh.loadEvents()
-    expect(renderToString(createElement(() => createElement('p', null, fresh.useCalendarSummary().text)))).toMatch(/· Sign-up open<\/p>$/)
-    vi.doUnmock('../../core/calendar')
-    vi.resetModules()
-  })
-
-  it("doesn't when it has none", async () => {
-    await loadEvents()
-    expect(tile()).not.toContain('Sign-up open')
+  it('says "Sign-up open" when the next event has a sign-up link, or takes sign-ups in the app', async () => {
+    const soon = { start: '2099-11-03T18:00:00-06:00', end: '2099-11-03T21:00:00-06:00' }
+    const kinds: [string, Partial<CalendarEvent>][] = [
+      ['a sign-up link', { ...soon, description: 'Sign up: https://forms.gle/abc123' }],
+      ['sign-ups in the app', { ...soon, fromApp: true, signUps: true }],
+    ]
+    for (const [kind, more] of kinds) {
+      vi.resetModules()
+      const getCalendarEvents = vi.fn().mockResolvedValue({ ok: true, value: [event('outreach', more)] })
+      vi.doMock('../../core/calendar', async (original) => ({ ...(await original<object>()), getCalendarEvents }))
+      const fresh = await import('./data')
+      fresh.resetCalendar()
+      await fresh.loadEvents()
+      expect(renderToString(createElement(() => createElement('p', null, fresh.useCalendarSummary().text))), kind).toMatch(/· Sign-up open<\/p>$/)
+      vi.doUnmock('../../core/calendar')
+      vi.resetModules()
+    }
+    // With none, it doesn't: see "loads the made-up events" above.
   })
 })
 

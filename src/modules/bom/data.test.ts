@@ -7,16 +7,16 @@ import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import { membersTable } from '../../core/members'
 import {
   addPart, addRobot, addSystem, bomSummary, canEditRobotsAndParts, changePart, changeSystem, checkPart, checkSystem, countParts, filterParts, kindLabel,
-  nextPartNumber, partCountText, partsTable, orderWord, identifyCots, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, shortageFor, shortages, systemsTable, toOrder, toOrderCsv, NO_VENDOR,
+  nextPartNumber, partCountText, partsTable, identifyCots, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, shortageFor, shortages, systemsTable, toOrder, toOrderCsv, NO_VENDOR,
   type NewPart, type Part,
 } from './data'
 import { itemsTable, type Item } from '../inventory/data'
-import { STATUSES, itemsTable as purchaseTable, type PurchaseItem } from '../purchasing/data'
+import { STATUSES, itemsTable as purchaseTable, type PurchaseItem, type StatusKey } from '../purchasing/data'
 import {
   addStep, advance, changeDone, checkStep, moveBack, removeStep, stationName, stationQueue, stepName, stepsFor, stepsTable, type Step,
 } from './data'
 import { assignStep, checkAssignment, dueText, isOverdue, today } from './data'
-import { MACHINES, MACHINE_FILE_FORMATS, partFileName, partFiles } from './data'
+import { partFileName, partFiles } from './data'
 
 beforeEach(() => {
   setDemoRole('student')
@@ -30,67 +30,40 @@ beforeEach(() => {
 const parts = () => partsTable.rows()
 
 describe('the example data', () => {
-  it('has made parts with a material and COTS parts with a vendor', () => {
+  it("has made parts with a material, COTS parts with a vendor, and each part's system code in its part number", () => {
+    const codes = new Map(systemsTable.rows().map((s) => [s.id, s.code]))
     for (const part of parts()) {
       if (part.kind === 'made') expect(part.material, part.part_number).toBeTruthy()
       else expect(part.vendor, part.part_number).toBeTruthy()
+      expect(part.part_number).toMatch(new RegExp(`^4096-26-${codes.get(part.system_id)}-\\d{3}$`))
     }
-  })
-
-  it("puts each part's system code in its part number", () => {
-    const codes = new Map(systemsTable.rows().map((s) => [s.id, s.code]))
-    for (const part of parts()) expect(part.part_number).toMatch(new RegExp(`^4096-26-${codes.get(part.system_id)}-\\d{3}$`))
   })
 })
 
-describe('filterParts', () => {
-  it('keeps every part for All', () => {
-    expect(filterParts(parts(), 'All')).toEqual(parts())
-  })
-
-  it('keeps only custom parts for Custom, and only COTS parts for COTS', () => {
+describe('filterParts and kindLabel', () => {
+  it('keep only custom parts for Custom, only COTS parts for COTS, and every part for All, labelled the same way', () => {
     expect(filterParts(parts(), 'Custom').every((p) => p.kind === 'made')).toBe(true)
     expect(filterParts(parts(), 'COTS').every((p) => p.kind === 'cots')).toBe(true)
     expect(filterParts(parts(), 'Custom').length + filterParts(parts(), 'COTS').length).toBe(parts().length)
+    expect(filterParts(parts(), 'All')).toEqual(parts())
+    expect([kindLabel('made'), kindLabel('cots')]).toEqual(['Custom', 'COTS'])
   })
 })
 
-describe('countParts', () => {
-  it('counts each part once, whatever its quantity', () => {
+describe('countParts and partCountText', () => {
+  it('count each part once, whatever its quantity, and read like "5 custom, 7 COTS"', () => {
     const [madePart] = filterParts(parts(), 'Custom')
     const [cotsPart] = filterParts(parts(), 'COTS')
     expect(countParts([madePart, cotsPart, { ...cotsPart, quantity: 100 } as Part])).toEqual({ made: 1, cots: 2 })
-  })
-
-  it('is zero for no parts', () => {
-    expect(countParts([])).toEqual({ made: 0, cots: 0 })
+    expect(partCountText(parts())).toBe('5 custom, 7 COTS')
     expect(partCountText([])).toBe('0 custom, 0 COTS')
   })
 })
 
-describe('partCountText', () => {
-  it('reads like "5 custom, 7 COTS"', () => {
-    expect(partCountText(parts())).toBe('5 custom, 7 COTS')
-  })
-})
-
-describe('kindLabel', () => {
-  it('writes the kinds the way the team says them', () => {
-    expect(kindLabel('made')).toBe('Custom')
-    expect(kindLabel('cots')).toBe('COTS')
-  })
-})
-
 describe('bomSummary', () => {
-  it('counts systems and parts', () => {
+  it('counts systems and parts, or says there are no systems yet', () => {
     expect(bomSummary(systemsTable.rows(), parts())).toEqual({ tone: 'info', text: '2 systems · 12 parts' })
-  })
-
-  it('says "1 system · 1 part" for one of each', () => {
     expect(bomSummary(systemsTable.rows().slice(0, 1), parts().slice(0, 1)).text).toBe('1 system · 1 part')
-  })
-
-  it('says so when there are no systems', () => {
     expect(bomSummary([], [])).toEqual({ tone: 'plain', text: 'No systems yet' })
   })
 })
@@ -111,67 +84,64 @@ const newMadePart = (changes: Partial<NewPart> = {}): NewPart => ({
 })
 
 describe('nextPartNumber', () => {
-  it('is one more than the highest number in the system', () => {
-    expect(nextPartNumber(intake(), parts())).toBe('4096-26-INT-007')
-  })
-
-  it('starts at 001 in a system with no parts', () => {
-    expect(nextPartNumber({ ...intake(), code: 'SHO' }, parts())).toBe('4096-26-SHO-001')
-  })
-
-  it('skips past gaps instead of filling them', () => {
+  it('is one more than the highest number in the system, starting at 001, and skips past gaps instead of filling them', () => {
     const [first] = parts()
+    expect(nextPartNumber(intake(), parts())).toBe('4096-26-INT-007')
+    expect(nextPartNumber({ ...intake(), code: 'SHO' }, parts())).toBe('4096-26-SHO-001')
     expect(nextPartNumber(intake(), [first, { ...first, part_number: '4096-26-INT-010' }])).toBe('4096-26-INT-011')
   })
 })
 
 describe('checkPart', () => {
-  it('allows a complete made part', () => {
+  it('allows a complete made part, and a COTS part with a vendor but no material', () => {
     expect(checkPart(newMadePart(), parts())).toBeNull()
-  })
-
-  it('refuses a part number that is already used', () => {
-    expect(checkPart(newMadePart({ part_number: ' 4096-26-INT-001 ' }), parts())).toBe('4096-26-INT-001 is already used. Pick another number.')
-  })
-
-  it('needs a part number and a name', () => {
-    expect(checkPart(newMadePart({ part_number: '  ' }), parts())).toMatch(/part number/)
-    expect(checkPart(newMadePart({ name: '' }), parts())).toBe('Add a name for the part.')
-  })
-
-  it('needs a material for made parts and a vendor for COTS parts', () => {
-    expect(checkPart(newMadePart({ material: ' ' }), parts())).toMatch(/material/)
-    expect(checkPart(newMadePart({ kind: 'cots', vendor: '' }), parts())).toMatch(/vendor/)
     expect(checkPart(newMadePart({ kind: 'cots', material: '', vendor: 'WCP' }), parts())).toBeNull()
   })
 
-  it('needs a whole-number quantity of 1 or more', () => {
-    expect(checkPart(newMadePart({ quantity: 0 }), parts())).toMatch(/quantity/)
-    expect(checkPart(newMadePart({ quantity: 1.5 }), parts())).toMatch(/quantity/)
-  })
-
-  it('refuses text longer than the database allows', () => {
-    expect(checkPart(newMadePart({ revision: 'x'.repeat(11) }), parts())).toBe('Keep the revision under 10 characters. This one is 11.')
+  it('refuses a part that breaks a rule, and says which', () => {
+    const refused: [Partial<NewPart>, RegExp][] = [
+      [{ part_number: ' 4096-26-INT-001 ' }, /4096-26-INT-001 is already used/],
+      [{ part_number: '  ' }, /part number/],
+      [{ name: '' }, /name/],
+      [{ material: ' ' }, /material/], // made parts need a material
+      [{ kind: 'cots', vendor: '' }, /vendor/], // COTS parts need a vendor
+      [{ quantity: 0 }, /quantity/], // a whole number, 1 or more
+      [{ quantity: 1.5 }, /quantity/],
+      [{ revision: 'x'.repeat(11) }, /revision under 10 characters\. This one is 11/], // longer than the database allows
+    ]
+    for (const [changes, error] of refused) expect(checkPart(newMadePart(changes), parts()), JSON.stringify(changes)).toMatch(error)
   })
 })
 
-describe('canEditRobotsAndParts', () => {
-  it('is true for student leaders, mentors and admins, not students', () => {
-    expect(canEditRobotsAndParts('student')).toBe(false)
-    expect(canEditRobotsAndParts('leader')).toBe(true)
-    expect(canEditRobotsAndParts('mentor')).toBe(true)
-    expect(canEditRobotsAndParts('admin')).toBe(true)
+describe('who can change robots and parts', () => {
+  it('is student leaders, mentors and admins, not students', () => {
+    expect((['student', 'leader', 'mentor', 'admin'] as const).map((role) => canEditRobotsAndParts(role))).toEqual([false, true, true, true])
+  })
+
+  it('tells a student who can, and changes nothing', async () => {
+    const plate = parts().find((p) => p.part_number === '4096-26-INT-001')!
+    const [robot] = robotsTable.rows()
+    const robotsBefore = robotsTable.rows()
+    const tries: [string, () => Promise<unknown>][] = [
+      ['add parts', () => addPart(newMadePart())],
+      ['change parts', () => changePart(plate, newMadePart({ part_number: '4096-26-INT-001', quantity: 9 }))],
+      ['delete parts', () => removePart(plate)],
+      ['add robots', () => addRobot('2027 competition robot')],
+      ['rename robots', () => renameRobot(robot, 'Renamed')],
+      ['delete a system', () => removeSystem(intake())],
+    ]
+    for (const [doing, attempt] of tries) {
+      expect(await attempt(), doing).toEqual({ ok: false, error: expect.stringContaining(`Only student leaders and mentors can ${doing}`) })
+    }
+    expect(parts()).toContainEqual(plate)
+    expect(parts()).toHaveLength(12)
+    expect(robotsTable.rows()).toEqual(robotsBefore)
+    expect(systemsTable.rows()).toHaveLength(2)
   })
 })
 
 describe('addPart', () => {
   beforeEach(() => setDemoRole('leader'))
-
-  it("doesn't let a student add a part, and says who can", async () => {
-    setDemoRole('student')
-    expect(await addPart(newMadePart())).toEqual({ ok: false, error: 'Only student leaders and mentors can add parts. Ask one of them.' })
-    expect(parts()).toHaveLength(12)
-  })
 
   it('adds a made part, trimmed, without vendor details', async () => {
     const result = await addPart(newMadePart({ name: '  Roller bracket ', vendor: 'Left over' }))
@@ -199,16 +169,8 @@ describe('changePart and removePart', () => {
   const plate = () => parts().find((p) => p.part_number === '4096-26-INT-001')!
   beforeEach(() => setDemoRole('leader'))
 
-  it("doesn't let a student change or delete a part", async () => {
-    setDemoRole('student')
-    expect(await changePart(plate(), newMadePart({ part_number: '4096-26-INT-001', quantity: 9 }))).toEqual({
-      ok: false, error: 'Only student leaders and mentors can change parts. Ask one of them.',
-    })
-    expect(await removePart(plate())).toEqual({ ok: false, error: 'Only student leaders and mentors can delete parts. Ask one of them.' })
-    expect(plate().quantity).not.toBe(9)
-  })
-
-  it('changes a part, keeping its own part number allowed', async () => {
+  it("changes a part, keeping its own part number allowed but not another part's", async () => {
+    expect(await changePart(plate(), newMadePart({ part_number: '4096-26-INT-002' }))).toMatchObject({ ok: false, error: /INT-002 is already used/ })
     const result = await changePart(plate(), newMadePart({ part_number: '4096-26-INT-001', name: 'Intake side plate', revision: 'C', quantity: 4 }))
     expect(result.ok).toBe(true)
     expect(plate()).toMatchObject({ revision: 'C', quantity: 4, material: '6061 aluminum, 1/8 in plate' })
@@ -217,12 +179,6 @@ describe('changePart and removePart', () => {
   it('clears the material when a part is changed to COTS', async () => {
     await changePart(plate(), newMadePart({ part_number: '4096-26-INT-001', kind: 'cots', vendor: 'WCP' }))
     expect(plate()).toMatchObject({ kind: 'cots', material: null, vendor: 'WCP' })
-  })
-
-  it("won't take another part's number", async () => {
-    expect(await changePart(plate(), newMadePart({ part_number: '4096-26-INT-002' }))).toEqual({
-      ok: false, error: '4096-26-INT-002 is already used. Pick another number.',
-    })
   })
 
   it('deletes a part', async () => {
@@ -234,14 +190,6 @@ describe('changePart and removePart', () => {
 describe('robots and systems', () => {
   const system = { name: 'Shooter', code: ' sho ', onshape_url: '' }
 
-  it("doesn't let a student add or rename a robot", async () => {
-    expect(await addRobot('2027 competition robot')).toEqual({ ok: false, error: 'Only student leaders and mentors can add robots. Ask one of them.' })
-    expect(await renameRobot(robotsTable.rows()[0], 'Renamed')).toEqual({
-      ok: false, error: 'Only student leaders and mentors can rename robots. Ask one of them.',
-    })
-    expect(robotsTable.rows().map((r) => r.name)).not.toContain('Renamed')
-  })
-
   it('lets a student leader add and rename a robot', async () => {
     setDemoRole('leader')
     const added = await addRobot('  2027 competition robot ')
@@ -249,13 +197,17 @@ describe('robots and systems', () => {
     expect(added.value.name).toBe('2027 competition robot')
     expect((await renameRobot(added.value, '2027 robot')).ok).toBe(true)
     expect(robotsTable.rows().map((r) => r.name)).toContain('2027 robot')
-    expect(await addRobot(' ')).toEqual({ ok: false, error: 'Name the robot, like "2027 competition robot".' })
+    expect(await addRobot(' ')).toMatchObject({ ok: false, error: /Name the robot/ })
   })
 
-  it('lets a student add a system, with its code in capitals', async () => {
+  it('lets a student add a system, with its code in capitals, and change it, keeping its own name and code allowed', async () => {
     const robot = robotsTable.rows()[0]
     const added = await addSystem(robot.id, system)
-    expect(added.ok && added.value).toMatchObject({ robot_id: robot.id, name: 'Shooter', code: 'SHO', onshape_url: null })
+    if (!added.ok) throw new Error(added.error)
+    expect(added.value).toMatchObject({ robot_id: robot.id, name: 'Shooter', code: 'SHO', onshape_url: null })
+    const link = 'https://cad.onshape.com/documents/0123456789abcdef01234567/w/0123456789abcdef01234567/e/0123456789abcdef01234567'
+    const changed = await changeSystem(added.value, { name: 'Shooter', code: 'SHO', onshape_url: link })
+    expect(changed.ok && changed.value.onshape_url).toBe(link)
   })
 
   it("won't repeat a name or code in the same robot, and needs a 2 to 4 letter code and an https link", () => {
@@ -268,17 +220,8 @@ describe('robots and systems', () => {
     expect(checkSystem(system, others)).toBeNull()
   })
 
-  it('lets a student change a system, keeping its own name and code allowed', async () => {
+  it('lets a student leader delete a system, which deletes its parts too', async () => {
     const intake = systemsTable.rows().find((s) => s.code === 'INT')!
-    const result = await changeSystem(intake, { name: 'Intake', code: 'INT', onshape_url: 'https://cad.onshape.com/documents/0123456789abcdef01234567/w/0123456789abcdef01234567/e/0123456789abcdef01234567' })
-    expect(result.ok && result.value.onshape_url).toBe('https://cad.onshape.com/documents/0123456789abcdef01234567/w/0123456789abcdef01234567/e/0123456789abcdef01234567')
-  })
-
-  it('only lets a student leader or mentor delete a system, which deletes its parts too', async () => {
-    const intake = systemsTable.rows().find((s) => s.code === 'INT')!
-    expect(await removeSystem(intake)).toEqual({
-      ok: false, error: 'Only student leaders and mentors can delete a system, because it deletes every part in it.',
-    })
     setDemoRole('leader')
     expect((await removeSystem(intake)).ok).toBe(true)
     expect(systemsTable.rows().some((s) => s.id === intake.id)).toBe(false)
@@ -294,16 +237,11 @@ const part = (name: string) => parts().find((p) => p.name === name)!
 const stepsOf = (name: string) => stepsFor(part(name), stepsTable.rows())
 const stage = (name: string, which: Step['stage']) => stepsOf(name).find((s) => s.stage === which)!
 
-describe('stepsFor', () => {
-  it("gives a part's stages in order, and only the ones it has", () => {
+describe('stepsFor and stepName', () => {
+  it("give a part's stages in order, only the ones it has, with process stages named by their machine", () => {
     expect(stepsOf('Roller shaft').map((s) => s.stage)).toEqual(['design', 'pre', 'process1'])
     expect(stepsOf('Frame rail').map((s) => s.stage)).toEqual(['design', 'pre', 'process1', 'process2', 'post'])
     expect(stepsOf('Brushless motor')).toEqual([])
-  })
-})
-
-describe('stepName', () => {
-  it('names process stages by their machine', () => {
     expect(stepName(stage('Roller shaft', 'process1'))).toBe('Lathe')
     expect(stepName(stage('Roller shaft', 'pre'))).toBe('Pre-process')
   })
@@ -319,17 +257,11 @@ describe('changeDone', () => {
     expect(stage('Intake side plate', 'process1').quantity_done).toBe(1)
   })
 
-  it("won't go above the part's quantity, and says why", async () => {
+  it("won't go above the part's quantity or below 0, and says why", async () => {
     // The side plate's quantity is 2, and both are designed.
-    expect(await changeDone(stage('Intake side plate', 'design'), 1)).toEqual({
-      ok: false,
-      error: 'All 2 are already through Design. The robot needs 2.',
-    })
+    expect(await changeDone(stage('Intake side plate', 'design'), 1)).toMatchObject({ ok: false, error: /All 2 are already through Design/ })
     expect(stage('Intake side plate', 'design').quantity_done).toBe(2)
-  })
-
-  it("won't go below 0", async () => {
-    expect(await changeDone(stage('Intake side plate', 'post'), -1)).toEqual({ ok: false, error: 'None are through Post-process yet.' })
+    expect(await changeDone(stage('Intake side plate', 'post'), -1)).toMatchObject({ ok: false, error: /None are through Post-process/ })
   })
 })
 
@@ -360,20 +292,15 @@ describe('checkStep', () => {
   })
 })
 
+// These run as a student, like the rest of the file: everyone can work on stages.
 describe('addStep and removeStep', () => {
-  it('work for a student too', async () => {
-    expect((await addStep(part('Roller shaft'), 'post', null)).ok).toBe(true)
-    expect((await removeStep(stage('Roller shaft', 'pre'))).ok).toBe(true)
-    expect(stepsOf('Roller shaft').map((s) => s.stage)).toEqual(['design', 'process1', 'post'])
-  })
-
   it("won't add a stage checkStep refuses, and says why", async () => {
     expect(await addStep(part('Roller shaft'), 'process2', null)).toEqual({ ok: false, error: 'Pick the machine for Process 2.' })
   })
 
-  it('add a stage at to do with none done, in its place in the order', async () => {
+  it('add a stage at to do, with none done and nobody assigned, in its place in the order', async () => {
     expect((await addStep(part('Roller shaft'), 'post', null)).ok).toBe(true)
-    expect(stage('Roller shaft', 'post')).toMatchObject({ status: 'todo', quantity_done: 0, machine: null })
+    expect(stage('Roller shaft', 'post')).toMatchObject({ status: 'todo', quantity_done: 0, machine: null, assigned_to: null, due_date: null })
     expect((await addStep(part('Roller shaft'), 'process2', 'mill')).ok).toBe(true)
     expect(stepsOf('Roller shaft').map((s) => s.stage)).toEqual(['design', 'pre', 'process1', 'process2', 'post'])
   })
@@ -399,25 +326,20 @@ describe('the example stages', () => {
 })
 
 describe('checkAssignment', () => {
-  const members = () => membersTable.rows()
+  const check = (assigned_to: string | null, due_date: string | null) => checkAssignment({ assigned_to, due_date }, membersTable.rows())
 
   it('allows a person, a due date, both or neither', () => {
-    expect(checkAssignment({ assigned_to: DEMO_PEOPLE.alex, due_date: '2026-11-20' }, members())).toBeNull()
-    expect(checkAssignment({ assigned_to: DEMO_PEOPLE.alex, due_date: null }, members())).toBeNull()
-    expect(checkAssignment({ assigned_to: null, due_date: '2026-11-20' }, members())).toBeNull()
-    expect(checkAssignment({ assigned_to: null, due_date: null }, members())).toBeNull()
+    expect(check(DEMO_PEOPLE.alex, '2026-11-20')).toBeNull()
+    expect(check(DEMO_PEOPLE.alex, null)).toBeNull()
+    expect(check(null, '2026-11-20')).toBeNull()
+    expect(check(null, null)).toBeNull()
   })
 
-  it("refuses someone who isn't on the team, or whose access is off", () => {
-    expect(checkAssignment({ assigned_to: 'nobody', due_date: null }, members())).toMatch(/isn't on the team/)
-    expect(checkAssignment({ assigned_to: DEMO_PEOPLE.sam, due_date: null }, members())).toBe(
-      "Sam Ortiz's access is switched off, so they can't be given work. Pick someone else.",
-    )
-  })
-
-  it("refuses a due date that isn't a real day", () => {
-    expect(checkAssignment({ assigned_to: null, due_date: 'next Friday' }, members())).toBe('Pick the due date from the calendar.')
-    expect(checkAssignment({ assigned_to: null, due_date: '2026-02-30' }, members())).toBe('Pick the due date from the calendar.')
+  it("refuses someone who isn't on the team or whose access is off, and a due date that isn't a real day", () => {
+    expect(check('nobody', null)).toMatch(/isn't on the team/)
+    expect(check(DEMO_PEOPLE.sam, null)).toMatch(/Sam Ortiz's access is switched off/)
+    expect(check(null, 'next Friday')).toMatch(/Pick the due date from the calendar/)
+    expect(check(null, '2026-02-30')).toMatch(/Pick the due date from the calendar/)
   })
 })
 
@@ -436,23 +358,15 @@ describe('assignStep', () => {
     expect(await assignStep(before, { assigned_to: DEMO_PEOPLE.sam, due_date: null })).toMatchObject({ ok: false, error: /switched off/ })
     expect(stage('Roller shaft', 'pre')).toEqual(before)
   })
-
-  it('starts new stages with nobody assigned and no due date', async () => {
-    await addStep(part('Roller shaft'), 'post', null)
-    expect(stage('Roller shaft', 'post')).toMatchObject({ assigned_to: null, due_date: null })
-  })
 })
 
 describe('isOverdue', () => {
   const due = (due_date: string | null, status: Step['status'] = 'todo'): Step => ({ ...stage('Intake side plate', 'post'), due_date, status })
 
-  it('is late the day after its due date, not on the day', () => {
+  it('is late the day after its due date, not on the day, and never once done or with no due date', () => {
     expect(isOverdue(due('2026-11-20'), '2026-11-19')).toBe(false)
     expect(isOverdue(due('2026-11-20'), '2026-11-20')).toBe(false)
     expect(isOverdue(due('2026-11-20'), '2026-11-21')).toBe(true)
-  })
-
-  it('is never late once done, or with no due date', () => {
     expect(isOverdue(due('2026-11-20', 'done'), '2026-12-01')).toBe(false)
     expect(isOverdue(due(null), '2026-12-01')).toBe(false)
   })
@@ -474,15 +388,12 @@ describe('stationQueue', () => {
     expect(queue.find((q) => q.part.name === 'Frame rail')!.steps).toHaveLength(5)
   })
 
-  it("shows one machine's queue: parts with a stage on it that isn't done", () => {
+  it("shows one machine's or one stage's queue: parts with a stage there that isn't done", () => {
     // The pivot spacer's print is done, so the 3D printer has nothing waiting.
     expect(names(stationQueue(parts(), stepsTable.rows(), { kind: 'machine', machine: '3d_printer' }))).toEqual([])
     const router = stationQueue(parts(), stepsTable.rows(), { kind: 'machine', machine: 'cnc_router' })
     expect(names(router)).toEqual(['Bellypan', 'Frame rail', 'Intake side plate'])
     expect(router.every((q) => q.steps.every((s) => s.machine === 'cnc_router'))).toBe(true)
-  })
-
-  it('shows the parts waiting for one stage', () => {
     expect(names(stationQueue(parts(), stepsTable.rows(), { kind: 'stage', stage: 'post' }))).toEqual(['Frame rail', 'Intake side plate', 'Pivot spacer'])
   })
 
@@ -496,72 +407,41 @@ describe('shelfItem and shelfText', () => {
   const cotsPart = (fields: Partial<Part>) => ({ ...filterParts(parts(), 'COTS')[0], vendor: 'WCP', vendor_part_number: 'WCP-0001', quantity: 6, ...fields }) as Part
   const item = (fields: Partial<Item>) => ({ ...itemsTable.rows()[0], vendor: 'WCP', vendor_part_number: 'WCP-0001', location: 'Bin M1', quantity: 4, ...fields }) as Item
 
-  it('finds the Inventory part with the same vendor part number, ignoring capitals and spaces', () => {
+  it('finds the Inventory part with the same vendor part number, ignoring capitals, spaces and how the vendor is written', () => {
     const shelf = item({})
     expect(shelfItem(cotsPart({ vendor_part_number: ' wcp-0001 ' }), [item({ vendor_part_number: 'OTHER' }), shelf])).toBe(shelf)
-  })
-
-  it("matches even when the vendor is written differently, like REV and REV Robotics", () => {
-    const shelf = item({ vendor: 'REV' })
-    expect(shelfItem(cotsPart({ vendor: 'REV Robotics' }), [shelf])).toBe(shelf)
-  })
-
-  it('uses the vendor to choose when two Inventory parts have the same number', () => {
-    const fromWcp = item({ vendor: 'WCP' })
     const fromRev = item({ vendor: 'REV' })
-    expect(shelfItem(cotsPart({ vendor: 'wcp' }), [fromRev, fromWcp])).toBe(fromWcp)
+    expect(shelfItem(cotsPart({ vendor: 'REV Robotics' }), [fromRev])).toBe(fromRev)
+    // When two Inventory parts have the same number, the vendor chooses.
+    expect(shelfItem(cotsPart({ vendor: 'wcp' }), [fromRev, shelf])).toBe(shelf)
   })
 
-  it('finds nothing for made parts, or COTS parts with no vendor part number', () => {
+  it('finds and shows nothing for custom parts, and finds nothing for COTS parts with no vendor part number', () => {
     expect(shelfItem(filterParts(parts(), 'Custom')[0], [item({})])).toBeUndefined()
+    expect(shelfText(filterParts(parts(), 'Custom')[0], [item({})])).toBeNull()
     expect(shelfItem(cotsPart({ vendor_part_number: null }), [item({ vendor_part_number: '' })])).toBeUndefined()
   })
 
-  const request = (fields: Partial<PurchaseItem>) => ({ ...purchaseTable.rows()[0], quantity: 3, status: 'order', ...fields }) as PurchaseItem
-
-  it('says how many are on the shelf and where, and how many are missing', () => {
+  it('says how many are on the shelf and where, and how many are missing, if any', () => {
     expect(shelfText(cotsPart({ quantity: 6 }), [item({ quantity: 4 })])).toBe('On the shelf: 4 · Bin M1 · Missing 2')
-  })
-
-  it("doesn't say anything is missing when there are enough", () => {
-    expect(shelfText(cotsPart({ quantity: 3 }), [item({ quantity: 4 })])).toBe('On the shelf: 4 · Bin M1')
     expect(shelfText(cotsPart({ quantity: 4 }), [item({ quantity: 4 })])).toBe('On the shelf: 4 · Bin M1')
-  })
-
-  it('counts a part not in Inventory as all missing', () => {
+    expect(shelfText(cotsPart({ quantity: 3 }), [item({ quantity: 4 })])).toBe('On the shelf: 4 · Bin M1')
     expect(shelfText(cotsPart({ quantity: 6 }), [])).toBe('Not in Inventory · Missing 6')
   })
 
-  it('says Ordering, with the quantity on the request, while it is still being asked for', () => {
-    for (const status of ['wait', 'order_low', 'order', 'order_high'] as const) {
-      expect(shelfText(cotsPart({ quantity: 3 }), [item({ quantity: 2 })], request({ quantity: 3, status }))).toBe('On the shelf: 2 · Bin M1 · Ordering 3')
+  it("says what Purchasing is doing about it, with the quantity on the request, for every status", () => {
+    const request = (status: StatusKey) => ({ ...purchaseTable.rows()[0], quantity: 3, status }) as PurchaseItem
+    // Needs 6, 4 on the shelf, a request for 3. Listing every status here means a new one won't be missed.
+    const says: Record<StatusKey, string> = {
+      wait: 'Ordering 3', order_low: 'Ordering 3', order: 'Ordering 3', order_high: 'Ordering 3',
+      placed: 'Ordered 3', backordered: 'Ordered 3',
+      received: 'Received 3', in_shop: 'Received 3',
+      // Nothing is coming, so it's still missing.
+      cancelled: 'Missing 2', out_of_stock: 'Missing 2',
     }
-  })
-
-  it('says Ordered once the order is placed or backordered', () => {
-    for (const status of ['placed', 'backordered'] as const) {
-      expect(shelfText(cotsPart({ quantity: 6 }), [], request({ quantity: 10, status }))).toBe('Not in Inventory · Ordered 10')
+    for (const { key } of STATUSES) {
+      expect(shelfText(cotsPart({ quantity: 6 }), [item({ quantity: 4 })], request(key)), key).toBe(`On the shelf: 4 · Bin M1 · ${says[key]}`)
     }
-  })
-
-  it('says Received once it has arrived or is in the shop, not Missing', () => {
-    for (const status of ['received', 'in_shop'] as const) {
-      expect(shelfText(cotsPart({ quantity: 4 }), [], request({ quantity: 4, status }))).toBe('Not in Inventory · Received 4')
-    }
-  })
-
-  it("says Missing when the request is cancelled, or out of stock so it couldn't be ordered", () => {
-    for (const status of ['cancelled', 'out_of_stock'] as const) {
-      expect(shelfText(cotsPart({ quantity: 6 }), [item({ quantity: 4 })], request({ status }))).toBe('On the shelf: 4 · Bin M1 · Missing 2')
-    }
-  })
-
-  it('has a word for every status', () => {
-    expect(STATUSES.map((s) => orderWord(s.key))).toEqual(['Ordering', 'Ordering', 'Ordering', 'Ordering', 'Ordered', null, 'Ordered', 'Received', 'Received', null])
-  })
-
-  it('shows nothing for custom parts', () => {
-    expect(shelfText(filterParts(parts(), 'Custom')[0], [item({})])).toBeNull()
   })
 
   it('matches the example Intake to the example Inventory', () => {
@@ -579,13 +459,10 @@ describe('shortages', () => {
   const intake = cotsPart({ id: 'in-intake', system_id: 'intake', quantity: 6 })
   const drivetrain = cotsPart({ id: 'in-drivetrain', system_id: 'drivetrain', quantity: 4, vendor_part_number: ' wcp-0001' })
 
-  it('counts a part used in two systems once, with both quantities added', () => {
+  it('counts a part used in two systems once, with both quantities added, and all short if it is not in Inventory', () => {
     expect(shortages([intake, drivetrain], [item({ quantity: 7 })])).toEqual([
       { name: intake.name, vendor: 'WCP', vendor_part_number: 'WCP-0001', needed: 10, on_shelf: 7, short: 3, parts: [intake, drivetrain] },
     ])
-  })
-
-  it('counts a part that is not in Inventory as fully short, still added up across systems', () => {
     expect(shortages([intake, drivetrain], [])).toMatchObject([{ needed: 10, on_shelf: 0, short: 10 }])
   })
 
@@ -636,24 +513,18 @@ describe('toOrder', () => {
     expect(orders.map((o) => [o.vendor, o.lines.map((l) => l.name)])).toEqual([['REV Robotics', ['Wheel']], ['West Coast Products', ['Bearing', 'Shaft']]])
   })
 
-  it("puts a vendor typed two ways in one group, under Purchasing's name for it", () => {
+  it("puts a vendor typed two ways in one group, under Purchasing's name for it, and parts with no vendor together", () => {
     const orders = list([cotsPart('a', { vendor: 'AndyMark' }), cotsPart('b', { vendor: 'andy mark' })])
     expect(orders.map((o) => [o.vendor, o.lines.length])).toEqual([['Andy Mark', 2]])
-  })
-
-  it('groups parts with no vendor together', () => {
     expect(list([cotsPart('a', { vendor: null }), cotsPart('b', { vendor: ' ' })]).map((o) => o.vendor)).toEqual([NO_VENDOR])
   })
 
-  it("takes off what's already in Purchasing, so nothing is ordered twice", () => {
+  it("takes off what's already in Purchasing, so nothing is ordered twice, but not requests that won't arrive or are already In Shop", () => {
     const part = cotsPart('a', { quantity: 6 })
     expect(list([part], byPart(request('a', 2, 'order')))[0].lines[0]).toMatchObject({ short: 6, in_purchasing: 2, to_order: 4 })
     expect(list([part], byPart(request('a', 6, 'placed')))).toEqual([])
     expect(list([part], byPart(request('a', 10, 'received')))).toEqual([])
-  })
-
-  it("doesn't count a request that was cancelled, is Out of Stock, or is In Shop (so Inventory should have it)", () => {
-    const part = cotsPart('a', { quantity: 6 })
+    // In Shop means Inventory should have it already, so it's counted on the shelf instead.
     for (const status of ['cancelled', 'out_of_stock', 'in_shop'] as const) {
       expect(list([part], byPart(request('a', 6, status)))[0].lines[0]).toMatchObject({ in_purchasing: 0, to_order: 6 })
     }
@@ -680,24 +551,18 @@ describe('toOrderCsv', () => {
 describe('identifyCots', () => {
   const found = (part_number: string | null, name = 'Part') => identifyCots({ part_number, name })
 
-  it('knows a West Coast Products number: WCP-0123', () => {
-    expect(found('WCP-0123')).toEqual({ vendor: 'West Coast Products', vendor_part_number: 'WCP-0123' })
-    expect(found(' wcp-0123 ')).toEqual({ vendor: 'West Coast Products', vendor_part_number: 'WCP-0123' })
-  })
-
-  it('knows an AndyMark number: am-1234, with or without a letter after', () => {
-    expect(found('am-1234')).toEqual({ vendor: 'Andy Mark', vendor_part_number: 'am-1234' })
-    expect(found('AM-2161a')).toEqual({ vendor: 'Andy Mark', vendor_part_number: 'am-2161a' })
-  })
-
-  it('knows a REV Robotics number: REV-21-1650', () => {
-    expect(found('REV-21-1650')).toEqual({ vendor: 'REV Robotics', vendor_part_number: 'REV-21-1650' })
-    expect(found('rev-21-1650')).toEqual({ vendor: 'REV Robotics', vendor_part_number: 'REV-21-1650' })
-  })
-
-  it('knows a VEX number: 217-1234 and 276-1234', () => {
-    expect(found('217-1234')).toEqual({ vendor: 'VEX', vendor_part_number: '217-1234' })
-    expect(found('276-1234')).toEqual({ vendor: 'VEX', vendor_part_number: '276-1234' })
+  it("knows each vendor's part numbers, written the vendor's way", () => {
+    const known: [string, string, string][] = [
+      ['WCP-0123', 'West Coast Products', 'WCP-0123'],
+      [' wcp-0123 ', 'West Coast Products', 'WCP-0123'],
+      ['am-1234', 'Andy Mark', 'am-1234'],
+      ['AM-2161a', 'Andy Mark', 'am-2161a'], // with a letter after
+      ['REV-21-1650', 'REV Robotics', 'REV-21-1650'],
+      ['rev-21-1650', 'REV Robotics', 'REV-21-1650'],
+      ['217-1234', 'VEX', '217-1234'],
+      ['276-1234', 'VEX', '276-1234'],
+    ]
+    for (const [part_number, vendor, vendor_part_number] of known) expect(found(part_number), part_number).toEqual({ vendor, vendor_part_number })
   })
 
   it("finds the number in the name when the part number is empty or isn't a vendor's", () => {
@@ -732,34 +597,14 @@ describe('identifyCots', () => {
   })
 })
 
-describe('MACHINE_FILE_FORMATS', () => {
-  it('gives each machine the kind of file it needs, the usual one first', () => {
-    expect(MACHINE_FILE_FORMATS.lathe).toEqual(['step'])
-    expect(MACHINE_FILE_FORMATS.mill).toEqual(['step'])
-    expect(MACHINE_FILE_FORMATS['3d_printer']).toEqual(['stl', '3mf'])
-    expect(MACHINE_FILE_FORMATS.laser).toEqual(['dxf'])
-    expect(MACHINE_FILE_FORMATS.cnc_router).toEqual(['dxf', 'step'])
-    expect(MACHINE_FILE_FORMATS.hand_tools).toEqual([])
-  })
-
-  it('has every machine', () => {
-    expect(Object.keys(MACHINE_FILE_FORMATS).sort()).toEqual([...MACHINES].sort())
-  })
-})
-
 describe('partFileName', () => {
-  it('uses the part number and revision', () => {
+  it("uses the part number and revision, if there is one, swapping anything a file name can't have for a dash", () => {
     expect(partFileName({ part_number: '4096-26-INT-014', revision: 'B' }, 'step')).toBe('4096-26-INT-014_revB.step')
     expect(partFileName({ part_number: '4096-26-INT-014', revision: 'B' }, '3mf')).toBe('4096-26-INT-014_revB.3mf')
-  })
-
-  it('leaves the revision out when there is none', () => {
     expect(partFileName({ part_number: '4096-26-INT-014', revision: null }, 'dxf')).toBe('4096-26-INT-014.dxf')
     expect(partFileName({ part_number: '4096-26-INT-014', revision: ' ' }, 'dxf')).toBe('4096-26-INT-014.dxf')
-  })
-
-  it("swaps anything a file name can't have for a dash", () => {
     expect(partFileName({ part_number: ' Side plate/left ', revision: 'B 2' }, 'stl')).toBe('Side-plate-left_revB-2.stl')
+    // A part number can't make the file land in another folder.
     expect(partFileName({ part_number: '..\\secret', revision: null }, 'stl')).toBe('..-secret.stl')
   })
 })

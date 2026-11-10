@@ -2,13 +2,13 @@
 // Who is allowed to do what is the database's job: that's tested in
 // supabase/tests/cnc.test.ts.
 import { beforeEach, describe, expect, it } from 'vitest'
-import { setDemoRole } from '../../core/demo'
+import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import { partsTable, systemsTable } from '../bom/data'
 import {
   addJob, addManualCut, addSheet, addStock, boardGroups, canRemoveCut, changeJob, changeSheet, cncSummary, cutLately, cutsTable, jobsTable,
   addStockFromOnshape, camStockFor, camStockOf, editJob, markReadyToCam, onshapeMadeParts, plateStock, partForOnshape, planLayout, planRoom, planStockImport, readLayout, shapeReadCalls, readShapes, readSheet, readStock, removeCut, removeJob, removeStock, saveRoomPlan,
   setJobStatus, shapesTable, sheetForm, sheetsTable, sheetsWithRoom, splitRemnant, stockForm, stockTable,
-  type Cut, type Job, type ManualCut, type OnshapePlacement, type Shape, type Sheet,
+  type CamStock, type Cut, type Job, type ManualCut, type OnshapePlacement, type Shape, type Sheet,
 } from './data'
 import type { Part } from '../bom/data'
 
@@ -25,14 +25,11 @@ const cutsOn = (sheet: Sheet) => cutsTable.rows().filter((c) => c.sheet_id === s
 const SIDE_PLATE = '4096-26-INT-001'
 
 describe('the example data', () => {
-  it('has every job pointing at a made part and a stock', () => {
+  it("has jobs for made parts on real stock, sheet IDs that start with their stock's code, and cuts that are on their sheets", () => {
     for (const job of jobsTable.rows()) {
       expect(partsTable.rows().find((p) => p.id === job.part_id)?.kind).toBe('made')
       expect(stockTable.rows().some((s) => s.id === job.stock_id)).toBe(true)
     }
-  })
-
-  it("has sheet IDs that start with their stock's code, and cuts that are on their sheets", () => {
     for (const sheet of sheetsTable.rows()) expect(sheet.label.startsWith(`${stockTable.rows().find((s) => s.id === sheet.stock_id)!.code}-`)).toBe(true)
     for (const cut of cutsTable.rows()) {
       const sheet = sheetsTable.rows().find((s) => s.id === cut.sheet_id)!
@@ -62,40 +59,54 @@ describe('stock', () => {
     expect(readStock({ ...input, sheetWidth: '' }, [])).toMatchObject({ ok: false })
   })
 
-  it('can be added and, with no sheets, deleted by a mentor', async () => {
-    const added = await addStock(input)
-    expect(added.ok).toBe(true)
-    if (!added.ok) return
-    expect(await removeStock(added.value)).toMatchObject({ ok: false })
+  it("can be added by anyone, but not deleted while it has sheets, even by a mentor", async () => {
+    expect((await addStock(input)).ok).toBe(true)
     setDemoRole('mentor')
-    expect(await removeStock(added.value)).toEqual({ ok: true, value: null })
     expect(await removeStock(stockByCode('AL250'))).toMatchObject({ ok: false, error: expect.stringContaining('sheets') })
+  })
+})
+
+describe('deleting', () => {
+  // The database decides who can delete (supabase/tests/cnc.test.ts). The app
+  // checks first, so a student is told who can instead of getting an error.
+  it('lets only a mentor delete stock, take a job off the board, or delete a cut someone else recorded', async () => {
+    const recorded = cutsTable.rows().find((c) => c.status === 'cut')!
+    const deletes = [
+      ['stock', () => removeStock(stockByCode('PC250')), /only a mentor/i],
+      ['a job', () => removeJob(jobFor('4096-26-DRV-002', 'to_cut')), /only a mentor/i],
+      ['a cut', () => removeCut(recorded), /whoever recorded/i],
+    ] as const
+    for (const [what, remove, why] of deletes) expect(await remove(), what).toMatchObject({ ok: false, error: expect.stringMatching(why) })
+    setDemoRole('mentor')
+    for (const [what, remove] of deletes) expect(await remove(), what).toEqual({ ok: true, value: null })
+  })
+
+  it('lets anyone delete a cut that is only planned, or one they recorded', () => {
+    const recorded = cutsTable.rows().find((c) => c.status === 'cut')!
+    const student = { id: DEMO_PEOPLE.alex, role: 'student' as const }
+    expect(canRemoveCut(recorded, student)).toBe(false)
+    expect(canRemoveCut({ ...recorded, status: 'planned' }, student)).toBe(true)
+    expect(canRemoveCut({ ...recorded, created_by: student.id }, student)).toBe(true)
   })
 })
 
 describe('the CNC board', () => {
   const groups = () => boardGroups(jobsTable.rows(), partsTable.rows(), systemsTable.rows(), stockTable.rows(), shapesTable.rows())
 
-  it("groups what's waiting by stock, being cut first, and leaves out what's cut", () => {
+  it("groups what's waiting by stock, being cut first and no stock picked last, and leaves out what's cut", async () => {
     const shown = groups().map((g) => [g.stock?.code, g.jobs.map((j) => `${j.part?.name} ×${j.job.quantity} ${j.job.status}`)])
     expect(shown).toEqual([
       ['AL250', ['Intake side plate ×1 to_cut']],
       ['PC125', ['Bellypan ×1 cutting']],
       ['AT2X1', ['Frame rail ×4 to_cut']],
     ])
-  })
-
-  it('puts jobs with no stock picked last', async () => {
+    // Each job shows its system, and its shape from Onshape if there is one.
+    expect(groups()[0].jobs[0].system?.name).toBe('Intake')
+    expect(groups()[0].jobs[0].shape?.length_in).toBe(18)
     await addJob(part('4096-26-INT-002'), 3, null)
     const last = groups().at(-1)!
     expect(last.stock).toBeUndefined()
     expect(last.jobs[0].part?.name).toBe('Roller shaft')
-  })
-
-  it('shows its system, and its shape from Onshape if there is one', () => {
-    const [aluminum] = groups()
-    expect(aluminum.jobs[0].system?.name).toBe('Intake')
-    expect(aluminum.jobs[0].shape?.length_in).toBe(18)
   })
 
   it("lists what's been cut lately, newest first", () => {
@@ -125,26 +136,13 @@ describe('the CNC board', () => {
     expect(await changeJob(job, { quantity: 5, stock_id: null, note: '  ' })).toMatchObject({ ok: true, value: { quantity: 5, stock_id: null, note: null } })
   })
 
-  it('moves jobs along, noting who and when', async () => {
-    const job = jobFor('4096-26-DRV-002', 'to_cut')
-    const moved = await setJobStatus(job, 'cutting')
-    expect(moved).toMatchObject({ ok: true, value: { status: 'cutting', status_by: '00000000-0000-4000-8000-00000000a1e7' } })
-  })
-
-  it('records the cuts planned for a job when it is marked cut, and the sheet becomes partly used', async () => {
+  it('moves jobs along, noting who, and marking one cut records its planned cuts, so the sheet is partly used', async () => {
+    expect(await setJobStatus(jobFor('4096-26-DRV-002', 'to_cut'), 'cutting')).toMatchObject({ ok: true, value: { status: 'cutting', status_by: DEMO_PEOPLE.alex } })
     const sheet = sheetByLabel('PC125-001')
     expect(sheet.status).toBe('new')
     await setJobStatus(jobFor('4096-26-DRV-001', 'cutting'), 'cut')
-    expect(cutsOn(sheet).map((c) => c.status)).toEqual(['cut'])
-    expect(cutsOn(sheet)[0].cut_by).toBe('00000000-0000-4000-8000-00000000a1e7')
+    expect(cutsOn(sheet).map((c) => [c.status, c.cut_by])).toEqual([['cut', DEMO_PEOPLE.alex]])
     expect(sheetByLabel('PC125-001').status).toBe('partly_used')
-  })
-
-  it('only lets a mentor take a job off the board', async () => {
-    const job = jobFor('4096-26-DRV-002', 'to_cut')
-    expect(await removeJob(job)).toMatchObject({ ok: false })
-    setDemoRole('mentor')
-    expect(await removeJob(job)).toEqual({ ok: true, value: null })
   })
 
   it('sums up the board for the home page', () => {
@@ -155,15 +153,12 @@ describe('the CNC board', () => {
 })
 
 describe('shapes from Onshape', () => {
-  it('reads every part in a Part Studio with one call, saving new shapes and updating old ones', async () => {
+  it('reads every part in a Part Studio with one call, saving new shapes and updating old ones, and says which are gone from Onshape', async () => {
     const result = await readShapes([part(SIDE_PLATE), part('4096-26-INT-002'), part('4096-26-INT-003')])
     expect(result).toEqual({ ok: true, value: 'Read 3 parts from Onshape. That used 1 Onshape API call.' })
     expect(shapesTable.rows().map((s) => s.part_id)).toEqual([part(SIDE_PLATE).id, part('4096-26-INT-002').id, part('4096-26-INT-003').id])
-  })
-
-  it('says which parts are gone from Onshape', async () => {
-    const result = await readShapes([part(SIDE_PLATE), part('4096-26-INT-004')])
-    expect(result).toEqual({ ok: true, value: 'Read 1 part from Onshape. 1 part isn’t in Onshape any more. That used 1 Onshape API call.' })
+    const gone = await readShapes([part(SIDE_PLATE), part('4096-26-INT-004')])
+    expect(gone).toEqual({ ok: true, value: 'Read 1 part from Onshape. 1 part isn’t in Onshape any more. That used 1 Onshape API call.' })
   })
 
   it('says when parts were typed in, so there is nothing to read', async () => {
@@ -172,10 +167,6 @@ describe('shapes from Onshape', () => {
 })
 
 describe('sheets', () => {
-  it('fill in the next ID and the full sheet size for a stock', () => {
-    expect(sheetForm(stockByCode('AL250'), sheetsTable.rows())).toMatchObject({ label: 'AL250-003', length: '48', width: '24' })
-  })
-
   it('read what was typed, long side as the length', () => {
     const input = { ...sheetForm(stockByCode('AL250'), sheetsTable.rows()), label: 'al250-010', length: '12', width: '30', location: ' Rack C ' }
     expect(readSheet(input, sheetsTable.rows())).toEqual({
@@ -192,7 +183,8 @@ describe('sheets', () => {
     expect(readSheet({ ...input, onshape_url: 'https://example.com/layout' }, [])).toMatchObject({ ok: false })
   })
 
-  it('can be added new, and changed', async () => {
+  it('can be added new from a form with the next ID and the full sheet size filled in, and changed', async () => {
+    expect(sheetForm(stockByCode('AL250'), sheetsTable.rows())).toMatchObject({ label: 'AL250-003', length: '48', width: '24' })
     const added = await addSheet(sheetForm(stockByCode('PC250'), sheetsTable.rows()))
     expect(added).toMatchObject({ ok: true, value: { label: 'PC250-001', status: 'new', width_in: 24, length_in: 48 } })
     if (!added.ok) return
@@ -232,16 +224,6 @@ describe('cuts', () => {
     expect(await addManualCut(sheet, manual({ name: '' }))).toMatchObject({ ok: false })
     expect(await addManualCut(sheet, manual({ name: 'Plate', y: 'here' }))).toMatchObject({ ok: false })
     expect(await addManualCut(sheet, manual({ name: 'Plate', width: '0' }))).toMatchObject({ ok: false })
-  })
-
-  it('can be deleted when planned, or by whoever recorded them, or by a mentor', async () => {
-    const [cut] = cutsTable.rows().filter((c) => c.status === 'cut')
-    const student = { id: '00000000-0000-4000-8000-00000000a1e7', role: 'student' as const }
-    expect(canRemoveCut(cut, student)).toBe(false)
-    expect(canRemoveCut({ ...cut, status: 'planned' }, student)).toBe(true)
-    expect(canRemoveCut({ ...cut, created_by: student.id }, student)).toBe(true)
-    expect(canRemoveCut(cut, { ...student, role: 'mentor' })).toBe(true)
-    expect(await removeCut(cut)).toMatchObject({ ok: false })
   })
 })
 
@@ -284,35 +266,28 @@ describe('reading a layout from Onshape', () => {
     expect(again).toEqual({ cuts: [], skipped: [{ name: 'Side plate <3>', why: 'is already planned there' }] })
   })
 
-  it('saves the plan, replacing what was planned from Onshape before', async () => {
+  it('saves the plan, replacing what was planned from Onshape before, once the sheet has a layout link', async () => {
     const first = await readLayout(sheet())
     expect(first).toMatchObject({ ok: true, value: { planned: 1 } })
     const again = await readLayout(sheet())
     expect(again).toMatchObject({ ok: true, value: { planned: 1 } })
     expect(cutsOn(sheet()).map((c) => c.status)).toEqual(['cut', 'cut', 'planned'])
     expect(sheet().layout_read_at).not.toBe('2026-10-27T22:00:00Z')
-  })
-
-  it('needs the layout link first', async () => {
     expect(await readLayout(sheetByLabel('AL250-002'))).toMatchObject({ ok: false, error: expect.stringContaining('layout link') })
   })
 })
 
 describe('finding room', () => {
-  it('finds a spot for each waiting part on the stock, around what is there', () => {
-    const sheet = sheetByLabel('AL250-001')
-    const plan = planRoom(sheet, stockByCode('AL250'), jobsTable.rows(), partsTable.rows(), shapesTable.rows(), cutsTable.rows())
-    expect(plan.spots).toHaveLength(1)
-    expect(plan.spots[0].spot.box).toEqual({ x: 0.5, y: 13.5, length: 18, width: 6 })
-    expect(plan.noRoom).toEqual([])
-  })
-
-  it("says which parts don't fit, and which have no size yet", async () => {
+  it("finds a spot for each waiting part on the stock, around what is there, and says which don't fit or have no size yet", async () => {
+    const room = () => planRoom(sheetByLabel('AL250-001'), stockByCode('AL250'), jobsTable.rows(), partsTable.rows(), shapesTable.rows(), cutsTable.rows())
+    expect(room().spots).toHaveLength(1)
+    expect(room().spots[0].spot.box).toEqual({ x: 0.5, y: 13.5, length: 18, width: 6 })
+    expect(room().noRoom).toEqual([])
     await addJob(part(SIDE_PLATE), 9, stockByCode('AL250').id)
     await addJob(part('4096-26-INT-002'), 1, stockByCode('AL250').id)
-    const plan = planRoom(sheetByLabel('AL250-001'), stockByCode('AL250'), jobsTable.rows(), partsTable.rows(), shapesTable.rows(), cutsTable.rows())
-    expect(plan.spots.length + plan.noRoom[0].count).toBe(10)
-    expect(plan.noShape.map((n) => n.part?.name)).toEqual(['Roller shaft'])
+    const crowded = room()
+    expect(crowded.spots.length + crowded.noRoom[0].count).toBe(10)
+    expect(crowded.noShape.map((n) => n.part?.name)).toEqual(['Roller shaft'])
   })
 
   it('saves the spots as planned cuts, so the room is spoken for', async () => {
@@ -405,30 +380,25 @@ describe('importing stock from Onshape', () => {
 })
 
 describe('flagging parts ready to CAM', () => {
-  it('picks aluminum or polycarbonate and a thickness from the material, or the shape from Onshape', () => {
-    const stocks = stockTable.rows()
-    const shape = shapesTable.rows()[0]
-    expect(camStockFor(part(SIDE_PLATE), shape, stocks)).toEqual({ plate: 'aluminum', thickness: 0.25 })
-    expect(camStockFor(part(SIDE_PLATE), undefined, stocks)).toEqual({ plate: 'aluminum', thickness: 0.25 })
-    expect(camStockFor(part('4096-26-DRV-001'), undefined, stocks)).toEqual({ plate: 'polycarbonate', thickness: 0.125 })
-    expect(camStockFor({ ...part(SIDE_PLATE), material: 'Aluminum' }, undefined, stocks)).toEqual({ plate: 'aluminum', thickness: 0 })
+  it('picks aluminum or polycarbonate and a thickness from the material or the shape from Onshape, or other stock for the rest', () => {
+    const cases: [string, Part, Shape | undefined, CamStock][] = [
+      ['side plate, with its shape', part(SIDE_PLATE), shapesTable.rows()[0], { plate: 'aluminum', thickness: 0.25 }],
+      ['side plate, from its material', part(SIDE_PLATE), undefined, { plate: 'aluminum', thickness: 0.25 }],
+      ['bellypan', part('4096-26-DRV-001'), undefined, { plate: 'polycarbonate', thickness: 0.125 }],
+      ['aluminum with no thickness', { ...part(SIDE_PLATE), material: 'Aluminum' }, undefined, { plate: 'aluminum', thickness: 0 }],
+      ['frame rail, a tube', part('4096-26-DRV-002'), undefined, { stockId: stockByCode('AT2X1').id }],
+      ['pivot spacer, not aluminum or polycarbonate', part('4096-26-INT-003'), undefined, { stockId: null }],
+    ]
+    for (const [what, p, shape, expected] of cases) expect(camStockFor(p, shape, stockTable.rows()), what).toEqual(expected)
   })
 
-  it('picks other stock for tubes and bars, and anything not aluminum or polycarbonate', () => {
-    const stocks = stockTable.rows()
-    expect(camStockFor(part('4096-26-DRV-002'), undefined, stocks)).toEqual({ stockId: stockByCode('AT2X1').id })
-    expect(camStockFor(part('4096-26-INT-003'), undefined, stocks)).toEqual({ stockId: null })
-  })
-
-  it('uses the plate already in the stock list', async () => {
-    const result = await markReadyToCam(part(SIDE_PLATE), 2, { plate: 'aluminum', thickness: 0.25 })
-    expect(result).toMatchObject({ ok: true, value: { added: true, stock: { code: 'AL250' }, job: { status: 'cam', stock_id: stockByCode('AL250').id } } })
-  })
-
-  it("adds a plate that isn't in the stock list yet, with a typed-in thickness", async () => {
+  it("uses the plate already in the stock list, or adds one that isn't there yet, just once", async () => {
+    const existing = await markReadyToCam(part(SIDE_PLATE), 2, { plate: 'aluminum', thickness: 0.25 })
+    expect(existing).toMatchObject({ ok: true, value: { added: true, stock: { code: 'AL250' }, job: { status: 'cam', stock_id: stockByCode('AL250').id } } })
+    // A typed-in thickness that isn't in the stock list yet.
     expect(plateStock('aluminum', 0.375, stockTable.rows())).toBeUndefined()
-    const result = await markReadyToCam(part(SIDE_PLATE), 1, { plate: 'aluminum', thickness: 0.375 })
-    expect(result).toMatchObject({ ok: true, value: { stock: { name: '3/8 in aluminum plate', code: 'AL375', material: 'Aluminum', thickness_in: 0.375 } } })
+    const added = await markReadyToCam(part(SIDE_PLATE), 1, { plate: 'aluminum', thickness: 0.375 })
+    expect(added).toMatchObject({ ok: true, value: { stock: { name: '3/8 in aluminum plate', code: 'AL375', material: 'Aluminum', thickness_in: 0.375 } } })
     // Flagging another part on it uses the same stock.
     await markReadyToCam(part('4096-26-INT-002'), 1, { plate: 'aluminum', thickness: 0.375 })
     expect(stockTable.rows().filter((s) => s.name === '3/8 in aluminum plate')).toHaveLength(1)
@@ -450,14 +420,11 @@ describe('changing a part on the board', () => {
     expect(camStockOf(undefined)).toEqual({ stockId: null })
   })
 
-  it('moves a part back a step, and changes how many and the plate, adding the plate if needed', async () => {
+  it('moves a part back a step, even once cut, and changes how many and the plate, adding the plate if needed', async () => {
     const job = jobFor(SIDE_PLATE, 'to_cut')
     const result = await editJob(job, { quantity: 4, cutFrom: { plate: 'aluminum', thickness: 0.1875 }, note: 'Thinner', status: 'cam' })
     expect(result).toMatchObject({ ok: true, value: { status: 'cam', quantity: 4, note: 'Thinner', stock_id: stockByCode('AL188').id } })
     expect(stockByCode('AL188').name).toBe('3/16 in aluminum plate')
-  })
-
-  it('moves a cut part back, and keeps the step when it is the same', async () => {
     const done = jobFor(SIDE_PLATE, 'cut')
     expect(await editJob(done, { quantity: 2, cutFrom: camStockOf(stockByCode('AL250')), note: '', status: 'cutting' })).toMatchObject({ ok: true, value: { status: 'cutting' } })
     const rails = jobFor('4096-26-DRV-002', 'to_cut')

@@ -37,32 +37,30 @@ afterEach(() => setDemoRole('student'))
 describe('the status order', () => {
   it('starts with Charged, and goes round the pit cycle', () => {
     expect(STATUSES.map((s) => s.name)).toEqual(['Charged', 'In the robot', 'Needs charging', 'Charging', 'Resting'])
-    expect(nextStatus('Needs charging')).toBe('Charging')
-    expect(nextStatus('Charging')).toBe('Resting')
-    expect(nextStatus('Resting')).toBe('Charged')
-    expect(nextStatus('Charged')).toBe('In the robot')
-    expect(nextStatus('In the robot')).toBe('Needs charging')
-  })
-
-  it('sends a battery with an old status to Needs charging, so it gets checked', () => {
-    expect(nextStatus('On the cart')).toBe('Needs charging')
+    const next: [string, string][] = [
+      ['Needs charging', 'Charging'],
+      ['Charging', 'Resting'],
+      ['Resting', 'Charged'],
+      ['Charged', 'In the robot'],
+      ['In the robot', 'Needs charging'],
+      // A status no longer in the list goes to Needs charging, so the battery gets checked.
+      ['On the cart', 'Needs charging'],
+    ]
+    for (const [now, after] of next) expect(nextStatus(now), now).toBe(after)
   })
 })
 
 describe('groupByStatus', () => {
-  it('groups batteries in use by status, Charged first, with every status shown', () => {
+  it('groups batteries in use by status, Charged first, with every status shown, longest in its status first', () => {
     const groups = groupByStatus(batteriesTable.rows())
     expect(groups.map((g) => g.status)).toEqual(STATUSES.map((s) => s.name))
     expect(groups[0].batteries.map((b) => b.name)).toEqual(['2026-8', '2026-1', '2026-2'])
-  })
-
-  it('puts the battery longest in its status first, and leaves out retired ones', () => {
-    const groups = groupByStatus([
+    const retiredLeftOut = groupByStatus([
       battery('A', 'Charged', '2026-11-10T12:00:00Z'),
       battery('B', 'Charged', '2026-11-10T10:00:00Z'),
       battery('Old', 'Charged', '2026-01-01T10:00:00Z', true),
     ])
-    expect(groups[0].batteries.map((b) => b.name)).toEqual(['B', 'A'])
+    expect(retiredLeftOut[0].batteries.map((b) => b.name)).toEqual(['B', 'A'])
   })
 
   it('still shows a battery whose status is no longer in the list, at the end', () => {
@@ -84,24 +82,17 @@ describe('ago', () => {
 })
 
 describe('moveToNext', () => {
-  it('lets a student move a battery to its next status, and records when', async () => {
+  it('lets a student move a battery to its next status, recording when in its history', async () => {
     const before = Date.now()
     const result = await moveToNext(byName('2026-4'))
     expect(result).toMatchObject({ ok: true, value: { status: 'Charging' } })
     expect(Date.parse(byName('2026-4').status_changed_at)).toBeGreaterThanOrEqual(before)
-  })
-
-  it('adds the change to the battery’s history', async () => {
-    await moveToNext(byName('2026-4'))
     expect(historyFor(byName('2026-4').id, logTable.rows())[0]).toMatchObject({ kind: 'status', status: 'Charging', match: null })
   })
 
-  it('keeps which match a battery went in the robot for', async () => {
+  it('keeps which match a battery went in the robot for, and ignores a match for any other status', async () => {
     await moveToNext(byName('2026-1'), ' Qual 12 ')
     expect(matchesFor(byName('2026-1').id, logTable.rows()).map((m) => m.match)).toEqual(['Qual 12', 'Practice 4'])
-  })
-
-  it('ignores a match for any other status', async () => {
     await moveToNext(byName('2026-4'), 'Qual 12')
     expect(historyFor(byName('2026-4').id, logTable.rows())[0].match).toBeNull()
   })
@@ -118,13 +109,11 @@ describe('readings and tired batteries', () => {
     voltage, resistance_ohms, created_at: new Date(Date.UTC(2026, 10, 10, 12, 0) - minutes * 60_000).toISOString(),
   })
 
-  it('is tired only above the limit, not exactly at it', () => {
+  it('is tired only above the limit, not exactly at it, going by the latest internal resistance reading', () => {
     expect(isTired('b', [reading(5, TIRED_RESISTANCE_OHMS + 0.001)])).toBe(true)
     expect(isTired('b', [reading(5, TIRED_RESISTANCE_OHMS)])).toBe(false)
     expect(isTired('b', [])).toBe(false)
-  })
-
-  it('goes by the latest internal resistance reading, even if a newer one only has the voltage', () => {
+    // Even if a newer reading only has the voltage.
     expect(isTired('b', [reading(5, null), reading(60, 0.03), reading(120, 0.012)])).toBe(true)
     expect(isTired('b', [reading(5, 0.012), reading(60, 0.03)])).toBe(false)
   })
@@ -151,15 +140,11 @@ describe('readings and tired batteries', () => {
 })
 
 describe('nextUp', () => {
-  it('suggests the battery charged longest, leaving out tired ones', () => {
+  it('suggests the battery charged longest, leaving out tired ones, or nothing when no charged battery is fresh', () => {
     // 2026-8 has been Charged longest, but reads tired.
     expect(isTired(byName('2026-8').id, logTable.rows())).toBe(true)
     expect(nextUp(batteriesTable.rows(), logTable.rows())?.name).toBe('2026-1')
-  })
-
-  it('suggests nothing when no charged battery is fresh', () => {
-    const charged = batteriesTable.rows().filter((b) => b.status === 'Charged')
-    expect(nextUp(charged.filter((b) => b.name === '2026-8'), logTable.rows())).toBeNull()
+    expect(nextUp([byName('2026-8')], logTable.rows())).toBeNull()
   })
 })
 
@@ -191,46 +176,37 @@ describe('findBatteries', () => {
 })
 
 describe('useBatterySummary', () => {
-  it('says how many are charged and charging, leaving out retired ones', () => {
+  it('says how many are charged and charging, leaving out retired ones, warns when none are charged, and says when there are none', async () => {
     expect(runHook(useBatterySummary)).toEqual({ tone: 'ok', text: '3 charged · 2 charging' })
-  })
-
-  it('warns when none are charged', async () => {
     for (const name of ['2026-1', '2026-2', '2026-8']) await batteriesTable.update(byName(name).id, { status: 'In the robot' })
     expect(runHook(useBatterySummary)).toEqual({ tone: 'warn', text: '0 charged · 2 charging' })
-  })
-
-  it('says so when there are no batteries', async () => {
     for (const b of batteriesTable.rows()) await batteriesTable.remove(b.id)
     expect(runHook(useBatterySummary)).toEqual({ tone: 'plain', text: 'No batteries yet' })
   })
 })
 
 describe('checkBattery', () => {
-  it('needs a number on the battery, and a new one', () => {
+  it('needs a number on the battery, a new one, and notes that are not too long', () => {
     expect(checkBattery({ name: ' 2026-9 ', notes: '' }, batteriesTable.rows())).toBeNull()
     expect(checkBattery({ name: '  ', notes: '' }, batteriesTable.rows())).toMatch(/Enter the number/)
-    expect(checkBattery({ name: '2026-3', notes: '' }, batteriesTable.rows())).toBe("There's already a battery called 2026-3. Give this one a different number.")
+    expect(checkBattery({ name: '2026-3', notes: '' }, batteriesTable.rows())).toMatch(/already a battery called 2026-3/)
     expect(checkBattery({ name: '2024-5', notes: '' }, batteriesTable.rows())).toMatch(/2024-5 \(retired\)/)
-  })
-
-  it("doesn't count the battery being changed as taking its own number", () => {
-    expect(checkBattery({ name: '2026-3', notes: 'New note' }, batteriesTable.rows(), byName('2026-3').id)).toBeNull()
-  })
-
-  it('refuses notes that are too long', () => {
     expect(checkBattery({ name: '2026-9', notes: 'x'.repeat(501) }, batteriesTable.rows())).toMatch(/under 500/)
+    // The battery being changed doesn't count as taking its own number.
+    expect(checkBattery({ name: '2026-3', notes: 'New note' }, batteriesTable.rows(), byName('2026-3').id)).toBeNull()
   })
 })
 
 describe('adding, changing and deleting batteries', () => {
-  it("doesn't let a student, and says who can", async () => {
-    const count = batteriesTable.rows().length
-    expect(await addBattery({ name: '2026-9', notes: '' })).toEqual({ ok: false, error: expect.stringMatching(/Only mentors and admins/) })
-    expect((await changeBattery(byName('2026-1'), { name: '2026-1', notes: '', retired: true })).ok).toBe(false)
-    expect((await removeBattery(byName('2026-1'))).ok).toBe(false)
-    expect(batteriesTable.rows()).toHaveLength(count)
-    expect(byName('2026-1').retired).toBe(false)
+  it("doesn't let a student, says who can, and changes nothing", async () => {
+    const before = batteriesTable.rows()
+    const tries: [string, () => Promise<unknown>][] = [
+      ['add', () => addBattery({ name: '2026-9', notes: '' })],
+      ['retire', () => changeBattery(byName('2026-1'), { name: '2026-1', notes: '', retired: true })],
+      ['delete', () => removeBattery(byName('2026-1'))],
+    ]
+    for (const [doing, attempt] of tries) expect(await attempt(), doing).toEqual({ ok: false, error: expect.stringMatching(/Only mentors and admins/) })
+    expect(batteriesTable.rows()).toEqual(before)
   })
 
   it('lets a mentor add a battery, Charged to start with', async () => {
@@ -238,16 +214,12 @@ describe('adding, changing and deleting batteries', () => {
     expect(await addBattery({ name: ' 2026-9 ', notes: ' New ' })).toMatchObject({ ok: true, value: { name: '2026-9', notes: 'New', status: 'Charged', retired: false } })
   })
 
-  it('lets a mentor rename and retire a battery', async () => {
-    setDemoRole('mentor')
-    expect((await changeBattery(byName('2026-1'), { name: '2026-10', notes: 'Weak', retired: true })).ok).toBe(true)
-    expect(byName('2026-10')).toMatchObject({ notes: 'Weak', retired: true })
-  })
-
-  it('lets a mentor delete a battery', async () => {
+  it('lets a mentor rename, retire and delete a battery', async () => {
     setDemoRole('mentor')
     const count = batteriesTable.rows().length
-    expect((await removeBattery(byName('2026-1'))).ok).toBe(true)
+    expect((await changeBattery(byName('2026-1'), { name: '2026-10', notes: 'Weak', retired: true })).ok).toBe(true)
+    expect(byName('2026-10')).toMatchObject({ notes: 'Weak', retired: true })
+    expect((await removeBattery(byName('2026-10'))).ok).toBe(true)
     expect(batteriesTable.rows()).toHaveLength(count - 1)
   })
 })

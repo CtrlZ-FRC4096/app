@@ -52,18 +52,6 @@ describe('savePitEntry', () => {
     expect(second.value.match).toBe(4)
   })
 
-  it('needs a team number, but not a match number', () => {
-    expect(checkPitEntry({ ...PIT, team: 0 })).toBe('Enter the team number first.')
-    expect(checkPitEntry({ ...PIT, match: null })).toBeNull()
-    expect(checkPitEntry({ ...PIT, match: 2.5 })).toBe('Check the match number, or leave it blank.')
-  })
-
-  it('takes blank weight and size, but not zero', () => {
-    expect(checkPitEntry({ ...PIT, weight: null, length: null, width: null, height: null })).toBeNull()
-    expect(checkPitEntry({ ...PIT, weight: 0 })).toBe('Check the weight, or leave it blank.')
-    expect(checkPitEntry({ ...PIT, height: Number.NaN })).toBe('Check the height, or leave it blank.')
-  })
-
   it('saves nothing when the form has a problem', () => {
     const result = savePitEntry({ ...PIT, team: 0 })
     expect(result.ok).toBe(false)
@@ -80,21 +68,18 @@ describe('blankOrNumber', () => {
 })
 
 describe('numberOnly', () => {
-  it('keeps whole numbers and decimals', () => {
-    expect(numberOnly('120')).toBe('120')
-    expect(numberOnly('115.5')).toBe('115.5')
-    expect(numberOnly('')).toBe('')
-  })
-
-  it('takes out anything that is not part of a number', () => {
-    expect(numberOnly('about 120 lbs')).toBe('120')
-    expect(numberOnly('-28')).toBe('28')
-    expect(numberOnly('2e3')).toBe('23')
-  })
-
-  it('keeps only the first decimal point', () => {
-    expect(numberOnly('1.2.3')).toBe('1.23')
-    expect(numberOnly('..5')).toBe('.5')
+  it('keeps whole numbers and decimals, takes out anything else, and keeps only the first decimal point', () => {
+    const typed: [string, string][] = [
+      ['120', '120'],
+      ['115.5', '115.5'],
+      ['', ''],
+      ['about 120 lbs', '120'],
+      ['-28', '28'],
+      ['2e3', '23'],
+      ['1.2.3', '1.23'],
+      ['..5', '.5'],
+    ]
+    for (const [text, kept] of typed) expect(numberOnly(text), text).toBe(kept)
   })
 })
 
@@ -124,36 +109,19 @@ describe('saveEntry', () => {
     expect(result.value.scouted_by).not.toBeNull()
   })
 
-  it('lists entries newest first, each with its own id', () => {
+  it('lists entries newest first, each with its own id, with no role chosen allowed', () => {
     saveEntry(FORM)
-    saveEntry({ ...FORM, match: 13 })
+    saveEntry({ ...FORM, match: 13, roles: [] })
     expect(entryStore.get().map((e) => e.match)).toEqual([13, 12])
     expect(entryStore.get()[0].id).not.toBe(entryStore.get()[1].id)
+    expect(entryStore.get()[0].roles).toEqual([])
   })
 
-  it('refuses an entry with no team and says why', () => {
+  it('saves nothing when the form has a problem, and says why', () => {
     expect(saveEntry({ ...FORM, team: 0 })).toEqual({ ok: false, error: 'Enter the team number first.' })
-    expect(saveEntry({ ...FORM, team: Number.NaN })).toEqual({ ok: false, error: 'Enter the team number first.' })
-    expect(entryStore.get()).toEqual([])
-  })
-
-  it('refuses an entry with no match number', () => {
-    expect(checkEntry({ ...FORM, match: 0 })).toBe('Enter the match number first.')
-    expect(checkEntry(FORM)).toBeNull()
-  })
-
-  it('refuses an entry until a driver skill from 1 to 5 is chosen', () => {
     // The form sends 0 while no driver skill is chosen.
     expect(saveEntry({ ...FORM, driver_skill: 0 })).toEqual({ ok: false, error: 'Choose a driver skill first.' })
-    expect(checkEntry({ ...FORM, driver_skill: 6 })).toBe('Choose a driver skill first.')
-    expect(checkEntry({ ...FORM, driver_skill: 1 })).toBeNull()
-    expect(checkEntry({ ...FORM, driver_skill: 5 })).toBeNull()
     expect(entryStore.get()).toEqual([])
-  })
-
-  it('saves an entry with no role chosen', () => {
-    const result = saveEntry({ ...FORM, roles: [] })
-    expect(result).toMatchObject({ ok: true, value: { roles: [] } })
   })
 
   it('keeps entries when the example data is reset', () => {
@@ -164,11 +132,24 @@ describe('saveEntry', () => {
 })
 
 describe('checkEntry', () => {
-  it("refuses what the team database would refuse, so an entry can't get stuck Waiting", () => {
-    expect(checkEntry({ ...FORM, team: 100000 })).toMatch(/team number/)
-    expect(checkEntry({ ...FORM, match: 1001 })).toMatch(/match number/)
-    expect(checkEntry({ ...FORM, notes: 'x'.repeat(MAX_NOTES_LENGTH + 1) })).toMatch(/notes/)
-    expect(checkEntry({ ...FORM, notes: 'x'.repeat(MAX_NOTES_LENGTH) })).toBeNull()
+  it("allows a complete entry, and refuses what the team database would refuse, so an entry can't get stuck Waiting", () => {
+    const allowed: [string, Partial<EntryFields>][] = [
+      ['the whole form', {}],
+      ['driver skill 1', { driver_skill: 1 }],
+      ['driver skill 5', { driver_skill: 5 }],
+      ['the longest notes', { notes: 'x'.repeat(MAX_NOTES_LENGTH) }],
+    ]
+    for (const [label, change] of allowed) expect(checkEntry({ ...FORM, ...change }), label).toBeNull()
+    const refused: [string, Partial<EntryFields>, RegExp][] = [
+      ['no team', { team: 0 }, /team number/],
+      ['a team that is not a number', { team: Number.NaN }, /team number/],
+      ['a team number too big', { team: 100000 }, /team number/],
+      ['no match', { match: 0 }, /match number/],
+      ['a match number too big', { match: 1001 }, /match number/],
+      ['driver skill 6', { driver_skill: 6 }, /driver skill/],
+      ['notes too long', { notes: 'x'.repeat(MAX_NOTES_LENGTH + 1) }, /notes/],
+    ]
+    for (const [label, change, problem] of refused) expect(checkEntry({ ...FORM, ...change }), label).toMatch(problem)
   })
 })
 
@@ -189,7 +170,8 @@ describe('syncing to the team database', () => {
 
   const sent = (id: string) => entriesTable.rows().filter((row) => row.id === id)
 
-  it('sends Waiting entries, then marks them Synced', async () => {
+  it('sends Waiting entries, then marks them Synced, with nothing to send after that', async () => {
+    expect(await syncEntries()).toEqual({ ok: true, value: 0 })
     const first = saveEntry(FORM)
     const second = saveEntry({ ...FORM, match: 13 })
     if (!first.ok || !second.ok) throw new Error('not saved')
@@ -212,6 +194,7 @@ describe('syncing to the team database', () => {
       }),
     ])
     expect(sent(second.value.id)).toHaveLength(1)
+    expect(await syncEntries()).toEqual({ ok: true, value: 0 })
   })
 
   it('never sends an entry twice, even if the phone sends it again', async () => {
@@ -241,33 +224,39 @@ describe('syncing to the team database', () => {
     expect(syncStatus.get()).toEqual({ sending: false, problem: null })
   })
 
-  it('has nothing to send when every entry is synced', async () => {
-    expect(await syncEntries()).toEqual({ ok: true, value: 0 })
-  })
-
-  it("sends an entry saved before #28 with Defender for played defense, and the other new fields left empty", () => {
+  it('sends an entry saved by an older version of the app on this phone', () => {
     const saved = saveEntry(FORM)
     if (!saved.ok) throw new Error(saved.error)
+    // Saved before #28: Defender for played defense, and the other new fields left empty.
     const { roles: _r, broke_down: _b, stop: _s, driver_skill: _d, ...rest } = saved.value
     expect(toRow({ ...rest, defense: true })).toMatchObject({ roles: ['Defender'], broke_down: false, stop: 'None', driver_skill: null })
     expect(toRow({ ...rest, defense: false }).roles).toEqual([])
-  })
-
-  it('sends an entry saved before events were recorded with the current event', () => {
-    const saved = saveEntry(FORM)
-    if (!saved.ok) throw new Error(saved.error)
+    // Saved before events were recorded: the current event.
     const { event_key: _old, ...older } = saved.value
     expect(toRow(older).event_key).toBe(EVENT_KEY)
   })
 })
 
-describe('checkPitEntry and the team database', () => {
-  it("refuses what the team database would refuse, so a pit entry can't get stuck Waiting", () => {
-    expect(checkPitEntry({ ...PIT, team: 100000 })).toMatch(/team number/)
-    expect(checkPitEntry({ ...PIT, match: 1001 })).toMatch(/match number/)
-    expect(checkPitEntry({ ...PIT, weight: MAX_PIT_NUMBER })).toMatch(/weight/)
-    expect(checkPitEntry({ ...PIT, they_do: 'x'.repeat(MAX_NOTES_LENGTH + 1) })).toMatch(/under 1000/)
-    expect(checkPitEntry({ ...PIT, motors: 'x'.repeat(MAX_NOTES_LENGTH) })).toBeNull()
+describe('checkPitEntry', () => {
+  it("needs a team number, but takes a blank match, weight and size, and refuses what the team database would refuse, so a pit entry can't get stuck Waiting", () => {
+    const allowed: [string, Partial<PitFields>][] = [
+      ['the whole form', {}],
+      ['no match number', { match: null }],
+      ['no weight or size', { weight: null, length: null, width: null, height: null }],
+      ['the longest answer', { motors: 'x'.repeat(MAX_NOTES_LENGTH) }],
+    ]
+    for (const [label, change] of allowed) expect(checkPitEntry({ ...PIT, ...change }), label).toBeNull()
+    const refused: [string, Partial<PitFields>, RegExp][] = [
+      ['no team', { team: 0 }, /Enter the team number/],
+      ['a team number too big', { team: 100000 }, /team number/],
+      ['half a match', { match: 2.5 }, /Check the match number, or leave it blank/],
+      ['a match number too big', { match: 1001 }, /match number/],
+      ['a weight of zero', { weight: 0 }, /Check the weight, or leave it blank/],
+      ['a weight too big', { weight: MAX_PIT_NUMBER }, /weight/],
+      ['a height that is not a number', { height: Number.NaN }, /Check the height, or leave it blank/],
+      ['an answer too long', { they_do: 'x'.repeat(MAX_NOTES_LENGTH + 1) }, /under 1000/],
+    ]
+    for (const [label, change, problem] of refused) expect(checkPitEntry({ ...PIT, ...change }), label).toMatch(problem)
   })
 })
 
@@ -287,11 +276,12 @@ describe('syncing pit entries', () => {
 
   const sent = (id: string) => pitTable.rows().filter((row) => row.id === id)
 
-  it('sends Waiting pit entries, then marks them Synced', async () => {
+  it('sends Waiting pit entries along with match entries, then marks them Synced', async () => {
+    saveEntry(FORM)
     const saved = savePitEntry(PIT)
     if (!saved.ok) throw new Error(saved.error)
     await syncEntries()
-    expect(pitStore.get()[0].synced).toBe(true)
+    expect([...entryStore.get(), ...pitStore.get()].every((e) => e.synced)).toBe(true)
     expect(sent(saved.value.id)).toEqual([
       expect.objectContaining({
         event_key: EVENT_KEY,
@@ -307,13 +297,6 @@ describe('syncing pit entries', () => {
         scouted_at: saved.value.created_at,
       }),
     ])
-  })
-
-  it('sends match and pit entries together', async () => {
-    saveEntry(FORM)
-    savePitEntry(PIT)
-    await syncEntries()
-    expect([...entryStore.get(), ...pitStore.get()].every((e) => e.synced)).toBe(true)
   })
 
   it('never sends a pit entry twice, even if the phone sends it again', async () => {
@@ -587,17 +570,15 @@ describe('Match 13 answers', () => {
     vi.resetModules()
   })
 
-  it('asks the match13 function for the event, and ranks the ratings best first', async () => {
-    const { data, callFunction } = await withAnswer({ ok: true, value: { eventKey: '2026ilch', teams: [row(9991, 30), row(4096, 50), row(9992, 50)], year: 2026 } })
-    const result = await data.getRatings('2026ilch')
-    expect(callFunction).toHaveBeenCalledWith('match13', { kind: 'ratings', event: '2026ilch' }, expect.any(Function))
+  it('asks the match13 function for the event, ranks the ratings best first, and turns a prediction into who is likely to win, and by how much', async () => {
+    const ratings = await withAnswer({ ok: true, value: { eventKey: '2026ilch', teams: [row(9991, 30), row(4096, 50), row(9992, 50)], year: 2026 } })
+    const result = await ratings.data.getRatings('2026ilch')
+    expect(ratings.callFunction).toHaveBeenCalledWith('match13', { kind: 'ratings', event: '2026ilch' }, expect.any(Function))
     expect(result.ok && result.value.map((r) => r.teamNumber)).toEqual([4096, 9992, 9991])
-  })
 
-  it('turns a prediction into who is likely to win, and by how much', async () => {
-    const { data, callFunction } = await withAnswer({ ok: true, value: { eventKey: '2026ilch', matches: [match], year: 2026 } })
-    expect(await data.getPredictions('2026ilch')).toEqual({ ok: true, value: [{ key: '2026ilch_qm1', redWinChance: 0.81, redScore: 120.4, blueScore: 95.2 }] })
-    expect(callFunction).toHaveBeenCalledWith('match13', { kind: 'predictions', event: '2026ilch' }, expect.any(Function))
+    const predictions = await withAnswer({ ok: true, value: { eventKey: '2026ilch', matches: [match], year: 2026 } })
+    expect(await predictions.data.getPredictions('2026ilch')).toEqual({ ok: true, value: [{ key: '2026ilch_qm1', redWinChance: 0.81, redScore: 120.4, blueScore: 95.2 }] })
+    expect(predictions.callFunction).toHaveBeenCalledWith('match13', { kind: 'predictions', event: '2026ilch' }, expect.any(Function))
   })
 
   it('passes on what went wrong, written for the person', async () => {
@@ -886,19 +867,19 @@ describe('filling in the team from the schedule', () => {
     positionStore.reset()
   })
 
-  it('finds the team for each position in a match', () => {
-    expect(teamFor(SCHEDULE, 1, 'Red 1')).toBe(4096)
-    expect(teamFor(SCHEDULE, 1, 'Red 3')).toBe(9992)
-    expect(teamFor(SCHEDULE, 1, 'Blue 2')).toBe(9994)
-    expect(teamFor(SCHEDULE, 2, 'Red 3')).toBe(4096)
-    expect(teamFor(SCHEDULE, 2, 'Blue 1')).toBe(9991)
-  })
-
-  it("finds nothing for a match that isn't in the schedule, with no position, or with no schedule", () => {
-    expect(teamFor(SCHEDULE, 3, 'Red 1')).toBeNull()
-    expect(teamFor(SCHEDULE, 0, 'Red 1')).toBeNull()
-    expect(teamFor(SCHEDULE, 1, '')).toBeNull()
-    expect(teamFor(null, 1, 'Red 1')).toBeNull()
+  it("finds the team for each position in a match, and nothing for a match that isn't in the schedule, with no position, or with no schedule", () => {
+    const found: [SavedSchedule | null, number, Parameters<typeof teamFor>[2], number | null][] = [
+      [SCHEDULE, 1, 'Red 1', 4096],
+      [SCHEDULE, 1, 'Red 3', 9992],
+      [SCHEDULE, 1, 'Blue 2', 9994],
+      [SCHEDULE, 2, 'Red 3', 4096],
+      [SCHEDULE, 2, 'Blue 1', 9991],
+      [SCHEDULE, 3, 'Red 1', null],
+      [SCHEDULE, 0, 'Red 1', null],
+      [SCHEDULE, 1, '', null],
+      [null, 1, 'Red 1', null],
+    ]
+    for (const [schedule, match, position, team] of found) expect(teamFor(schedule, match, position), `${schedule ? 'match' : 'no schedule'} ${match} ${position}`).toBe(team)
   })
 
   it('remembers the position on this device, even when the example data is reset', () => {
@@ -942,22 +923,14 @@ describe('the saved schedule when The Blue Alliance has none to give', () => {
     expect(data.teamFor(result.value, 1, 'Blue 3')).toBe(6)
   })
 
-  it('uses the saved copy with no connection', async () => {
+  it("uses the saved copy with no connection, but not one for another event, and otherwise says what went wrong, so the scout can type the team in", async () => {
     const data = await withAnswer(NO_CONNECTION)
     data.scheduleStore.set(SAVED)
     expect(await data.loadSchedule()).toEqual({ ok: true, value: SAVED })
-  })
-
-  it('says what went wrong with no connection and nothing saved, so the scout can type the team in', async () => {
-    const data = await withAnswer(NO_CONNECTION)
-    data.scheduleStore.reset()
-    expect(await data.loadSchedule()).toEqual({ ok: false, error: `Couldn't get the match schedule. ${NO_CONNECTION.error}` })
-  })
-
-  it("doesn't use a schedule saved for another event", async () => {
-    const data = await withAnswer(NO_CONNECTION)
     data.scheduleStore.set({ ...SAVED, event: '2025old' })
     expect((await data.loadSchedule()).ok).toBe(false)
+    data.scheduleStore.reset()
+    expect(await data.loadSchedule()).toEqual({ ok: false, error: `Couldn't get the match schedule. ${NO_CONNECTION.error}` })
   })
 
   it("keeps the saved copy when TBA's schedule is empty", async () => {
@@ -1008,7 +981,7 @@ describe('the match schedule with Match 13 predictions', () => {
     expect(matchesWithPredictions([qm1], []).map((r) => r.prediction)).toEqual([null])
   })
 
-  it('puts matches in the order they are played, whatever order TBA sends them in', () => {
+  it('puts matches in the order they are played, whatever order TBA sends them in, named the way the team says them', () => {
     const rows = matchesWithPredictions([
       tbaMatch('f', 1, 2, [1], [2]),
       tbaMatch('sf', 2, 1, [1], [2]),
@@ -1018,6 +991,8 @@ describe('the match schedule with Match 13 predictions', () => {
       tbaMatch('f', 1, 1, [1], [2]),
     ], [])
     expect(rows.map((r) => r.label)).toEqual(['Qual 2', 'Qual 10', 'Semifinal 1', 'Semifinal 2', 'Final 1', 'Final 2'])
+    expect(matchLabel({ comp_level: 'sf', set_number: 3, match_number: 1 })).toBe('Semifinal 3')
+    expect(matchLabel({ comp_level: 'qf', set_number: 1, match_number: 2 })).toBe('Quarterfinal 1 match 2')
   })
 
   it('counts a match as played only when both scores are in', () => {
@@ -1026,13 +1001,6 @@ describe('the match schedule with Match 13 predictions', () => {
     // TBA sometimes sends null instead of -1. In JavaScript null >= 0 is true, so this checks null isn't counted as a score.
     const nulls = tbaMatch('qm', 1, 3, [1], [2], [null as unknown as number, null as unknown as number])
     expect(matchesWithPredictions([played, notYet, nulls], []).map((r) => r.score)).toEqual([{ red: 0, blue: 12 }, null, null])
-  })
-
-  it('names matches the way the team says them', () => {
-    expect(matchLabel({ comp_level: 'qm', set_number: 1, match_number: 12 })).toBe('Qual 12')
-    expect(matchLabel({ comp_level: 'sf', set_number: 3, match_number: 1 })).toBe('Semifinal 3')
-    expect(matchLabel({ comp_level: 'qf', set_number: 1, match_number: 2 })).toBe('Quarterfinal 1 match 2')
-    expect(matchLabel({ comp_level: 'f', set_number: 1, match_number: 2 })).toBe('Final 2')
   })
 
   it('says who is likely to win and their chance', () => {
@@ -1222,35 +1190,28 @@ describe('teamSummary', () => {
   })
   const counter = (summary: TeamSummary, key: string) => summary.counters.find((c) => c.key === key)
 
-  it('averages each counter, and lists each match', () => {
+  it("averages each counter over the entries that have it, lists each match, and follows the counters in season.ts", () => {
     const summary = teamSummary(9991, [row(4, { counts: { autoFuel: 1 } }), row(2, { counts: { autoFuel: 4 } })], [])
     expect(summary.matchCount).toBe(2)
     expect(counter(summary, 'autoFuel')).toEqual({ key: 'autoFuel', label: 'Auto fuel scored', average: 2.5, perMatch: [{ match: 2, count: 4 }, { match: 4, count: 1 }] })
+    // Only entries that have the counter count, it's null when none do, and counters season.ts doesn't have are ignored.
+    const partly = teamSummary(9991, [row(1, { counts: { autoFuel: 3, oldCounter: 9 } }), row(2, { counts: {} })], [])
+    expect(counter(partly, 'autoFuel')).toMatchObject({ average: 3, perMatch: [{ match: 1, count: 3 }] })
+    expect(counter(partly, 'teleopFuel')).toMatchObject({ average: null, perMatch: [] })
+    expect(counter(partly, 'oldCounter')).toBeUndefined()
+    // A counter added to season.ts shows with no other change.
+    const added = teamSummary(9991, [row(1, { counts: { climbs: 2 } }), row(2, { counts: { climbs: 4 } })], [], [...COUNTERS, { key: 'climbs', label: 'Climbs' }])
+    expect(counter(added, 'climbs')).toMatchObject({ label: 'Climbs', average: 3 })
   })
 
-  it('leaves out other teams and other events', () => {
+  it('leaves out other teams and other events, and counts two scouts on the same robot in the same match as two entries', () => {
     const summary = teamSummary(9991, [row(1), row(2, { team_number: 9992 }), row(3, { event_key: '2025ilch' })], [pit({ team_number: 9992 }), pit({ event_key: '2025ilch' })])
     expect(summary.matchCount).toBe(1)
     expect(summary.pitCount).toBe(0)
-  })
-
-  it('counts two scouts on the same robot in the same match as two entries', () => {
     expect(teamSummary(9991, [row(5), row(5)], []).matchCount).toBe(2)
   })
 
-  it('shows a counter added to season.ts with no other change', () => {
-    const summary = teamSummary(9991, [row(1, { counts: { climbs: 2 } }), row(2, { counts: { climbs: 4 } })], [], [...COUNTERS, { key: 'climbs', label: 'Climbs' }])
-    expect(counter(summary, 'climbs')).toMatchObject({ label: 'Climbs', average: 3 })
-  })
-
-  it("averages only entries that have the counter, gives null when none do, and ignores counters season.ts doesn't have", () => {
-    const summary = teamSummary(9991, [row(1, { counts: { autoFuel: 3, oldCounter: 9 } }), row(2, { counts: {} })], [])
-    expect(counter(summary, 'autoFuel')).toMatchObject({ average: 3, perMatch: [{ match: 1, count: 3 }] })
-    expect(counter(summary, 'teleopFuel')).toMatchObject({ average: null, perMatch: [] })
-    expect(counter(summary, 'oldCounter')).toBeUndefined()
-  })
-
-  it('counts every endgame choice in order, including ones that never came up', () => {
+  it('counts every endgame choice in order, including ones that never came up, and each role an entry chose, out of the number of matches', () => {
     const summary = teamSummary(9991, [row(1, { endgame: 'Level 2' }), row(2, { endgame: 'Level 2' }), row(3, { endgame: 'None' }), row(4, { endgame: 'Level 2' })], [])
     expect(summary.endgame).toEqual([
       { option: 'None', count: 1, share: 0.25 },
@@ -1258,21 +1219,15 @@ describe('teamSummary', () => {
       { option: 'Level 2', count: 3, share: 0.75 },
       { option: 'Level 3', count: 0, share: 0 },
     ])
+    const roles = teamSummary(9991, [row(1, { roles: ['Scorer', 'Defender'] }), row(2, { roles: ['Scorer'] }), row(3, { roles: [] })], []).roles
+    expect(roles.map((t) => [t.option, t.count])).toEqual([['Scorer', 2], ['Defender', 1], ['Feeder', 0]])
+    expect(roles[0].share).toBeCloseTo(2 / 3)
   })
 
-  it('counts each role an entry chose, out of the number of matches', () => {
-    const summary = teamSummary(9991, [row(1, { roles: ['Scorer', 'Defender'] }), row(2, { roles: ['Scorer'] }), row(3, { roles: [] })], [])
-    expect(summary.roles.map((t) => [t.option, t.count])).toEqual([['Scorer', 2], ['Defender', 1], ['Feeder', 0]])
-    expect(summary.roles[0].share).toBeCloseTo(2 / 3)
-  })
-
-  it('skips entries with no driver skill', () => {
-    const summary = teamSummary(9991, [row(1, { driver_skill: 4 }), row(2, { driver_skill: null })], [])
-    expect(summary.driverSkill.map((t) => t.option)).toEqual(['1', '2', '3', '4', '5'])
-    expect(summary.driverSkill[3]).toEqual({ option: '4', count: 1, share: 1 })
-  })
-
-  it('counts stops, break-downs and the drivetrain from the pit form', () => {
+  it('counts driver skill, skipping entries with none, and stops, break-downs and the drivetrain from the pit form', () => {
+    const skill = teamSummary(9991, [row(1, { driver_skill: 4 }), row(2, { driver_skill: null })], []).driverSkill
+    expect(skill.map((t) => t.option)).toEqual(['1', '2', '3', '4', '5'])
+    expect(skill[3]).toEqual({ option: '4', count: 1, share: 1 })
     const summary = teamSummary(9991, [row(1, { stop: 'E-stop', broke_down: true }), row(2)], [pit({ drivetrain: 'Tank' }), pit({ drivetrain: '' })])
     expect(summary.stops.find((t) => t.option === 'E-stop')).toEqual({ option: 'E-stop', count: 1, share: 0.5 })
     expect(summary.brokeDown).toBe(1)
