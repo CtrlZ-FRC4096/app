@@ -7,6 +7,8 @@
  *
  *   - public/sw.js is the service worker: a small script the browser keeps
  *     running in the background, which shows a notification when one comes.
+ *     It also keeps the app's files for using it offline (offline.ts), so
+ *     it's installed for everyone, and turning notifications off leaves it.
  *   - Turning notifications on asks the browser to allow them, then gets an
  *     address for this device from the browser's push service and saves it
  *     with save_push_subscription() (supabase/migrations/..._push_subscriptions.sql).
@@ -26,11 +28,16 @@
  */
 import { callFunction } from './functions'
 import { addTestNotification } from './notifications'
+import { createStore } from './store'
 import { supabase } from './supabase'
 import { fail, ok, type Result } from './table'
 
 /** The service worker, next to index.html. */
 const WORKER = './sw.js'
+
+// Demo mode has no push service to subscribe to, so it remembers on/off here.
+// (The worker being installed doesn't say: it's installed for everyone.)
+const demoPushOn = createStore('push-demo-on', 1, () => false, { keepOnReset: true })
 
 /**
  * What this browser can do about notifications:
@@ -135,9 +142,9 @@ export async function pushState(): Promise<PushState> {
   if (support !== 'ready') return support
   if (Notification.permission === 'denied') return 'blocked'
   if (Notification.permission !== 'granted') return 'off'
+  if (!supabase) return demoPushOn.get() ? 'on' : 'off'
   const worker = await registration()
   if (!worker) return 'off'
-  if (!supabase) return 'on'
   return (await worker.pushManager.getSubscription()) ? 'on' : 'off'
 }
 
@@ -160,7 +167,10 @@ export async function turnOnPush(key: string): Promise<Result> {
   try {
     await navigator.serviceWorker.register(WORKER)
     const worker = await navigator.serviceWorker.ready
-    if (!supabase) return ok(null)
+    if (!supabase) {
+      demoPushOn.set(true)
+      return ok(null)
+    }
     if (!key) return fail("Couldn't get the key for notifications. Reload the page and try again.")
     const subscription =
       (await worker.pushManager.getSubscription()) ??
@@ -177,15 +187,14 @@ export async function turnOnPush(key: string): Promise<Result> {
 /** Turn off notifications for this device. Other devices stay on. */
 export async function turnOffPush(): Promise<Result> {
   if (pushSupport(thisDevice()) !== 'ready') return ok(null)
+  demoPushOn.set(false)
+  // Only the subscription goes. The worker stays: it also keeps the app's
+  // files for using it offline (offline.ts).
   const worker = await registration()
   const subscription = await worker?.pushManager.getSubscription()
-  if (!subscription) {
-    await worker?.unregister()
-    return ok(null)
-  }
+  if (!subscription) return ok(null)
   const { endpoint } = subscription
   await subscription.unsubscribe()
-  await worker?.unregister()
   if (!supabase) return ok(null)
   const { error } = await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint)
   return error ? fail("It's off on this device, but couldn't be removed from your list. Try again.") : ok(null)

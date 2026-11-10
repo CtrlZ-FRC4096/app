@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import { POSITIONS } from './data'
 import ScoutingPage from './ScoutingPage'
+import Schedule from './Schedule'
 import { AUTO_SIDES, DRIVETRAINS, ROLES } from './season'
 
 describe('the Match / Pit switch', () => {
@@ -11,6 +12,20 @@ describe('the Match / Pit switch', () => {
     const html = renderToString(<ScoutingPage />)
     expect(html).toContain('aria-pressed="true">Match</button>')
     expect(html).toMatch(/<div hidden="">.*Pit form/)
+  })
+})
+
+describe('the schedule', () => {
+  it('is a third choice in the switch, and not on the page until chosen', () => {
+    const html = renderToString(<ScoutingPage />)
+    expect(html).toContain('aria-pressed="false">Schedule</button>')
+    expect(html).not.toContain('Match schedule')
+  })
+
+  it('has a Just ours switch, and says it is getting the schedule before it has one', () => {
+    const html = renderToString(<Schedule />)
+    expect(html).toContain('Just ours (<!-- -->4096<!-- -->)')
+    expect(html).toContain('Getting the schedule…')
   })
 })
 
