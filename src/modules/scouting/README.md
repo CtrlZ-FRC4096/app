@@ -14,7 +14,11 @@
   - every minute while any are waiting
 
   A **Send now** button is there too, but it's never needed. Entries need someone signed in on the phone to send.
-- A Match / Pit switch at the top of the page. The choice is in the address: `#/scouting` is the match form and `#/scouting/pit` the pit form. Each form is one panel, with a line between its sections (`FormSection.tsx`). The pit form (`PitForm.tsx`) asks for the team, drivetrain, weight and size, motors, preferred auto and strategy. Its choice lists are `DRIVETRAINS` and `AUTO_SIDES` in `season.ts`. Save pit entry: `savePitEntry()` in `data.ts` keeps it on this device (`pitStore`). It needs a team number; the match number is optional. Pit entries are sent to the team database the same way as match entries (#35): `syncEntries()` sends both, to the `scouting_pit_entries` table (`supabase/migrations/..._scouting_pit_entries.sql`, rules tested in `supabase/tests/scouting-pit-entries.test.ts`). Every visit to a team is kept. Both forms show what's saved on this device, Waiting or Synced, with `SavedOnDevice.tsx`.
+- The match schedule (#107, `Schedule.tsx`, at `#/scouting/schedule`): every match at the event from The Blue Alliance, with Match 13's prediction for each, like "Red 72%" and the predicted score. Played matches show the real score instead, and a match Match 13 hasn't predicted yet shows "No prediction yet". Our matches are highlighted, and **Just ours** hides the rest. The page only shows; `data.ts` does the work:
+  - `matchesWithPredictions()` matches each prediction to its match by key and puts them in the order they're played.
+  - `refreshSchedule()` gets both and saves them on the device (`scheduleStore`), so with no connection the page shows the last ones with when they're from. Other features that need the schedule offline, like #40, can read it with `savedSchedule()`.
+  - `keepScheduleFresh()` asks again every 2 minutes while the page is open, when the app comes back on screen, and when the phone comes back online. (The `match13` function reuses its answer for 2 minutes, so asking more often doesn't help.)
+- A Match / Pit / Schedule switch at the top of the page. The choice is in the address: `#/scouting` is the match form, `#/scouting/pit` the pit form and `#/scouting/schedule` the schedule. Each form is one panel, with a line between its sections (`FormSection.tsx`). The pit form (`PitForm.tsx`) asks for the team, drivetrain, weight and size, motors, preferred auto and strategy. Its choice lists are `DRIVETRAINS` and `AUTO_SIDES` in `season.ts`. Save pit entry: `savePitEntry()` in `data.ts` keeps it on this device (`pitStore`). It needs a team number; the match number is optional. Pit entries are sent to the team database the same way as match entries (#35): `syncEntries()` sends both, to the `scouting_pit_entries` table (`supabase/migrations/..._scouting_pit_entries.sql`, rules tested in `supabase/tests/scouting-pit-entries.test.ts`). Every visit to a team is kept. Both forms show what's saved on this device, Waiting or Synced, with `SavedOnDevice.tsx`.
 - The Competition menu lists Match and Pit under Scouting (`pages` in `index.ts`).
 
 Entries are kept on the device in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. `syncEntries()` sends the Waiting ones to the `scouting_entries` table (`supabase/migrations/..._scouting_entries.sql`, rules tested in `supabase/tests/scouting-entries.test.ts`) and marks them Synced.
@@ -28,7 +32,7 @@ Don't raise `entryStore`'s version while entries are waiting on phones: entries 
 - A form for one robot in one match, with big buttons for phones
 - Entries save on the device first and sync later
 - A QR code for a waiting entry, so another device can copy it with no network
-- The match schedule from The Blue Alliance
+- ~~The match schedule from The Blue Alliance~~ (done, #107)
 - The form's fields come from a season settings file, so a new game means new settings, not new code
 - Export entries as CSV
 
