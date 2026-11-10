@@ -5,6 +5,7 @@ import { PageHead, Panel, Pick } from '../../core/ui'
 import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
 import FormSection from './FormSection'
 import PitForm from './PitForm'
+import Schedule from './Schedule'
 import SavedOnDevice from './SavedOnDevice'
 import { COUNTERS, ENDGAME, ROLES } from './season'
 
@@ -36,21 +37,27 @@ function PickMany(props: { label: string; options: string[]; value: string[]; on
   )
 }
 
-const FORMS = ['Match', 'Pit']
+const VIEWS = ['Match', 'Pit', 'Schedule']
+/** Each view's address after #/scouting/. */
+const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule' }
 
-// A Match / Pit switch at the top. The choice is in the address, so
-// #/scouting/pit opens the pit form straight away: a menu or a bookmark can
-// link to either form. Both forms stay on the page, and the one not chosen
-// is hidden, so switching doesn't lose what's typed.
+// A Match / Pit / Schedule switch at the top. The choice is in the address,
+// so #/scouting/pit opens the pit form straight away: a menu or a bookmark
+// can link to any of them. Both forms stay on the page, and the one not
+// chosen is hidden, so switching doesn't lose what's typed. The schedule is
+// only on the page while it's chosen, so it only updates while someone's
+// looking at it.
 export default function ScoutingPage() {
-  const form = useRoute().rest[0] === 'pit' ? 'Pit' : 'Match'
+  const rest = useRoute().rest[0] ?? ''
+  const view = VIEWS.find((v) => PATHS[v] === rest) ?? 'Match'
   return (
     <>
       <div style={{ marginBottom: 12 }}>
-        <Pick label="Which form" options={FORMS} value={form} onChange={(f) => navigate('scouting', f === 'Pit' ? 'pit' : '')} />
+        <Pick label="Which page" options={VIEWS} value={view} onChange={(v) => navigate('scouting', PATHS[v])} />
       </div>
-      <div hidden={form !== 'Match'}><MatchForm /></div>
-      <div hidden={form !== 'Pit'}><PitForm /></div>
+      <div hidden={view !== 'Match'}><MatchForm /></div>
+      <div hidden={view !== 'Pit'}><PitForm /></div>
+      {view === 'Schedule' && <Schedule />}
     </>
   )
 }
