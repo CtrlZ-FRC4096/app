@@ -7,7 +7,7 @@ import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import { membersTable } from '../../core/members'
 import {
   addPart, addRobot, addSystem, bomSummary, canEditRobotsAndParts, changePart, changeSystem, checkPart, checkSystem, countParts, filterParts, kindLabel,
-  nextPartNumber, partCountText, partsTable, orderWord, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, shortageFor, shortages, systemsTable, toOrder, toOrderCsv, NO_VENDOR,
+  nextPartNumber, partCountText, partsTable, orderWord, identifyCots, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, shortageFor, shortages, systemsTable, toOrder, toOrderCsv, NO_VENDOR,
   type NewPart, type Part,
 } from './data'
 import { itemsTable, type Item } from '../inventory/data'
@@ -16,6 +16,7 @@ import {
   addStep, advance, changeDone, checkStep, moveBack, removeStep, stationName, stationQueue, stepName, stepsFor, stepsTable, type Step,
 } from './data'
 import { assignStep, checkAssignment, dueText, isOverdue, today } from './data'
+import { MACHINES, MACHINE_FILE_FORMATS, partFileName, partFiles } from './data'
 
 beforeEach(() => {
   setDemoRole('student')
@@ -673,5 +674,123 @@ describe('toOrderCsv', () => {
     expect(toOrderCsv([{ vendor: 'WCP', lines: [line] }, { vendor: NO_VENDOR, lines: [noNumber] }])).toBe(
       'Vendor,Vendor part number,Part,Quantity to order\r\nWCP,WCP-0001,"Bearing, 1/2 in",5\r\nNo vendor yet,,\'=Wheel,2\r\n',
     )
+  })
+})
+
+describe('identifyCots', () => {
+  const found = (part_number: string | null, name = 'Part') => identifyCots({ part_number, name })
+
+  it('knows a West Coast Products number: WCP-0123', () => {
+    expect(found('WCP-0123')).toEqual({ vendor: 'West Coast Products', vendor_part_number: 'WCP-0123' })
+    expect(found(' wcp-0123 ')).toEqual({ vendor: 'West Coast Products', vendor_part_number: 'WCP-0123' })
+  })
+
+  it('knows an AndyMark number: am-1234, with or without a letter after', () => {
+    expect(found('am-1234')).toEqual({ vendor: 'Andy Mark', vendor_part_number: 'am-1234' })
+    expect(found('AM-2161a')).toEqual({ vendor: 'Andy Mark', vendor_part_number: 'am-2161a' })
+  })
+
+  it('knows a REV Robotics number: REV-21-1650', () => {
+    expect(found('REV-21-1650')).toEqual({ vendor: 'REV Robotics', vendor_part_number: 'REV-21-1650' })
+    expect(found('rev-21-1650')).toEqual({ vendor: 'REV Robotics', vendor_part_number: 'REV-21-1650' })
+  })
+
+  it('knows a VEX number: 217-1234 and 276-1234', () => {
+    expect(found('217-1234')).toEqual({ vendor: 'VEX', vendor_part_number: '217-1234' })
+    expect(found('276-1234')).toEqual({ vendor: 'VEX', vendor_part_number: '276-1234' })
+  })
+
+  it("finds the number in the name when the part number is empty or isn't a vendor's", () => {
+    expect(found(null, 'WCP-0123 Hex bearing')).toEqual({ vendor: 'West Coast Products', vendor_part_number: 'WCP-0123' })
+    expect(found('', 'Wheel hub (am-1234)')).toEqual({ vendor: 'Andy Mark', vendor_part_number: 'am-1234' })
+    expect(found('Part 7', 'NEO motor REV-21-1650')).toEqual({ vendor: 'REV Robotics', vendor_part_number: 'REV-21-1650' })
+  })
+
+  it('never takes our own part numbers for bought parts, whatever the name says', () => {
+    expect(found('4096-26-INT-001')).toBeNull()
+    expect(found('4096-26-INT-001', 'Mount for REV-21-1650')).toBeNull()
+    for (const part of filterParts(parts(), 'Custom')) expect(identifyCots(part), part.part_number).toBeNull()
+  })
+
+  it("leaves made parts that only look similar", () => {
+    const made: [string | null, string][] = [
+      [null, 'Intake side plate'],
+      [null, 'Rev B bracket'],
+      [null, 'WCP style gearbox plate'],
+      ['WCP-12', 'Part'], // too short
+      ['WCP-01234', 'Part'], // too long
+      ['REV-21-16501', 'Part'],
+      ['REV-2-1650', 'Part'],
+      ['team-1234', 'Part'], // "am-1234" inside a word
+      ['PRE-V-217-1234', 'Part'], // inside a longer number
+      ['1217-1234', 'Part'],
+      ['217-1234-01', 'Part'],
+      ['555-1234', 'Part'], // not a VEX number
+      [null, 'Plate 2026-11-09'],
+    ]
+    for (const [part_number, name] of made) expect(found(part_number, name), `${part_number} ${name}`).toBeNull()
+  })
+})
+
+describe('MACHINE_FILE_FORMATS', () => {
+  it('gives each machine the kind of file it needs, the usual one first', () => {
+    expect(MACHINE_FILE_FORMATS.lathe).toEqual(['step'])
+    expect(MACHINE_FILE_FORMATS.mill).toEqual(['step'])
+    expect(MACHINE_FILE_FORMATS['3d_printer']).toEqual(['stl', '3mf'])
+    expect(MACHINE_FILE_FORMATS.laser).toEqual(['dxf'])
+    expect(MACHINE_FILE_FORMATS.cnc_router).toEqual(['dxf', 'step'])
+    expect(MACHINE_FILE_FORMATS.hand_tools).toEqual([])
+  })
+
+  it('has every machine', () => {
+    expect(Object.keys(MACHINE_FILE_FORMATS).sort()).toEqual([...MACHINES].sort())
+  })
+})
+
+describe('partFileName', () => {
+  it('uses the part number and revision', () => {
+    expect(partFileName({ part_number: '4096-26-INT-014', revision: 'B' }, 'step')).toBe('4096-26-INT-014_revB.step')
+    expect(partFileName({ part_number: '4096-26-INT-014', revision: 'B' }, '3mf')).toBe('4096-26-INT-014_revB.3mf')
+  })
+
+  it('leaves the revision out when there is none', () => {
+    expect(partFileName({ part_number: '4096-26-INT-014', revision: null }, 'dxf')).toBe('4096-26-INT-014.dxf')
+    expect(partFileName({ part_number: '4096-26-INT-014', revision: ' ' }, 'dxf')).toBe('4096-26-INT-014.dxf')
+  })
+
+  it("swaps anything a file name can't have for a dash", () => {
+    expect(partFileName({ part_number: ' Side plate/left ', revision: 'B 2' }, 'stl')).toBe('Side-plate-left_revB-2.stl')
+    expect(partFileName({ part_number: '..\\secret', revision: null }, 'stl')).toBe('..-secret.stl')
+  })
+})
+
+describe('partFiles', () => {
+  const files = (name: string, machine?: Parameters<typeof partFiles>[2]) => partFiles(part(name), stepsOf(name), machine)
+
+  it("gives the file for each machine in the part's stages", () => {
+    expect(files('Roller shaft')).toEqual([{ format: 'step', name: '4096-26-INT-002_revA.step', machines: ['lathe'] }])
+    expect(files('Pivot spacer')).toEqual([{ format: 'stl', name: '4096-26-INT-003_revA.stl', machines: ['3d_printer'] }])
+    // The frame rail is milled, then routed: a STEP for the mill and a DXF for the router.
+    expect(files('Frame rail')).toEqual([
+      { format: 'step', name: '4096-26-DRV-002_revB.step', machines: ['mill'] },
+      { format: 'dxf', name: '4096-26-DRV-002_revB.dxf', machines: ['cnc_router'] },
+    ])
+  })
+
+  it('gives each kind of file once when two machines use it', () => {
+    const shaft = part('Roller shaft')
+    const steps = [{ ...stage('Roller shaft', 'process1') }, { ...stage('Roller shaft', 'process1'), id: 'second', stage: 'process2' as const, machine: 'mill' as const }]
+    expect(partFiles(shaft, steps)).toEqual([{ format: 'step', name: '4096-26-INT-002_revA.step', machines: ['lathe', 'mill'] }])
+  })
+
+  it("gives only one machine's files for its queue", () => {
+    expect(files('Frame rail', 'cnc_router')).toEqual([{ format: 'dxf', name: '4096-26-DRV-002_revB.dxf', machines: ['cnc_router'] }])
+    expect(files('Frame rail', 'lathe')).toEqual([])
+  })
+
+  it('gives nothing for hand tools, or a part with no machine stages', () => {
+    const shaft = part('Roller shaft')
+    expect(partFiles(shaft, [{ ...stage('Roller shaft', 'process1'), machine: 'hand_tools' }])).toEqual([])
+    expect(files('Brushless motor')).toEqual([])
   })
 })

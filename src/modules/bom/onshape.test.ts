@@ -40,6 +40,25 @@ describe('planOnshapeImport', () => {
     expect(plan.add.map((p) => p.part_number)).toEqual(['4096-26-SHO-020', '4096-26-SHO-021'])
   })
 
+  it("makes a new part with a vendor's part number COTS, from its number or its name", () => {
+    const plan = planOnshapeImport(system, bom(
+      line({ part_number: 'rev-21-1650', name: 'Motor' }),
+      line({ onshape_id: 'x/y/z', name: 'am-1234 Wheel hub' }),
+      line({ onshape_id: 'x/y/w', part_number: 'WCP-0271', name: 'Bearing', vendor: 'WestCoast' }),
+    ), [])
+    expect(plan.add[0]).toMatchObject({ kind: 'cots', vendor: 'REV Robotics', vendor_part_number: 'REV-21-1650', material: null, part_number: '4096-26-SHO-001' })
+    expect(plan.add[1]).toMatchObject({ kind: 'cots', vendor: 'Andy Mark', vendor_part_number: 'am-1234', part_number: '4096-26-SHO-002' })
+    // The vendor typed into Onshape wins over the guess.
+    expect(plan.add[2]).toMatchObject({ kind: 'cots', vendor: 'WestCoast', vendor_part_number: 'WCP-0271' })
+  })
+
+  it("keeps a part already in the app as it is, so a wrong guess changed by hand sticks", () => {
+    const made = part({ onshape_id: 'doc/tab/JHD', name: 'Spacer for am-1234', kind: 'made', material: 'Nylon' })
+    const plan = planOnshapeImport(system, bom(line({ name: 'Spacer for am-1234' })), [made])
+    expect(plan.add).toEqual([])
+    expect(plan.change.some((c) => 'kind' in c.changes)).toBe(false)
+  })
+
   it("makes standard content and parts with a vendor COTS, with Onshape's number as the vendor's", () => {
     const plan = planOnshapeImport(system, bom(line({ standard: true, part_number: '91251A340', name: 'Screw', quantity: 24 }), line({ onshape_id: 'x/y/z', vendor: 'WCP', part_number: 'WCP-0271' })), [])
     expect(plan.add[0]).toMatchObject({ kind: 'cots', vendor: null, vendor_part_number: '91251A340', quantity: 24, material: null, part_number: '4096-26-SHO-001' })

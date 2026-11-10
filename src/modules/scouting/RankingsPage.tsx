@@ -23,7 +23,7 @@ export default function RankingsPage() {
   }, [])
 
   // What to say under the title: when they're from, and why they're old, if they are.
-  const when = saved ? updatedAgo(saved.checked_at, now) : status.checking ? 'Getting the rankings…' : 'No rankings on this phone yet'
+  const when = saved ? `Updated ${updatedAgo(saved.checked_at, new Date(now))}` : status.checking ? 'Getting the rankings…' : 'No rankings on this phone yet'
 
   return (
     <>
