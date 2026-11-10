@@ -19,6 +19,10 @@
  *
  * Demo mode has no server: turning on only asks the browser, and the test
  * comes from the browser itself, so you can still see what one looks like.
+ *
+ * When notifications don't pop up, the Details section on the
+ * Notifications page (pushDetails(), showTestHere()) shows what's wrong
+ * without needing DevTools.
  */
 import { callFunction } from './functions'
 import { addTestNotification } from './notifications'
@@ -201,9 +205,123 @@ export async function sendTest(pushOn: boolean): Promise<Result<string>> {
     const worker = await registration()
     if (!worker || Notification.permission !== 'granted') return fail('Turn notifications on first.')
     const { title, body, url } = added.value
-    await worker.showNotification(title, { body, icon: './icon-192.png', data: { url } })
+    await showOn(worker, title, body, url)
     return ok('Sent. (Demo mode: this browser showed it itself, with no server.)')
   }
   const answer = await callFunction<{ sent: number; removed: number; failed: number }>('push', { kind: 'test' }, () => ({ sent: 1, removed: 0, failed: 0 }))
   return answer.ok ? ok(testResultText(answer.value)) : answer
+}
+
+/** Show a notification from this device's service worker, the same way public/sw.js does. */
+function showOn(worker: ServiceWorkerRegistration, title: string, body: string, url: string | null): Promise<void> {
+  return worker.showNotification(title, { body, icon: './icon-192.png', data: { url } })
+}
+
+/**
+ * Show a test notification straight from this device's service worker,
+ * with no server. If this pops up but Send me a test doesn't, the problem
+ * is getting messages to the device, not showing them.
+ */
+export async function showTestHere(): Promise<Result<string>> {
+  const support = pushSupport(thisDevice())
+  if (support !== 'ready') return fail(SUPPORT_TEXT[support])
+  if (Notification.permission === 'denied') return fail(BLOCKED_TEXT)
+  const worker = await registration()
+  if (!worker || Notification.permission !== 'granted') return fail('Turn notifications on first.')
+  try {
+    await showOn(worker, 'Test from this device', 'If you can see this, this device can show notifications.', './#/notifications')
+    return ok("Shown, with no server. If nothing popped up, check this device's settings allow notifications from your browser, and that Do not disturb is off.")
+  } catch {
+    return fail("This browser wouldn't show it. Tap Turn off, then Turn on, and try again.")
+  }
+}
+
+/**
+ * Facts about notifications on this device, for the Details section on
+ * the Notifications page. It explains what's wrong on computers where
+ * DevTools is blocked. detailLines() turns them into sentences.
+ */
+export interface PushDetails {
+  /** The site address, like https://app.team4096.org/ */
+  address: string
+  /** Whether the browser counts this address as secure (https). Notifications need it. */
+  secure: boolean
+  /** Whether the browser allows notifications for this site, or 'missing' if it can't show them at all. */
+  permission: NotificationPermission | 'missing'
+  /** The service worker (public/sw.js): not set up, starting, or running. */
+  worker: 'none' | 'starting' | 'running'
+  /** The addresses the service worker looks after, like https://app.team4096.org/ */
+  workerScope: string | null
+  /** Only the push service's name, like fcm.googleapis.com. See pushServiceName(). */
+  pushService: string | null
+  /** Demo mode, which has no server, so never signs up with a push service. */
+  demo: boolean
+}
+
+/**
+ * The push service's name from a device's address: only the host, like
+ * fcm.googleapis.com. Never show the whole address: anyone who has it can
+ * send this device notifications, so it works like a password.
+ */
+export function pushServiceName(endpoint: string): string {
+  try {
+    return new URL(endpoint).host || 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+/** One line of the Details section: good (ok), something to fix (warn), or not set up yet (plain). */
+export interface DetailLine {
+  label: string
+  tone: 'ok' | 'warn' | 'plain'
+  text: string
+}
+
+export function detailLines(details: PushDetails): DetailLine[] {
+  const { address, secure, permission, worker, workerScope, pushService, demo } = details
+  return [
+    secure
+      ? { label: 'Site address', tone: 'ok', text: address }
+      : { label: 'Site address', tone: 'warn', text: `${address} isn't secure, so notifications can't work here. Open the address that starts with https:// instead.` },
+    permission === 'granted'
+      ? { label: 'Browser permission', tone: 'ok', text: 'Allowed.' }
+      : permission === 'denied'
+        ? { label: 'Browser permission', tone: 'warn', text: BLOCKED_TEXT }
+        : permission === 'default'
+          ? { label: 'Browser permission', tone: 'plain', text: 'Not asked yet. Turn on asks.' }
+          : { label: 'Browser permission', tone: 'warn', text: "This browser can't show notifications." },
+    worker === 'running'
+      ? { label: 'Service worker', tone: 'ok', text: `Running, for ${workerScope ?? address}` }
+      : worker === 'starting'
+        ? { label: 'Service worker', tone: 'plain', text: 'Starting. Reload the page in a moment.' }
+        : { label: 'Service worker', tone: 'plain', text: 'Not set up yet. Turn on sets it up.' },
+    pushService
+      ? { label: 'Push service', tone: 'ok', text: pushService }
+      : demo
+        ? { label: 'Push service', tone: 'plain', text: "None: demo mode has no server, so it doesn't use one." }
+        : { label: 'Push service', tone: 'plain', text: 'None yet. Turn on sets it up.' },
+  ]
+}
+
+/** Gather the facts for the Details section from this browser. */
+export async function pushDetails(): Promise<PushDetails> {
+  const device = thisDevice()
+  let worker: ServiceWorkerRegistration | undefined
+  let subscription: PushSubscription | null = null
+  try {
+    worker = device.serviceWorker ? await registration() : undefined
+    subscription = worker && device.pushManager ? await worker.pushManager.getSubscription() : null
+  } catch {
+    // Some browsers refuse to answer, for example in a private window: show what we have.
+  }
+  return {
+    address: location.origin + location.pathname,
+    secure: window.isSecureContext,
+    permission: device.notification ? Notification.permission : 'missing',
+    worker: !worker ? 'none' : worker.active ? 'running' : 'starting',
+    workerScope: worker?.scope ?? null,
+    pushService: subscription ? pushServiceName(subscription.endpoint) : null,
+    demo: !supabase,
+  }
 }
