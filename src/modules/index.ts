@@ -16,6 +16,7 @@ import { bom } from './bom'
 import { purchasing } from './purchasing'
 import { cnc } from './cnc'
 import { progress } from './progress'
+import { prescouting } from './prescouting'
 import { scouting } from './scouting'
 import { batteries } from './batteries'
 import { status } from './status'
@@ -26,4 +27,4 @@ import { training } from './training'
 import { feedback } from './feedback'
 import { example } from './example'
 
-export const modules: ModuleDefinition[] = [inventory, bom, purchasing, cnc, progress, scouting, batteries, status, calendar, attendance, members, training, feedback, example]
+export const modules: ModuleDefinition[] = [inventory, bom, purchasing, cnc, progress, prescouting, scouting, batteries, status, calendar, attendance, members, training, feedback, example]

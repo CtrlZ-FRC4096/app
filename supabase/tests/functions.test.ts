@@ -56,9 +56,10 @@ describe('isGone', () => {
 })
 
 describe('tbaPath', () => {
-  it('allows the four things scouting needs', () => {
+  it('allows the five things scouting needs', () => {
     expect(tbaPath({ kind: 'schedule', event: '2026ilch' })).toEqual({ path: '/event/2026ilch/matches/simple' })
     expect(tbaPath({ kind: 'rankings', event: '2026ilch' })).toEqual({ path: '/event/2026ilch/rankings' })
+    expect(tbaPath({ kind: 'teams', event: '2026ilch' })).toEqual({ path: '/event/2026ilch/teams/simple' })
     expect(tbaPath({ kind: 'team-matches', team: 4096, event: '2026ilch' })).toEqual({ path: '/team/frc4096/event/2026ilch/matches' })
     expect(tbaPath({ kind: 'team', team: 4096 })).toEqual({ path: '/team/frc4096/simple' })
   })
@@ -71,6 +72,8 @@ describe('tbaPath', () => {
     expect(tbaPath({ kind: 'team', team: '4096/../' })).toHaveProperty('error')
     expect(tbaPath({ kind: 'team', team: 4096.5 })).toHaveProperty('error')
     expect(tbaPath({ kind: 'team-matches', team: 4096 })).toHaveProperty('error')
+    expect(tbaPath({ kind: 'teams' })).toHaveProperty('error')
+    expect(tbaPath({ kind: 'teams', event: '2026ilch/../../status' })).toHaveProperty('error')
   })
 })
 

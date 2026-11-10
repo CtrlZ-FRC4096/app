@@ -2,7 +2,7 @@
  * What the `tba` server function asks The Blue Alliance (TBA), kept apart
  * from index.ts so supabase/tests can test it: plain TypeScript, no Deno.
  *
- * The app can only ask for the four things below, so the team's TBA key
+ * The app can only ask for the five things below, so the team's TBA key
  * can't be used for anything else.
  */
 
@@ -12,6 +12,7 @@ export const TBA_API = 'https://www.thebluealliance.com/api/v3'
 export type TbaRequest =
   | { kind: 'schedule'; event: string }
   | { kind: 'rankings'; event: string }
+  | { kind: 'teams'; event: string }
   | { kind: 'team-matches'; team: number; event: string }
   | { kind: 'team'; team: number }
 
@@ -30,12 +31,15 @@ export function tbaPath(request: unknown): { path: string } | { error: string } 
       return event ? { path: `/event/${event}/matches/simple` } : needEvent
     case 'rankings':
       return event ? { path: `/event/${event}/rankings` } : needEvent
+    case 'teams':
+      // Every team registered for the event. TBA lists them before the schedule is out.
+      return event ? { path: `/event/${event}/teams/simple` } : needEvent
     case 'team-matches':
       return !team ? needTeam : event ? { path: `/team/frc${team}/event/${event}/matches` } : needEvent
     case 'team':
       return team ? { path: `/team/frc${team}/simple` } : needTeam
     default:
-      return { error: 'Ask for one of: schedule, rankings, team-matches or team.' }
+      return { error: 'Ask for one of: schedule, rankings, teams, team-matches or team.' }
   }
 }
 

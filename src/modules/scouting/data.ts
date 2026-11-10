@@ -38,6 +38,9 @@ import { createStore, useStore, type Store } from '../../core/store'
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row, type Table } from '../../core/table'
 import { COUNTERS, DRIVETRAINS, ENDGAME, EVENT_KEY, ROLES, type Counter } from './season'
 
+/** The event we're at, from season.ts, for other modules. */
+export { EVENT_KEY }
+
 // ---------------------------------------------------------------------------
 // Entries, saved on this device.
 
@@ -734,6 +737,17 @@ export function getTeam(team: number): Promise<Result<TbaTeam>> {
   return callFunction<TbaTeam>('tba', { kind: 'team', team }, () => demoTeam(team))
 }
 
+/** Every team registered for an event, by number. TBA lists them before the schedule is out. */
+export async function getEventTeams(event = EVENT_KEY): Promise<Result<TbaTeam[]>> {
+  const result = await callFunction<TbaTeam[] | null>('tba', { kind: 'teams', event }, () => DEMO_TEAMS.map(([team]) => demoTeam(team)))
+  return result.ok ? ok([...(result.value ?? [])].sort((a, b) => a.team_number - b.team_number)) : result
+}
+
+/** A team's page on The Blue Alliance, for the season of `event` (like 2026ilch → 2026). */
+export function tbaTeamUrl(team: number, event = EVENT_KEY): string {
+  return `https://www.thebluealliance.com/team/${team}/${event.slice(0, 4)}`
+}
+
 // ---------------------------------------------------------------------------
 // Filling in the team from the schedule (#40). A scout picks their position
 // once, and the match form fills in the team for that position from the
@@ -1234,13 +1248,14 @@ function demoMatches(event: string): TbaMatchWithVideos[] {
 }
 
 // Made-up Match 13 ratings, in no order like the real ones: [team, xpStart, xpEnd].
+// Best to worst isn't the same as by team number, so sorting by EPA shows a change.
 const DEMO_RATINGS: [team: number, start: number, end: number][] = [
   [9993, 31.2, 30.4],
   [4096, 44.0, 48.6],
   [9995, 20.1, 22.8],
   [9991, 40.3, 41.7],
-  [9994, 27.5, 26.1],
-  [9992, 33.9, 35.2],
+  [9994, 38.0, 44.9],
+  [9992, 27.5, 26.1],
 ]
 
 function demoRatings(): Match13Rating[] {
