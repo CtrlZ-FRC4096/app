@@ -16,6 +16,7 @@ import {
   SCHEDULE_REFRESH_MS, keepScheduleFresh, likelyWinner, matchLabel, matchesWithPredictions, refreshSchedule, savedSchedule, scheduleStatus, scheduleStore, updatedAgo,
   type MatchPrediction, type TbaMatch,
 } from './data'
+import { addMissingTeams, byPosition, moveTeam, picklist, picklistTable, positionBetween, setPickStatus, startPicklist, type PicklistRow } from './data'
 import { COUNTERS, DRIVETRAINS, EVENT_KEY } from './season'
 
 // A filled-in pit form. Each test changes only the part it's about.
@@ -344,6 +345,99 @@ describe('syncing pit entries', () => {
     if (!saved.ok) throw new Error(saved.error)
     const { event_key: _old, ...older } = saved.value
     expect(pitToRow(older)).toMatchObject({ event_key: EVENT_KEY, drivetrain: null, auto_side: null, motors: null, weight: null })
+  })
+})
+
+describe('the shared picklist', () => {
+  beforeEach(() => {
+    picklistTable.reset()
+  })
+
+  // The example list, top first: 9991, 9993 (Picked), 9992, 9995 (Do not pick), 9994.
+  const teams = () => picklist().map((row) => row.team_number)
+  const idOf = (team: number) => picklist().find((row) => row.team_number === team)!.id
+
+  it('puts a position halfway between two teams, or 1000 past the top or bottom', () => {
+    expect(positionBetween(1000, 2000)).toBe(1500)
+    expect(positionBetween(undefined, 1000)).toBe(0)
+    expect(positionBetween(5000, undefined)).toBe(6000)
+    expect(positionBetween()).toBe(1000)
+  })
+
+  it('moves a team up and down one place', async () => {
+    expect(await moveTeam(idOf(9992), -1)).toEqual({ ok: true, value: null })
+    expect(teams()).toEqual([9991, 9992, 9993, 9995, 9994])
+    await moveTeam(idOf(9992), 1)
+    await moveTeam(idOf(9992), 1)
+    expect(teams()).toEqual([9991, 9993, 9995, 9992, 9994])
+  })
+
+  it('moves a team to the very top and the very bottom', async () => {
+    await moveTeam(idOf(9993), -1)
+    expect(teams()).toEqual([9993, 9991, 9992, 9995, 9994])
+    await moveTeam(idOf(9995), 1)
+    expect(teams()).toEqual([9993, 9991, 9992, 9994, 9995])
+  })
+
+  it('does nothing when moving the top team up or the bottom team down', async () => {
+    const before = picklist()
+    expect(await moveTeam(idOf(9991), -1)).toEqual({ ok: true, value: null })
+    expect(await moveTeam(idOf(9994), 1)).toEqual({ ok: true, value: null })
+    expect(picklist()).toEqual(before)
+  })
+
+  it('changes only the moved team in one move', async () => {
+    const before = picklist()
+    await moveTeam(idOf(9995), -1)
+    const changed = picklist().filter((row) => !before.some((old) => JSON.stringify(old) === JSON.stringify(row)))
+    expect(changed.map((row) => row.team_number)).toEqual([9995])
+  })
+
+  it('keeps working when moves leave no room between two teams, by numbering the list again', async () => {
+    // Moving the same two teams past each other over and over halves the gap each time.
+    for (let i = 0; i < 100; i++) await moveTeam(idOf(i % 2 === 0 ? 9992 : 9993), -1)
+    expect(teams()).toEqual([9991, 9993, 9992, 9995, 9994])
+    expect(new Set(picklist().map((row) => row.position)).size).toBe(5)
+  })
+
+  it('puts teams with the same position in team number order', () => {
+    const row = (team_number: number, position: number) => ({ team_number, position }) as PicklistRow
+    expect([row(9993, 1000), row(9991, 1000), row(9992, 500)].sort(byPosition).map((r) => r.team_number)).toEqual([9992, 9991, 9993])
+  })
+
+  it('says a team is gone if someone else removed it', async () => {
+    expect(await moveTeam('00000000-0000-4000-8000-000000000000', 1)).toEqual({ ok: false, error: expect.stringMatching(/isn't on the picklist/) })
+  })
+
+  it('marks a team Picked, Do not pick, or Open again, and it keeps its place', async () => {
+    for (const status of ['Picked', 'Do not pick', 'Open'] as const) {
+      expect(await setPickStatus(idOf(9992), status)).toEqual({ ok: true, value: null })
+      expect(picklist()[2]).toMatchObject({ team_number: 9992, status })
+    }
+  })
+
+  it('starts an empty picklist in the order given, 1000 apart', async () => {
+    const result = await startPicklist([4096, 9991, 9992], '2026test')
+    expect(result.ok).toBe(true)
+    expect(picklist('2026test').map((row) => [row.team_number, row.position, row.status])).toEqual([
+      [4096, 1000, 'Open'],
+      [9991, 2000, 'Open'],
+      [9992, 3000, 'Open'],
+    ])
+  })
+
+  it("won't start a picklist that already has teams, or with no teams", async () => {
+    expect(await startPicklist([4096])).toEqual({ ok: false, error: expect.stringMatching(/already started/) })
+    expect(teams()).toEqual([9991, 9993, 9992, 9995, 9994])
+    expect(await startPicklist([], '2026test')).toEqual({ ok: false, error: expect.stringMatching(/no teams/) })
+    expect(await startPicklist([0], '2026test')).toEqual({ ok: false, error: expect.stringMatching(/Check the team number/) })
+  })
+
+  it('adds only the missing teams, to the bottom', async () => {
+    const result = await addMissingTeams([9992, 4096, 9991, 9996])
+    expect(result.ok && result.value.map((row) => row.team_number)).toEqual([4096, 9996])
+    expect(teams()).toEqual([9991, 9993, 9992, 9995, 9994, 4096, 9996])
+    expect(await addMissingTeams([9991, 4096])).toEqual({ ok: true, value: [] })
   })
 })
 

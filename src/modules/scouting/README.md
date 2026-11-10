@@ -34,6 +34,24 @@ Each entry keeps the id its phone gave it, and the table skips an id it already 
 
 Don't raise `entryStore`'s version while entries are waiting on phones: entries saved under the old version would be ignored.
 
+### Shared picklist (#43, first step: no page yet)
+
+The picklist the strategy team reorders on alliance selection day is saved in the `scouting_picklist` table (`supabase/migrations/..._scouting_picklist.sql`, rules tested in `supabase/tests/scouting-picklist.test.ts`), so every phone shows the same order and changes appear by themselves. Everyone signed in can read it; only mentors and admins can change it. Each event has its own list, and a team is on it once.
+
+The functions are in the "Shared picklist" part of `data.ts`:
+
+| Function | Does |
+|:--|:--|
+| `usePicklist()` | The event's list, top first |
+| `startPicklist(teams)` | Starts an empty list with these teams, best first. Refuses if the list already has teams |
+| `addMissingTeams(teams)` | Adds the teams that aren't on the list to the bottom |
+| `moveTeam(id, -1 or 1)` | Moves a team one place up or down. Nothing happens at the top or bottom |
+| `setPickStatus(id, status)` | Marks a team Open, Picked (on another alliance) or Do not pick. It keeps its place |
+
+Each team has a `position`, smallest at the top, starting 1000 apart. A move changes only the moved team's position, to halfway between its new neighbours (`positionBetween()`), so two people moving different teams at once don't undo each other. If the halves get too close to tell apart, `moveTeam()` numbers the list 1000, 2000, … again. Only `position` and `status` can be changed, so not even a mentor can turn a row into a different team or event.
+
+The page comes next, once the ranked list (#42) is there to start from.
+
 ## What it needs to do
 
 - A form for one robot in one match, with big buttons for phones
