@@ -27,7 +27,7 @@
  * example data in demo mode. See https://match13.com/docs/api for
  * everything Match 13 sends.
  */
-import { useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { TEAM_TIME_ZONE } from '../../core/calendar'
 import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
@@ -796,6 +796,111 @@ export function teamFor(schedule: SavedSchedule | null, match: number, position:
   const [color, spot] = position.split(' ')
   const team = (color === 'Red' ? found.alliances.red : found.alliances.blue).team_keys[Number(spot) - 1]
   return team ? teamNumber(team) : null
+}
+
+// ---------------------------------------------------------------------------
+// Match videos (#41): a team's qualification matches, each with links to its
+// videos on The Blue Alliance. TBA adds videos as the event goes on, so a
+// played match can have none yet. For the team page.
+
+/**
+ * A link to watch a video, or null if it isn't a YouTube video with a
+ * normal-looking key. Some keys start partway in, like "abc123?t=30". Odd
+ * keys are dropped, so whatever TBA sends can't become a strange link.
+ */
+export function videoLink(video: TbaVideo): string | null {
+  if (video.type !== 'youtube' || !/^[\w-]+(\?t=\d+)?$/.test(video.key)) return null
+  return `https://youtu.be/${video.key}`
+}
+
+/** One of a team's qualification matches, for the match videos list. */
+export interface QualVideoRow {
+  /** Like 2026ilch_qm12. */
+  key: string
+  /** The qualification match number. */
+  number: number
+  /** The alliance the team was on. */
+  alliance: 'red' | 'blue'
+  /** How it went for the team, or null if it hasn't been played yet. */
+  result: 'Won' | 'Lost' | 'Tied' | null
+  /** The team's alliance's score and the other one's. -1 until played. */
+  ourScore: number
+  theirScore: number
+  /** A link for each video, or none if TBA has no video yet. */
+  links: string[]
+}
+
+/** A team's qualification matches from getTeamMatches(), in order, with their video links. Playoffs are left out. */
+export function qualVideoRows(matches: TbaMatchWithVideos[], team: number): QualVideoRow[] {
+  const rows: QualVideoRow[] = []
+  for (const match of matches) {
+    if (match.comp_level !== 'qm') continue
+    const alliance = match.alliances.red.team_keys.includes(`frc${team}`) ? 'red' : match.alliances.blue.team_keys.includes(`frc${team}`) ? 'blue' : null
+    if (!alliance) continue
+    const ourScore = match.alliances[alliance].score
+    const theirScore = match.alliances[alliance === 'red' ? 'blue' : 'red'].score
+    const played = ourScore >= 0 && theirScore >= 0
+    rows.push({
+      key: match.key,
+      number: match.match_number,
+      alliance,
+      result: !played ? null : ourScore > theirScore ? 'Won' : ourScore < theirScore ? 'Lost' : 'Tied',
+      ourScore,
+      theirScore,
+      links: match.videos.map(videoLink).filter((link) => link !== null),
+    })
+  }
+  return rows.sort((a, b) => a.number - b.number)
+}
+
+export interface TeamQualVideos {
+  rows: QualVideoRow[]
+  loading: boolean
+  /** Why the last load didn't work, or null. */
+  error: string | null
+  /** Load again, for a "Check again" button: TBA may have new videos. */
+  reload: () => void
+}
+
+/** What the last load gave, and which team and try it was for. */
+interface LoadedVideos {
+  team: number
+  tries: number
+  rows: QualVideoRow[]
+  error: string | null
+}
+
+/**
+ * A team's qualification matches with their video links, loaded when the
+ * page opens and again with reload(). Not kept on this device: videos
+ * change during the event, so it always asks TBA.
+ */
+export function useTeamQualVideos(team: number): TeamQualVideos {
+  const [tries, setTries] = useState(0)
+  const [loaded, setLoaded] = useState<LoadedVideos | null>(null)
+  useEffect(() => {
+    // If the team changes before TBA answers, this answer is for the old team: ignore it.
+    let current = true
+    void getTeamMatches(team).then((result) => {
+      if (!current) return
+      setLoaded((prev) => {
+        // If it didn't work, keep showing this team's matches from last time.
+        const rows = result.ok ? qualVideoRows(result.value, team) : prev?.team === team ? prev.rows : []
+        return { team, tries, rows, error: result.ok ? null : result.error }
+      })
+    })
+    return () => {
+      current = false
+    }
+  }, [team, tries])
+  const reload = useCallback(() => setTries((n) => n + 1), [])
+  const loading = loaded?.team !== team || loaded.tries !== tries
+  return {
+    rows: loaded?.team === team ? loaded.rows : [],
+    loading,
+    error: loading ? null : loaded.error,
+    reload,
+  }
 }
 
 // ---------------------------------------------------------------------------
