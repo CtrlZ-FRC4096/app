@@ -31,7 +31,7 @@ export const migrations: { file: string; sql: string }[] = Object.entries(migrat
 /** The Slack workspace the test database lets in. */
 export const TEAM_SLACK_ID = 'T0CTRLZ4096'
 
-export type Role = 'student' | 'mentor' | 'admin'
+export type Role = 'student' | 'leader' | 'mentor' | 'admin'
 type Params = unknown[]
 
 let template: Promise<PGlite> | undefined

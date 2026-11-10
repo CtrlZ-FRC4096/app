@@ -18,7 +18,7 @@ export default function MembersPage() {
 
   async function role(member: Member, next: Role) {
     const result = await changeRole(member, next)
-    toast(result.ok ? `${member.name} is now ${next === 'admin' ? 'an' : 'a'} ${next}.` : result.error)
+    toast(result.ok ? `${member.name} is now ${next === 'admin' ? 'an' : 'a'} ${roleName(next).toLowerCase()}.` : result.error)
   }
 
   async function access(member: Member, on: boolean) {

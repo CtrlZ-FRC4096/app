@@ -23,13 +23,14 @@ repo. Changes here need a mentor's approval (see `.github/CODEOWNERS`).
   signs in, a trigger in the members migration adds them to `members` as a
   student, but only if Slack says they came through the Ctrl-Z workspace.
   Anyone else is turned away before an account is made.
-- **Roles.** `members.role` is student, mentor or admin. Admins change it in
-  the app's Members module. Switching off someone's access (`active = false`)
-  locks them out straight away.
+- **Roles.** `members.role` is student, leader (shown as "Student leader"),
+  mentor or admin. Admins change it in the app's Members module. Switching
+  off someone's access (`active = false`) locks them out straight away.
 - **Permission rules.** Every table has row level security on, and policies
   that say who can read and change what, using `private.is_member()`,
-  `private.is_mentor()` and `private.is_admin()`. People who aren't signed in
-  get nothing. These rules are the real security: the browser can send the
+  `private.is_leader()` (student leaders, mentors and admins),
+  `private.is_mentor()` (mentors and admins) and `private.is_admin()`.
+  People who aren't signed in get nothing. These rules are the real security: the browser can send the
   database anything.
 - **Migrations go out automatically.** When a pull request is merged, the
   Deploy workflow applies any new migrations to the database before it
