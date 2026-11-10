@@ -2,10 +2,12 @@
 // new role there should show up on the form with no other change.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
-import { getRatings, picklistParts, ratingsStore, resetRatings, setWeight, weightsStore } from './data'
+import { setDemoRole } from '../../core/demo'
+import { getRatings, picklistParts, picklistTable, ratingsStore, resetRatings, setWeight, weightsStore } from './data'
 import Picklist from './Picklist'
 import ScoutingPage from './ScoutingPage'
 import Schedule from './Schedule'
+import SharedPicklist from './SharedPicklist'
 import TeamPage from './TeamPage'
 import { AUTO_SIDES, COUNTERS, DRIVETRAINS, EVENT_KEY, ROLES } from './season'
 
@@ -105,6 +107,60 @@ describe('the picklist', () => {
     const html = renderToString(<Picklist />)
     expect(html).toContain("Couldn&#x27;t reach Match 13: Match 13 is down.")
     expect(html).toContain('No Match 13 rating yet')
+  })
+})
+
+describe('the final picklist', () => {
+  // The example list (EXAMPLE_PICKLIST in data.ts), top first: 9991, 9993
+  // (Picked), 9992, 9995 (Do not pick), 9994.
+  beforeEach(() => picklistTable.reset())
+  afterEach(() => {
+    setDemoRole('student')
+    picklistTable.reset()
+  })
+  async function emptyList() {
+    for (const row of picklistTable.rows()) await picklistTable.remove(row.id)
+  }
+
+  it('is a choice in the switch, and not on the page until chosen', () => {
+    const html = renderToString(<ScoutingPage />)
+    expect(html).toContain('aria-pressed="false">Final picklist</button>')
+    expect(html).not.toContain('The order the strategy team wants')
+  })
+
+  it('shows a student the list with no buttons to change it', () => {
+    setDemoRole('student')
+    const html = renderToString(<SharedPicklist />)
+    expect(html).toContain('href="#/scouting/team/9991"')
+    expect(html).not.toContain('Move team')
+    expect(html).not.toContain('Start from the ranked list')
+    expect(html).toContain('Only mentors can change it.')
+  })
+
+  it('gives a mentor up and down buttons, and a status for each team', () => {
+    setDemoRole('mentor')
+    const html = renderToString(<SharedPicklist />)
+    expect(html).toContain('aria-label="Move team 9992 up"')
+    expect(html).toContain('aria-label="Move team 9992 down"')
+    expect(html).toContain('aria-label="Team 9992&#x27;s status"')
+    // The top team can't go up, and the bottom one can't go down.
+    expect(html).toMatch(/aria-label="Move team 9991 up" disabled=""/)
+    expect(html).toMatch(/aria-label="Move team 9994 down" disabled=""/)
+  })
+
+  it('keeps Picked and Do not pick teams in their place, with their status', () => {
+    const html = renderToString(<SharedPicklist />)
+    const places = [...html.matchAll(/team\/(\d+)"/g)].map((m) => m[1])
+    expect(places).toEqual(['9991', '9993', '9992', '9995', '9994'])
+    expect(html).toContain('>Picked</span>')
+    expect(html).toContain('>Do not pick</span>')
+  })
+
+  it('tells a student the picklist is not made yet, and offers a mentor to start it', async () => {
+    await emptyList()
+    expect(renderToString(<SharedPicklist />)).toContain('The strategy team hasn&#x27;t made the picklist yet.')
+    setDemoRole('mentor')
+    expect(renderToString(<SharedPicklist />)).toContain('Start from the ranked list')
   })
 })
 

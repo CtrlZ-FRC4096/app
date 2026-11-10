@@ -18,7 +18,7 @@
   - `matchesWithPredictions()` matches each prediction to its match by key and puts them in the order they're played.
   - `refreshSchedule()` gets both and saves them on the device (`scheduleStore`), so with no connection the page shows the last ones with when they're from. Other features that need the schedule offline, like #40, can read it with `savedSchedule()`.
   - `keepScheduleFresh()` asks again every 2 minutes while the page is open, when the app comes back on screen, and when the phone comes back online. (The `match13` function reuses its answer for 2 minutes, so asking more often doesn't help.)
-- A Match / Pit / Schedule / Picklist switch at the top of the page. The choice is in the address: `#/scouting` is the match form, `#/scouting/pit` the pit form, `#/scouting/schedule` the schedule and `#/scouting/picklist` the picklist. Each form is one panel, with a line between its sections (`FormSection.tsx`). The pit form (`PitForm.tsx`) asks for the team, drivetrain, weight and size, motors, preferred auto and strategy. Its choice lists are `DRIVETRAINS` and `AUTO_SIDES` in `season.ts`. Save pit entry: `savePitEntry()` in `data.ts` keeps it on this device (`pitStore`). It needs a team number; the match number is optional. Pit entries are sent to the team database the same way as match entries (#35): `syncEntries()` sends both, to the `scouting_pit_entries` table (`supabase/migrations/..._scouting_pit_entries.sql`, rules tested in `supabase/tests/scouting-pit-entries.test.ts`). Every visit to a team is kept. Both forms show what's saved on this device, Waiting or Synced, with `SavedOnDevice.tsx`.
+- A Match / Pit / Schedule / Picklist / Final picklist switch at the top of the page. The choice is in the address: `#/scouting` is the match form, `#/scouting/pit` the pit form, `#/scouting/schedule` the schedule, `#/scouting/picklist` the picklist and `#/scouting/shared-picklist` the final picklist. Each form is one panel, with a line between its sections (`FormSection.tsx`). The pit form (`PitForm.tsx`) asks for the team, drivetrain, weight and size, motors, preferred auto and strategy. Its choice lists are `DRIVETRAINS` and `AUTO_SIDES` in `season.ts`. Save pit entry: `savePitEntry()` in `data.ts` keeps it on this device (`pitStore`). It needs a team number; the match number is optional. Pit entries are sent to the team database the same way as match entries (#35): `syncEntries()` sends both, to the `scouting_pit_entries` table (`supabase/migrations/..._scouting_pit_entries.sql`, rules tested in `supabase/tests/scouting-pit-entries.test.ts`). Every visit to a team is kept. Both forms show what's saved on this device, Waiting or Synced, with `SavedOnDevice.tsx`.
 - A team page (#36, `TeamPage.tsx`), at `#/scouting/team/9991`: everything scouted about one team at this event (`EVENT_KEY`). Type a team number, tap a team from the list of scouted teams, or tap "Team 9991" in the list of saved entries. It shows:
   - **Numbers**: each counter in `season.ts`, its average per match and each match's count
   - **How often**: bars for endgame, role, driver skill, E-stop or A-stop, and drivetrain (from the pit form), and how often it broke down
@@ -26,7 +26,8 @@
 
   The sums are `teamSummary()` in `data.ts`, a plain function so the picklist can use the same numbers. Adding a counter to `season.ts` adds it to the page with no other change. It counts this event's match and pit entries from the team database plus this phone's Waiting ones; two scouts watching the same robot count as two entries. `pitAnswers()` and `pitDrivetrain()` are the only code that reads a pit entry's answers. Each panel is its own component, so new ones (like Match 13's numbers or match videos) go below the others.
 - The picklist (#42, `Picklist.tsx`, at `#/scouting/picklist`): every team at the event ranked best first, from our scouting and Match 13. See "Picklist score" below.
-- The Competition menu lists Match, Pit, Schedule, Teams and Picklist under Scouting (`pages` in `index.ts`).
+- The final picklist (#43, `SharedPicklist.tsx`, at `#/scouting/shared-picklist`): the order the strategy team wants to pick teams in, shared by every phone. See "Shared picklist" below.
+- The Competition menu lists Match, Pit, Schedule, Teams, Picklist and Final picklist under Scouting (`pages` in `index.ts`).
 
 Entries are kept on the device in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. `syncEntries()` sends the Waiting ones to the `scouting_entries` table (`supabase/migrations/..._scouting_entries.sql`, rules tested in `supabase/tests/scouting-entries.test.ts`) and marks them Synced.
 
@@ -34,7 +35,7 @@ Each entry keeps the id its phone gave it, and the table skips an id it already 
 
 Don't raise `entryStore`'s version while entries are waiting on phones: entries saved under the old version would be ignored.
 
-### Shared picklist (#43, first step: no page yet)
+### Shared picklist (#43)
 
 The picklist the strategy team reorders on alliance selection day is saved in the `scouting_picklist` table (`supabase/migrations/..._scouting_picklist.sql`, rules tested in `supabase/tests/scouting-picklist.test.ts`), so every phone shows the same order and changes appear by themselves. Everyone signed in can read it; only mentors and admins can change it. Each event has its own list, and a team is on it once.
 
@@ -50,7 +51,13 @@ The functions are in the "Shared picklist" part of `data.ts`:
 
 Each team has a `position`, smallest at the top, starting 1000 apart. A move changes only the moved team's position, to halfway between its new neighbours (`positionBetween()`), so two people moving different teams at once don't undo each other. If the halves get too close to tell apart, `moveTeam()` numbers the list 1000, 2000, … again. Only `position` and `status` can be changed, so not even a mentor can turn a row into a different team or event.
 
-The page comes next, once the ranked list (#42) is there to start from.
+The page is `SharedPicklist.tsx`. Everyone signed in sees the list: rank, team (tap it for the team page) and status. Picked and Do not pick teams stay in their place, greyed out, and **Hide picked** hides the Picked ones. Mentors and admins also see:
+
+- **Start from the ranked list** when the list is empty: it starts with the teams on the Picklist page, in the order that mentor's weights give on their phone (`useRankedPicklist()`).
+- **Add teams not on the list** when the ranked list has teams the picklist doesn't.
+- Big up and down buttons on each team, which wait while a move saves, and an Open / Picked / Do not pick choice. Screen readers hear "Moved team 9991 to place 2."
+
+Hiding the buttons is only tidiness: the table's rules are what stop anyone else changing the list.
 
 ## What it needs to do
 

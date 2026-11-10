@@ -8,6 +8,7 @@ import Picklist from './Picklist'
 import PitForm from './PitForm'
 import Schedule from './Schedule'
 import SavedOnDevice from './SavedOnDevice'
+import SharedPicklist from './SharedPicklist'
 import TeamPage, { TeamLink } from './TeamPage'
 import { COUNTERS, ENDGAME, ROLES } from './season'
 
@@ -39,16 +40,16 @@ function PickMany(props: { label: string; options: string[]; value: string[]; on
   )
 }
 
-const VIEWS = ['Match', 'Pit', 'Schedule', 'Picklist']
+const VIEWS = ['Match', 'Pit', 'Schedule', 'Picklist', 'Final picklist']
 /** Each view's address after #/scouting/. */
-const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule', Picklist: 'picklist' }
+const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule', Picklist: 'picklist', 'Final picklist': 'shared-picklist' }
 
-// A Match / Pit / Schedule / Picklist switch at the top. The choice is in the
-// address, so #/scouting/pit opens the pit form straight away: a menu or a
-// bookmark can link to any of them. Both forms stay on the page, and the one
-// not chosen is hidden, so switching doesn't lose what's typed. The schedule
-// and the picklist are only on the page while chosen, so they only load
-// while someone's looking at them.
+// A Match / Pit / Schedule / Picklist / Final picklist switch at the top.
+// The choice is in the address, so #/scouting/pit opens the pit form
+// straight away: a menu or a bookmark can link to any of them. Both forms
+// stay on the page, and the one not chosen is hidden, so switching doesn't
+// lose what's typed. The other pages are only on the page while chosen, so
+// they only load while someone's looking at them.
 //
 // #/scouting/team/9991 is the team page for team 9991 (TeamPage.tsx), with
 // both forms hidden. It's only drawn while open: it waits for the team
@@ -66,6 +67,7 @@ export default function ScoutingPage() {
       <div hidden={view !== 'Pit'}><PitForm /></div>
       {view === 'Schedule' && <Schedule />}
       {view === 'Picklist' && <Picklist />}
+      {view === 'Final picklist' && <SharedPicklist />}
       {view === 'Team' && <TeamPage team={Number.isInteger(team) && team > 0 ? team : null} />}
     </>
   )
