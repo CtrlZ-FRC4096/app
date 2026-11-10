@@ -53,7 +53,9 @@ repo. Changes here need a mentor's approval (see `.github/CODEOWNERS`).
 
 `tests/tables.test.ts` checks every table for you: row level security is on,
 signed-out visitors get nothing, live updates are on, and the example rows
-fit the table.
+fit the table. `tests/migrations.test.ts` checks every migration's name, and
+that no two start with the same date and time: Supabase keeps track of
+which migrations it has run by that number.
 
 **Never edit a migration after it's merged.** The database has already run
 it. To change a table, add a new migration that alters it.
