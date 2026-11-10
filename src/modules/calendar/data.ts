@@ -170,6 +170,48 @@ export function plainText(text: string | null, max = 200): string | null {
   return plain.length > max ? `${plain.slice(0, max - 1).trimEnd()}…` : plain
 }
 
+// A sign-up link lives in the event's description, on a line like
+// "Sign up: https://forms.gle/abc123", so it works for events made in
+// Google Calendar. See the README.
+
+const SIGN_UP = /^sign ?up:/i
+
+/** A description split into its lines. Google Calendar marks lines with <br> or <p> as well as new lines. */
+const descriptionLines = (description: string) => description.split(/<br\s*\/?>|<\/p>|<\/div>|\n/i)
+
+/** The link on one line of a description if it's a sign-up line with a safe link, or null. */
+function signUpLinkOnLine(line: string): string | null {
+  const text = plainText(line, Infinity)
+  if (!text || !SIGN_UP.test(text)) return null
+  // Google Calendar can wrap the link in <a href="...">, and the words shown might not be the link itself.
+  const href = /href\s*=\s*["']([^"']*)["']/i.exec(line)?.[1]
+  const link = href ? plainText(href, Infinity) : text.replace(SIGN_UP, '').trim().split(' ')[0]
+  if (!link) return null
+  try {
+    const url = new URL(link)
+    // Only https links, so a link like "javascript:..." can't run anything when someone taps it.
+    return url.protocol === 'https:' ? url.href : null
+  } catch {
+    return null
+  }
+}
+
+/** The event's sign-up link, from a "Sign up: https://..." line in its description, or null. */
+export function signUpLink(description: string | null): string | null {
+  if (!description) return null
+  for (const line of descriptionLines(description)) {
+    const link = signUpLinkOnLine(line)
+    if (link) return link
+  }
+  return null
+}
+
+/** The description to show on the page: like plainText(), without the sign-up line, since that's the Sign up button. */
+export function shownDescription(description: string | null, max = 200): string | null {
+  if (!description) return null
+  return plainText(descriptionLines(description).filter((line) => !signUpLinkOnLine(line)).join('\n'), max)
+}
+
 /** "Updated just now", "Updated 5 minutes ago", or "Updated Tue, Nov 3, 4:05 PM". */
 export function updatedText(loadedAt: string | null, now: Date = new Date()): string {
   if (!loadedAt) return 'Not loaded yet'
@@ -180,11 +222,11 @@ export function updatedText(loadedAt: string | null, now: Date = new Date()): st
   return `Updated ${dayLabel(chicagoDay(at), chicagoDay(now))}, ${clock(at)}`
 }
 
-/** The home page tile's status: the next event. */
+/** The home page tile's status: the next event, and whether it has a sign-up. */
 export function useCalendarSummary(): Notice {
   const { events, loadedAt, error } = useCalendar()
   const next = nextEvent(events)
-  if (next) return { tone: 'info', text: `Next: ${nextEventText(next)}` }
+  if (next) return { tone: 'info', text: `Next: ${nextEventText(next)}${signUpLink(next.description) ? ' · Sign-up open' : ''}` }
   if (error && !loadedAt) return { tone: 'warn', text: "Couldn't load the team calendar" }
   if (!loadedAt) return { tone: 'plain', text: 'Loading the team calendar…' }
   return { tone: 'plain', text: `Nothing in the next ${WEEKS_AHEAD} weeks` }

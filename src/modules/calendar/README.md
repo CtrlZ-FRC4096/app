@@ -9,12 +9,18 @@ module has no table. To add or change an event, change it in Google
 Calendar. The page loads the events when it opens, at most every 10
 minutes, or when someone clicks **Refresh**.
 
+**Sign-up links.** To give an event a **Sign up** button, add a line to its
+description in Google Calendar that starts with `Sign up:` and then the
+link, like `Sign up: https://forms.gle/abc123`. It has to be an `https://`
+link. The page shows the button instead of that line, and the home page
+tile says "Sign-up open" when the next event has one.
+
 | File | What it does |
 |:--|:--|
 | `index.ts` | Tells the app about the module, and gives the home page tile the next event. |
-| `data.ts` | Loads the events and works out what to show: by day, times, the next event. |
-| `data.test.ts` | Tests for `data.ts`. |
-| `CalendarPage.tsx` | The page: the events by day, each with a link to open it in Google Calendar. |
+| `data.ts` | Loads the events and works out what to show: by day, times, the next event, sign-up links. |
+| `data.test.ts` | Tests for `data.ts`, and for the Sign up button in demo mode. |
+| `CalendarPage.tsx` | The page: the events by day, each with a link to open it in Google Calendar, and a Sign up button when it has a sign-up link. |
 
 ## How it gets the events
 

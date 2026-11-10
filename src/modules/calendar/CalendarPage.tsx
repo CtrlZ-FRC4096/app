@@ -1,5 +1,5 @@
 import { Callout, PageHead, Panel } from '../../core/ui'
-import { WEEKS_AHEAD, eventsByDay, loadEvents, plainText, timeOfDay, updatedText, useCalendar } from './data'
+import { WEEKS_AHEAD, eventsByDay, loadEvents, shownDescription, signUpLink, timeOfDay, updatedText, useCalendar } from './data'
 
 // The page reads the events with a hook (useCalendar) and works out what to
 // show with the functions in data.ts. Events are changed in Google Calendar.
@@ -37,10 +37,12 @@ export default function CalendarPage() {
           <Panel key={day.day} title={day.label}>
             <div className="row-list">
               {day.events.map((event) => {
-                const description = plainText(event.description)
+                const description = shownDescription(event.description)
+                const signUp = signUpLink(event.description)
                 return (
-                  <div key={event.id}>
-                    <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+                  // flexWrap lets the buttons move under the event on a narrow phone, instead of squeezing it.
+                  <div key={event.id} style={{ flexWrap: 'wrap' }}>
+                    <span style={{ minWidth: 0, overflowWrap: 'anywhere', flex: '1 1 14rem' }}>
                       <strong>{event.title}</strong>
                       <br />
                       <span className="note">
@@ -54,10 +56,19 @@ export default function CalendarPage() {
                         </>
                       )}
                     </span>
-                    {event.url && (
-                      <a className="btn btn-sm" style={{ marginLeft: 'auto', flexShrink: 0 }} href={event.url} target="_blank" rel="noreferrer">
-                        Open
-                      </a>
+                    {(signUp || event.url) && (
+                      <span className="toolbar" style={{ marginLeft: 'auto', flexShrink: 0 }}>
+                        {signUp && (
+                          <a className="btn btn-sm btn-primary" href={signUp} target="_blank" rel="noreferrer">
+                            Sign up
+                          </a>
+                        )}
+                        {event.url && (
+                          <a className="btn btn-sm" href={event.url} target="_blank" rel="noreferrer">
+                            Open
+                          </a>
+                        )}
+                      </span>
                     )}
                   </div>
                 )

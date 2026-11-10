@@ -4,10 +4,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
-import type { CalendarEvent } from '../../core/calendar'
-import { calendarNow, chicagoDay, dayLabel, eventsByDay, hasEnded, loadEvents, nextEvent, nextEventText, plainText, resetCalendar, timeOfDay, updatedText, useCalendarSummary } from './data'
+import { addCalendarEvent, resetDemoCalendar, type CalendarEvent } from '../../core/calendar'
+import { setDemoRole } from '../../core/demo'
+import CalendarPage from './CalendarPage'
+import { calendarNow, chicagoDay, dayLabel, eventsByDay, hasEnded, loadEvents, nextEvent, nextEventText, plainText, resetCalendar, shownDescription, signUpLink, timeOfDay, updatedText, useCalendarSummary } from './data'
 
-beforeEach(() => resetCalendar())
+beforeEach(() => {
+  resetCalendar()
+  resetDemoCalendar()
+})
 
 // Intl puts thin spaces before AM and PM; the tests compare plain ones.
 const plain = (text: string) => text.replace(/[  ]/g, ' ')
@@ -97,6 +102,51 @@ describe('plainText', () => {
   })
 })
 
+describe('signUpLink', () => {
+  it('finds a "Sign up:" line, in upper or lower case, with or without the space', () => {
+    expect(signUpLink('Robot demo at the library.\nSign up: https://forms.gle/abc123')).toBe('https://forms.gle/abc123')
+    expect(signUpLink('signup: https://forms.gle/abc123')).toBe('https://forms.gle/abc123')
+    expect(signUpLink('SIGN UP:https://forms.gle/abc123 by Friday')).toBe('https://forms.gle/abc123')
+  })
+
+  it('finds a link Google Calendar wrapped in HTML, even when the words shown are different', () => {
+    expect(signUpLink('Bring a laptop.<br>Sign up: <a href="https://forms.gle/abc123">https://forms.gle/abc123</a>')).toBe('https://forms.gle/abc123')
+    expect(signUpLink('<p>Bring a laptop.</p><p>Sign up: <a href="https://example.com/form?a=1&amp;b=2" target="_blank">the form</a></p>')).toBe('https://example.com/form?a=1&b=2')
+  })
+
+  it('handles what Google Calendar adds: a non-breaking space, and links wrapped in a Google redirect', () => {
+    expect(signUpLink('Sign up:&nbsp;<a href="https://forms.gle/abc123">https://forms.gle/abc123</a>')).toBe('https://forms.gle/abc123')
+    // Pasted from Google Docs or Gmail. Still https, and the redirect takes people to the form.
+    expect(signUpLink('Sign up: <a href="https://www.google.com/url?q=https://forms.gle/abc123&amp;sa=D">https://forms.gle/abc123</a>')).toBe('https://www.google.com/url?q=https://forms.gle/abc123&sa=D')
+  })
+
+  it('ignores http and javascript links, so a bad link never becomes a button', () => {
+    expect(signUpLink('Sign up: http://forms.gle/abc123')).toBeNull()
+    expect(signUpLink('Sign up: javascript:alert(1)')).toBeNull()
+    expect(signUpLink('Sign up: <a href="javascript:alert(1)">https://forms.gle/abc123</a>')).toBeNull()
+  })
+
+  it('is null with no sign-up line', () => {
+    expect(signUpLink(null)).toBeNull()
+    expect(signUpLink('Leave from school at 6 AM.')).toBeNull()
+    expect(signUpLink('Sign up:')).toBeNull()
+    // Only a line that starts with "Sign up:" counts.
+    expect(signUpLink('Remember to sign up: https://forms.gle/abc123')).toBeNull()
+  })
+})
+
+describe('shownDescription', () => {
+  it('leaves out the sign-up line, since the Sign up button has the link', () => {
+    expect(shownDescription('Robot demo at the library.\nSign up: https://forms.gle/abc123\nWear your team shirt.')).toBe('Robot demo at the library. Wear your team shirt.')
+    expect(shownDescription('Bring a laptop.<br>Sign up: <a href="https://forms.gle/abc123">https://forms.gle/abc123</a>')).toBe('Bring a laptop.')
+    expect(shownDescription('Sign up: https://forms.gle/abc123')).toBeNull()
+  })
+
+  it('keeps a sign-up line whose link was ignored, so nothing goes missing', () => {
+    expect(shownDescription('Sign up: http://forms.gle/abc123')).toBe('Sign up: http://forms.gle/abc123')
+  })
+})
+
 describe('updatedText', () => {
   it('says how long ago the events loaded', () => {
     expect(updatedText(null, now)).toBe('Not loaded yet')
@@ -129,6 +179,62 @@ describe('loading', () => {
     expect(fresh.calendarNow()).toEqual({ events: [event('tonight', {})], loadedAt: now.toISOString(), error: "Couldn't reach the server. Check your connection and try again." })
     vi.doUnmock('../../core/calendar')
     vi.resetModules()
+  })
+})
+
+describe('sign-ups in demo mode', () => {
+  // A made-up event tomorrow with a sign-up line, next to the demo build sessions, which have none.
+  // Only mentors can add events, so this views the app as a mentor to add it, then as a student again.
+  async function addOutreachWithSignUp() {
+    const start = new Date(Date.now() + 24 * 60 * 60 * 1000)
+    setDemoRole('mentor')
+    const result = await addCalendarEvent({
+      title: 'Outreach: robot demo (made up)',
+      start: start.toISOString(),
+      end: new Date(start.getTime() + 2 * 60 * 60 * 1000).toISOString(),
+      allDay: false,
+      description: 'Bring your team shirt.\nSign up: https://forms.gle/abc123',
+    })
+    setDemoRole('student')
+    expect(result).toMatchObject({ ok: true })
+    await loadEvents()
+  }
+
+  it('shows a Sign up button only on the event with a link, and not the sign-up line', async () => {
+    await addOutreachWithSignUp()
+    const page = renderToString(createElement(CalendarPage))
+    expect(page).toContain('Outreach: robot demo (made up)')
+    expect(page).toContain('Build session')
+    expect(page.match(/>Sign up</g)).toHaveLength(1)
+    expect(page).toContain('href="https://forms.gle/abc123" target="_blank"')
+    expect(page).toContain('Bring your team shirt.')
+    expect(page).not.toContain('Sign up:')
+  })
+
+  it('shows no Sign up button when no event has a link', async () => {
+    await loadEvents()
+    expect(renderToString(createElement(CalendarPage))).not.toMatch(/>Sign up</)
+  })
+})
+
+describe('useCalendarSummary', () => {
+  const tile = () => renderToString(createElement(() => createElement('p', null, useCalendarSummary().text)))
+
+  it('says "Sign-up open" when the next event has a sign-up link', async () => {
+    vi.resetModules()
+    const getCalendarEvents = vi.fn().mockResolvedValue({ ok: true, value: [event('outreach', { start: '2099-11-03T18:00:00-06:00', end: '2099-11-03T21:00:00-06:00', description: 'Sign up: https://forms.gle/abc123' })] })
+    vi.doMock('../../core/calendar', async (original) => ({ ...(await original<object>()), getCalendarEvents }))
+    const fresh = await import('./data')
+    fresh.resetCalendar()
+    await fresh.loadEvents()
+    expect(renderToString(createElement(() => createElement('p', null, fresh.useCalendarSummary().text)))).toMatch(/· Sign-up open<\/p>$/)
+    vi.doUnmock('../../core/calendar')
+    vi.resetModules()
+  })
+
+  it("doesn't when it has none", async () => {
+    await loadEvents()
+    expect(tile()).not.toContain('Sign-up open')
   })
 })
 
