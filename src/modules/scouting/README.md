@@ -20,6 +20,7 @@
   - `keepScheduleFresh()` asks again every 2 minutes while the page is open, when the app comes back on screen, and when the phone comes back online. (The `match13` function reuses its answer for 2 minutes, so asking more often doesn't help.)
 - A Match / Pit / Schedule switch at the top of the page. The choice is in the address: `#/scouting` is the match form, `#/scouting/pit` the pit form and `#/scouting/schedule` the schedule. Each form is one panel, with a line between its sections (`FormSection.tsx`). The pit form (`PitForm.tsx`) asks for the team, drivetrain, weight and size, motors, preferred auto and strategy. Its choice lists are `DRIVETRAINS` and `AUTO_SIDES` in `season.ts`. Save pit entry: `savePitEntry()` in `data.ts` keeps it on this device (`pitStore`). It needs a team number; the match number is optional. Pit entries are sent to the team database the same way as match entries (#35): `syncEntries()` sends both, to the `scouting_pit_entries` table (`supabase/migrations/..._scouting_pit_entries.sql`, rules tested in `supabase/tests/scouting-pit-entries.test.ts`). Every visit to a team is kept. Both forms show what's saved on this device, Waiting or Synced, with `SavedOnDevice.tsx`.
 - The Competition menu lists Match and Pit under Scouting (`pages` in `index.ts`).
+- Prescouting is its own module, just above Scouting in the Competition menu: see [its README](../prescouting/README.md). It gets the teams and EPA from `getEventTeams()` and `getRatings()` here.
 
 Entries are kept on the device in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. `syncEntries()` sends the Waiting ones to the `scouting_entries` table (`supabase/migrations/..._scouting_entries.sql`, rules tested in `supabase/tests/scouting-entries.test.ts`) and marks them Synced.
 
@@ -51,6 +52,7 @@ server function, which holds the team's key (see "Server functions" in
 |:--|:--|
 | `getSchedule()` | The event's matches: who's red and blue, and the scores once played |
 | `getRankings()` | The event's rankings, best first |
+| `getEventTeams()` | Every team registered for the event, by number, before the schedule is out |
 | `getTeamMatches(team)` | One team's matches at the event, with their videos |
 | `getTeam(team)` | A team's nickname and home |
 
