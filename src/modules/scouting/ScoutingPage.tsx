@@ -1,11 +1,12 @@
 import { useState, type FormEvent } from 'react'
-import { shortDate } from '../../core/format'
 import { navigate, useRoute } from '../../core/router'
 import { toast } from '../../core/toast'
-import { PageHead, Panel, Pick, Pill } from '../../core/ui'
-import { DRIVER_SKILLS, STOPS, saveEntry, syncEntries, useEntries, useSyncStatus, type Stop } from './data'
+import { PageHead, Panel, Pick } from '../../core/ui'
+import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
 import FormSection from './FormSection'
 import PitForm from './PitForm'
+import Schedule from './Schedule'
+import SavedOnDevice from './SavedOnDevice'
 import { COUNTERS, ENDGAME, ROLES } from './season'
 
 /** Width and height of the − and + buttons, in pixels. Big enough to tap without looking. */
@@ -36,21 +37,27 @@ function PickMany(props: { label: string; options: string[]; value: string[]; on
   )
 }
 
-const FORMS = ['Match', 'Pit']
+const VIEWS = ['Match', 'Pit', 'Schedule']
+/** Each view's address after #/scouting/. */
+const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule' }
 
-// A Match / Pit switch at the top. The choice is in the address, so
-// #/scouting/pit opens the pit form straight away: a menu or a bookmark can
-// link to either form. Both forms stay on the page, and the one not chosen
-// is hidden, so switching doesn't lose what's typed.
+// A Match / Pit / Schedule switch at the top. The choice is in the address,
+// so #/scouting/pit opens the pit form straight away: a menu or a bookmark
+// can link to any of them. Both forms stay on the page, and the one not
+// chosen is hidden, so switching doesn't lose what's typed. The schedule is
+// only on the page while it's chosen, so it only updates while someone's
+// looking at it.
 export default function ScoutingPage() {
-  const form = useRoute().rest[0] === 'pit' ? 'Pit' : 'Match'
+  const rest = useRoute().rest[0] ?? ''
+  const view = VIEWS.find((v) => PATHS[v] === rest) ?? 'Match'
   return (
     <>
       <div style={{ marginBottom: 12 }}>
-        <Pick label="Which form" options={FORMS} value={form} onChange={(f) => navigate('scouting', f === 'Pit' ? 'pit' : '')} />
+        <Pick label="Which page" options={VIEWS} value={view} onChange={(v) => navigate('scouting', PATHS[v])} />
       </div>
-      <div hidden={form !== 'Match'}><MatchForm /></div>
-      <div hidden={form !== 'Pit'}><PitForm /></div>
+      <div hidden={view !== 'Match'}><MatchForm /></div>
+      <div hidden={view !== 'Pit'}><PitForm /></div>
+      {view === 'Schedule' && <Schedule />}
     </>
   )
 }
@@ -61,8 +68,6 @@ export default function ScoutingPage() {
 // to the team database whenever there's a connection.
 function MatchForm() {
   const entries = useEntries()
-  const sync = useSyncStatus()
-  const waiting = entries.filter((e) => !e.synced).length
   const [match, setMatch] = useState('')
   const [team, setTeam] = useState('')
   const [counts, setCounts] = useState(zeroCounts)
@@ -106,12 +111,6 @@ function MatchForm() {
     setDriverSkill(0)
     setNotes('')
     toast(`Saved match ${result.value.match}, team ${result.value.team}.`)
-  }
-
-  async function sendNow() {
-    const result = await syncEntries()
-    if (!result.ok) toast(result.error)
-    else toast(result.value === 0 ? 'Everything on this phone is sent.' : `Sent ${result.value === 1 ? '1 entry' : `${result.value} entries`} to the team.`)
   }
 
   const tap = { width: TAP_SIZE, minHeight: TAP_SIZE, padding: 0, fontSize: 24 }
@@ -178,43 +177,10 @@ function MatchForm() {
           </FormSection>
         </Panel>
       </form>
-      {/* Space between the form and the list, so they don't run together. */}
-      <div style={{ marginTop: 28 }}>
-        <Panel
-          title="Saved on this device"
-          aside={<span className="note">{waiting > 0 ? `${waiting} waiting` : entries.length > 0 ? 'All synced' : '0 saved'}</span>}
-        >
-          {/* Waiting entries send by themselves once there's a connection. The button is only for the impatient. */}
-          {waiting > 0 && (
-            <div className="panel-body">
-              <p className="note" style={{ margin: 0 }} aria-live="polite">
-                {sync.sending
-                  ? 'Sending…'
-                  : sync.problem
-                    ? `Not sent yet. ${sync.problem}`
-                    : "Waiting entries send to the team by themselves when there's a connection."}
-              </p>
-              <div className="toolbar">
-                <button type="button" className="btn" disabled={sync.sending} onClick={() => void sendNow()}>Send now</button>
-              </div>
-            </div>
-          )}
-          {entries.length === 0 ? (
-            <p className="panel-body muted">No entries yet. Fill in the form and press Save Entry.</p>
-          ) : (
-            <div className="row-list">
-              {entries.map((e) => (
-                <div key={e.id}>
-                  <span>Match {e.match} · Team {e.team}<br /><span className="note">{shortDate(e.created_at)}</span></span>
-                  <span style={{ marginLeft: 'auto' }}>
-                    {e.synced ? <Pill tone="ok">Synced</Pill> : <Pill tone="warn">Waiting</Pill>}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </Panel>
-      </div>
+      <SavedOnDevice
+        rows={entries.map((e) => ({ id: e.id, label: `Match ${e.match} · Team ${e.team}`, created_at: e.created_at, synced: e.synced }))}
+        emptyText="No entries yet. Fill in the form and press Save Entry."
+      />
     </>
   )
 }

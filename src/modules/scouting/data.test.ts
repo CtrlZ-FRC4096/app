@@ -6,8 +6,12 @@ import { resetAllStores } from '../../core/store'
 import { DEMO_PEOPLE } from '../../core/demo'
 import {
   MAX_NOTES_LENGTH, blankOrNumber, checkEntry, checkPitEntry, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
-  numberOnly, pitStore, qualVideoRows, saveEntry, savePitEntry, syncEntries, syncStatus, teamNumber, toRow, videoLink, type EntryFields, type PitFields,
-  type TbaMatchWithVideos,
+  MAX_PIT_NUMBER, numberOnly, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, syncEntries, syncStatus, teamNumber, toRow, type EntryFields, type PitFields,
+  qualVideoRows, videoLink, type TbaMatchWithVideos,
+} from './data'
+import {
+  SCHEDULE_REFRESH_MS, keepScheduleFresh, likelyWinner, matchLabel, matchesWithPredictions, refreshSchedule, savedSchedule, scheduleStatus, scheduleStore, updatedAgo,
+  type MatchPrediction, type TbaMatch,
 } from './data'
 import { EVENT_KEY } from './season'
 
@@ -167,6 +171,8 @@ describe('syncing to the team database', () => {
     await syncEntries()
     entryStore.reset()
     entriesTable.reset()
+    pitStore.reset()
+    pitTable.reset()
     syncStatus.reset()
   })
 
@@ -245,6 +251,96 @@ describe('syncing to the team database', () => {
     if (!saved.ok) throw new Error(saved.error)
     const { event_key: _old, ...older } = saved.value
     expect(toRow(older).event_key).toBe(EVENT_KEY)
+  })
+})
+
+describe('checkPitEntry and the team database', () => {
+  it("refuses what the team database would refuse, so a pit entry can't get stuck Waiting", () => {
+    expect(checkPitEntry({ ...PIT, team: 100000 })).toMatch(/team number/)
+    expect(checkPitEntry({ ...PIT, match: 1001 })).toMatch(/match number/)
+    expect(checkPitEntry({ ...PIT, weight: MAX_PIT_NUMBER })).toMatch(/weight/)
+    expect(checkPitEntry({ ...PIT, they_do: 'x'.repeat(MAX_NOTES_LENGTH + 1) })).toMatch(/under 1000/)
+    expect(checkPitEntry({ ...PIT, motors: 'x'.repeat(MAX_NOTES_LENGTH) })).toBeNull()
+  })
+})
+
+describe('syncing pit entries', () => {
+  beforeEach(async () => {
+    await syncEntries()
+    entryStore.reset()
+    entriesTable.reset()
+    pitStore.reset()
+    pitTable.reset()
+    syncStatus.reset()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const sent = (id: string) => pitTable.rows().filter((row) => row.id === id)
+
+  it('sends Waiting pit entries, then marks them Synced', async () => {
+    const saved = savePitEntry(PIT)
+    if (!saved.ok) throw new Error(saved.error)
+    await syncEntries()
+    expect(pitStore.get()[0].synced).toBe(true)
+    expect(sent(saved.value.id)).toEqual([
+      expect.objectContaining({
+        event_key: EVENT_KEY,
+        team_number: 9992,
+        match_number: null,
+        drivetrain: 'Swerve',
+        weight: 115.5,
+        height: 36,
+        motors: '4 drive motors, 2 on the shooter',
+        auto_side: 'Left',
+        partners_do: 'Play defense',
+        scouted_by: DEMO_PEOPLE.alex,
+        scouted_at: saved.value.created_at,
+      }),
+    ])
+  })
+
+  it('sends match and pit entries together', async () => {
+    saveEntry(FORM)
+    savePitEntry(PIT)
+    await syncEntries()
+    expect([...entryStore.get(), ...pitStore.get()].every((e) => e.synced)).toBe(true)
+  })
+
+  it('never sends a pit entry twice, even if the phone sends it again', async () => {
+    const saved = savePitEntry(PIT)
+    if (!saved.ok) throw new Error(saved.error)
+    await syncEntries()
+    pitStore.set((entries) => entries.map((e) => ({ ...e, synced: false })))
+    await syncEntries()
+    expect(sent(saved.value.id)).toHaveLength(1)
+  })
+
+  it('keeps every visit to a team', async () => {
+    const first = savePitEntry({ ...PIT, drivetrain: 'Tank' })
+    const second = savePitEntry(PIT)
+    if (!first.ok || !second.ok) throw new Error('not saved')
+    await syncEntries()
+    expect([...sent(first.value.id), ...sent(second.value.id)].map((row) => [row.team_number, row.drivetrain])).toEqual([[9992, 'Tank'], [9992, 'Swerve']])
+  })
+
+  it('keeps pit entries Waiting with no connection, then sends them once it is back', async () => {
+    vi.stubGlobal('navigator', { onLine: false })
+    savePitEntry(PIT)
+    expect((await syncEntries()).ok).toBe(false)
+    expect(pitStore.get()[0].synced).toBe(false)
+    vi.stubGlobal('navigator', { onLine: true })
+    expect(await syncEntries()).toEqual({ ok: true, value: 1 })
+    expect(pitStore.get()[0].synced).toBe(true)
+  })
+
+  it('sends blank choices and boxes as empty, and an entry saved before events were recorded with the current event', () => {
+    const saved = savePitEntry({ ...PIT, drivetrain: '', auto_side: '', motors: '  ', weight: null })
+    if (!saved.ok) throw new Error(saved.error)
+    const { event_key: _old, ...older } = saved.value
+    expect(pitToRow(older)).toMatchObject({ event_key: EVENT_KEY, drivetrain: null, auto_side: null, motors: null, weight: null })
   })
 })
 
@@ -408,5 +504,199 @@ describe('Match 13 answers', () => {
     const { data } = await withAnswer({ ok: false, error: 'Match 13 turned down the key. A mentor should check the MATCH13_KEY secret.' })
     expect(await data.getRatings()).toEqual({ ok: false, error: expect.stringMatching(/MATCH13_KEY/) })
     expect(await data.getPredictions()).toEqual({ ok: false, error: expect.stringMatching(/MATCH13_KEY/) })
+  })
+})
+
+describe('the match schedule with Match 13 predictions', () => {
+  // A TBA match, shaped like the real ones. Scores are -1 until played.
+  const tbaMatch = (comp_level: TbaMatch['comp_level'], set_number: number, match_number: number, red: number[], blue: number[], scores: [number, number] = [-1, -1]): TbaMatch => ({
+    key: `2026test_${comp_level}${comp_level === 'qm' ? '' : `${set_number}m`}${match_number}`,
+    comp_level,
+    set_number,
+    match_number,
+    alliances: {
+      red: { score: scores[0], team_keys: red.map((t) => `frc${t}`) },
+      blue: { score: scores[1], team_keys: blue.map((t) => `frc${t}`) },
+    },
+    winning_alliance: '',
+    predicted_time: null,
+  })
+  const prediction = (key: string, redWinChance: number): MatchPrediction => ({ key, redWinChance, redScore: 80, blueScore: 70 })
+
+  it('puts every example match with its prediction, and shows real scores once played', async () => {
+    const schedule = await getSchedule('2026demo')
+    const predictions = await getPredictions('2026demo')
+    if (!schedule.ok || !predictions.ok) throw new Error('No example data')
+    const rows = matchesWithPredictions(schedule.value, predictions.value)
+    expect(rows.map((r) => r.label)).toEqual(['Qual 1', 'Qual 2', 'Qual 3', 'Qual 4'])
+    for (const row of rows) expect(row.prediction?.key).toBe(row.key)
+    expect(rows[0]).toMatchObject({ red: [4096, 9991, 9992], blue: [9993, 9994, 9995], score: { red: 84, blue: 71 }, ours: true })
+    expect(rows[2].score).toBeNull()
+    expect(rows.every((r) => r.ours)).toBe(true)
+    // A team that isn't at the event has no matches marked as theirs.
+    expect(matchesWithPredictions(schedule.value, predictions.value, 1234).some((r) => r.ours)).toBe(false)
+  })
+
+  it('still shows a match Match 13 has not predicted, with no prediction', () => {
+    const qm1 = tbaMatch('qm', 1, 1, [1, 2, 3], [4, 5, 6])
+    const qm2 = tbaMatch('qm', 1, 2, [1, 2, 3], [4, 5, 6])
+    const rows = matchesWithPredictions([qm1, qm2], [prediction(qm2.key, 0.6), prediction('2026test_qm99', 0.9)])
+    expect(rows.map((r) => r.prediction?.redWinChance ?? null)).toEqual([null, 0.6])
+    expect(matchesWithPredictions([qm1], []).map((r) => r.prediction)).toEqual([null])
+  })
+
+  it('puts matches in the order they are played, whatever order TBA sends them in', () => {
+    const rows = matchesWithPredictions([
+      tbaMatch('f', 1, 2, [1], [2]),
+      tbaMatch('sf', 2, 1, [1], [2]),
+      tbaMatch('qm', 1, 10, [1], [2]),
+      tbaMatch('qm', 1, 2, [1], [2]),
+      tbaMatch('sf', 1, 1, [1], [2]),
+      tbaMatch('f', 1, 1, [1], [2]),
+    ], [])
+    expect(rows.map((r) => r.label)).toEqual(['Qual 2', 'Qual 10', 'Semifinal 1', 'Semifinal 2', 'Final 1', 'Final 2'])
+  })
+
+  it('counts a match as played only when both scores are in', () => {
+    const played = tbaMatch('qm', 1, 1, [1], [2], [0, 12])
+    const notYet = tbaMatch('qm', 1, 2, [1], [2])
+    // TBA sometimes sends null instead of -1. In JavaScript null >= 0 is true, so this checks null isn't counted as a score.
+    const nulls = tbaMatch('qm', 1, 3, [1], [2], [null as unknown as number, null as unknown as number])
+    expect(matchesWithPredictions([played, notYet, nulls], []).map((r) => r.score)).toEqual([{ red: 0, blue: 12 }, null, null])
+  })
+
+  it('names matches the way the team says them', () => {
+    expect(matchLabel({ comp_level: 'qm', set_number: 1, match_number: 12 })).toBe('Qual 12')
+    expect(matchLabel({ comp_level: 'sf', set_number: 3, match_number: 1 })).toBe('Semifinal 3')
+    expect(matchLabel({ comp_level: 'qf', set_number: 1, match_number: 2 })).toBe('Quarterfinal 1 match 2')
+    expect(matchLabel({ comp_level: 'f', set_number: 1, match_number: 2 })).toBe('Final 2')
+  })
+
+  it('says who is likely to win and their chance', () => {
+    expect(likelyWinner(prediction('k', 0.72))).toBe('Red 72%')
+    expect(likelyWinner(prediction('k', 0.28))).toBe('Blue 72%')
+    expect(likelyWinner(prediction('k', 0.5))).toBe('Toss-up')
+    expect(likelyWinner(prediction('k', 0.504))).toBe('Toss-up')
+    expect(likelyWinner(prediction('k', 1))).toBe('Red 100%')
+  })
+
+  it('says how long ago it was updated', () => {
+    const now = new Date('2026-03-13T15:00:00Z')
+    expect(updatedAgo('2026-03-13T14:59:30Z', now)).toBe('just now')
+    expect(updatedAgo('2026-03-13T14:59:00Z', now)).toBe('1 minute ago')
+    expect(updatedAgo('2026-03-13T14:57:59Z', now)).toBe('2 minutes ago')
+    expect(updatedAgo('2026-03-13T13:00:00Z', now)).toBe('2 hours ago')
+    expect(updatedAgo('2026-03-10T15:00:00Z', now)).toBe('3 days ago')
+  })
+})
+
+describe('keeping the schedule on this device', () => {
+  beforeEach(() => {
+    scheduleStore.reset()
+    scheduleStatus.reset()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('saves the schedule and predictions, for this event only', async () => {
+    vi.useFakeTimers({ now: new Date('2026-03-13T15:00:00Z'), toFake: ['Date'] })
+    const result = await refreshSchedule('2026demo')
+    if (!result.ok) throw new Error(result.error)
+    expect(savedSchedule('2026demo')).toEqual({
+      event: '2026demo', matches: expect.any(Array), predictions: expect.any(Array), savedAt: '2026-03-13T15:00:00.000Z',
+    })
+    expect(savedSchedule('2026demo')!.matches).toHaveLength(4)
+    expect(savedSchedule('2026demo')!.predictions).toHaveLength(4)
+    expect(savedSchedule('2026other')).toBeNull()
+    expect(scheduleStatus.get()).toEqual({ loading: false, problem: null })
+  })
+
+  it('keeps the saved copy when there is no connection, and says so', async () => {
+    await refreshSchedule('2026demo')
+    const before = savedSchedule('2026demo')
+    vi.stubGlobal('navigator', { onLine: false })
+    expect(await refreshSchedule('2026demo')).toEqual({ ok: false, error: 'No connection.' })
+    expect(savedSchedule('2026demo')).toBe(before)
+    expect(scheduleStatus.get().problem).toBe('No connection.')
+  })
+
+  it('asks now, every 2 minutes, when the app is back on screen and when back online, until the page closes', async () => {
+    vi.useFakeTimers({ now: new Date('2026-03-13T15:00:00Z') })
+    const page = new EventTarget()
+    const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' })
+    vi.stubGlobal('addEventListener', page.addEventListener.bind(page))
+    vi.stubGlobal('removeEventListener', page.removeEventListener.bind(page))
+    vi.stubGlobal('document', doc)
+    const savedAt = () => savedSchedule('2026demo')?.savedAt
+
+    const stop = keepScheduleFresh('2026demo')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(savedAt()).toBe('2026-03-13T15:00:00.000Z')
+
+    await vi.advanceTimersByTimeAsync(SCHEDULE_REFRESH_MS)
+    expect(savedAt()).toBe('2026-03-13T15:02:00.000Z')
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    page.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(savedAt()).toBe('2026-03-13T15:02:30.000Z')
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    doc.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(savedAt()).toBe('2026-03-13T15:02:40.000Z')
+
+    stop()
+    await vi.advanceTimersByTimeAsync(5 * SCHEDULE_REFRESH_MS)
+    page.dispatchEvent(new Event('online'))
+    doc.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(savedAt()).toBe('2026-03-13T15:02:40.000Z')
+  })
+})
+
+describe('when The Blue Alliance or Match 13 has a problem', () => {
+  let scheduleWorks = true
+  let predictionsWork = true
+  const match = { key: '2026ilch_qm1', comp_level: 'qm', set_number: 1, match_number: 1, alliances: { red: { score: -1, team_keys: ['frc4096'] }, blue: { score: -1, team_keys: ['frc9991'] } }, winning_alliance: '', predicted_time: null }
+
+  async function fresh() {
+    vi.resetModules()
+    const callFunction = vi.fn(async (_name: string, body: { kind: string }) => {
+      if (body.kind === 'schedule') return scheduleWorks ? { ok: true, value: [match] } : { ok: false, error: 'The Blue Alliance is down. Try again in a minute.' }
+      return predictionsWork
+        ? { ok: true, value: { matches: [{ key: match.key, pred: { winProb: 0.7, redScore: 90, blueScore: 70 } }] } }
+        : { ok: false, error: 'Match 13 is down.' }
+    })
+    vi.doMock('../../core/functions', () => ({ callFunction }))
+    return await import('./data')
+  }
+  afterEach(() => {
+    vi.doUnmock('../../core/functions')
+    vi.resetModules()
+    scheduleWorks = true
+    predictionsWork = true
+  })
+
+  it('keeps the last predictions when only Match 13 fails, and says they may be old', async () => {
+    const data = await fresh()
+    await data.refreshSchedule('2026ilch')
+    predictionsWork = false
+    const result = await data.refreshSchedule('2026ilch')
+    expect(result.ok).toBe(true)
+    expect(data.savedSchedule('2026ilch')!.predictions).toEqual([{ key: match.key, redWinChance: 0.7, redScore: 90, blueScore: 70 }])
+    expect(data.scheduleStatus.get().problem).toMatch(/Match 13.*may be old.*Match 13 is down/)
+  })
+
+  it('keeps the saved schedule when The Blue Alliance fails', async () => {
+    const data = await fresh()
+    await data.refreshSchedule('2026ilch')
+    const before = data.savedSchedule('2026ilch')
+    scheduleWorks = false
+    expect(await data.refreshSchedule('2026ilch')).toEqual({ ok: false, error: 'The Blue Alliance is down. Try again in a minute.' })
+    expect(data.savedSchedule('2026ilch')).toBe(before)
+    expect(data.scheduleStatus.get()).toEqual({ loading: false, problem: 'The Blue Alliance is down. Try again in a minute.' })
   })
 })
