@@ -9,6 +9,7 @@ import { href, useRoute } from './core/router'
 import { resetAllStores } from './core/store'
 import { toast, useToast } from './core/toast'
 import { ErrorBoundary } from './core/ErrorBoundary'
+import { loadPage } from './core/updates'
 import { Home } from './core/pages/Home'
 import { Message } from './core/pages/Message'
 import { Notifications } from './core/pages/Notifications'
@@ -17,8 +18,9 @@ import { Checking, NoAccess, SignIn } from './core/pages/SignIn'
 
 const CONTRIBUTING = 'https://github.com/CtrlZ-FRC4096/app/blob/main/CONTRIBUTING.md'
 
-// Each module's page is loaded only when someone opens it.
-const pages = new Map(modules.map((m) => [m.id, lazy(m.load)]))
+// Each module's page is loaded only when someone opens it. If its file is
+// gone because a new version went live, loadPage reloads to get it.
+const pages = new Map(modules.map((m) => [m.id, lazy(loadPage(m.load))]))
 
 export default function App() {
   const signIn = useSignIn()
