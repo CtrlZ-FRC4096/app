@@ -34,7 +34,7 @@ describe('the Match 13 panel', () => {
   it('says when Match 13 has not rated a team, and still shows its record', () => {
     ratingsStore.set(saved({
       ratings: [rating(4096)],
-      rankings: [{ rank: 3, team_key: 'frc1234', record: { wins: 1, losses: 1, ties: 0 }, matches_played: 2 }],
+      rankings: [{ rank: 3, team_key: 'frc1234', record: { wins: 1, losses: 1, ties: 0 }, matches_played: 2, extra_stats: [3] }],
     }))
     const html = draw(1234)
     expect(html).toContain('No Match 13 rating yet')

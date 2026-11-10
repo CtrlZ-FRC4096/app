@@ -697,6 +697,8 @@ export interface TbaRanking {
   team_key: string
   record: { wins: number; losses: number; ties: number } | null
   matches_played: number
+  /** Numbers TBA works out. The first is the team's total ranking points. */
+  extra_stats: number[]
 }
 
 export interface TbaTeam {
@@ -797,6 +799,95 @@ export function teamFor(schedule: SavedSchedule | null, match: number, position:
   const [color, spot] = position.split(' ')
   const team = (color === 'Red' ? found.alliances.red : found.alliances.blue).team_keys[Number(spot) - 1]
   return team ? teamNumber(team) : null
+}
+
+// ---------------------------------------------------------------------------
+// Event rankings that update live (#39). TBA updates the rankings after each
+// match. While the rankings page is open it checks for new ones every
+// minute, and right away when the app comes back on screen or the phone
+// comes back online. The last ones it got are kept on this device, so with
+// no Wi-Fi the page still shows them, with when they're from.
+
+/** The last rankings this device got from TBA, and when. */
+export interface SavedRankings {
+  /** The event they're for. Rankings saved for another event aren't shown. */
+  event: string
+  /** Best first. */
+  rankings: TbaRanking[]
+  /** ISO date and time they came from TBA. */
+  checked_at: string
+}
+
+export const rankingsStore = createStore<SavedRankings | null>('scouting-rankings', 1, () => null)
+
+/** Whether the rankings are being checked right now, and why the last check didn't work, if it didn't. */
+export interface RankingsStatus {
+  checking: boolean
+  problem: string | null
+}
+
+// Only for this page visit: not saved.
+export const rankingsStatus = createStore<RankingsStatus>('scouting-rankings-status', 1, () => ({ checking: false, problem: null }), { persist: false, keepOnReset: true })
+
+/** How often to check for new rankings while the page is open. */
+export const RANKINGS_EVERY_MS = 60 * 1000
+
+const RANKINGS_OFFLINE = "No connection. They'll update by themselves when this phone is back online."
+
+/**
+ * Get the event's rankings from TBA and keep them on this device. If it
+ * can't (no connection, or TBA has a problem), the last ones stay, and the
+ * status says why.
+ */
+export async function refreshRankings(event = EVENT_KEY): Promise<Result<SavedRankings>> {
+  if (globalThis.navigator?.onLine === false) {
+    rankingsStatus.set({ checking: false, problem: RANKINGS_OFFLINE })
+    return fail(RANKINGS_OFFLINE)
+  }
+  rankingsStatus.set({ checking: true, problem: rankingsStatus.get().problem })
+  const result = await getRankings(event)
+  if (!result.ok) {
+    rankingsStatus.set({ checking: false, problem: result.error })
+    return result
+  }
+  const saved: SavedRankings = { event, rankings: result.value, checked_at: new Date().toISOString() }
+  rankingsStore.set(saved)
+  rankingsStatus.set({ checking: false, problem: null })
+  return ok(saved)
+}
+
+/**
+ * Keep the rankings up to date: check now, every minute while the app is
+ * on screen, when it comes back on screen, and when the phone comes back
+ * online. Gives back a function that stops it, for when the page closes.
+ */
+export function watchRankings(event = EVENT_KEY): () => void {
+  const check = () => void refreshRankings(event)
+  const onScreen = () => {
+    if (document.visibilityState === 'visible') check()
+  }
+  globalThis.addEventListener('online', check)
+  document.addEventListener('visibilitychange', onScreen)
+  const timer = setInterval(onScreen, RANKINGS_EVERY_MS)
+  check()
+  return () => {
+    globalThis.removeEventListener('online', check)
+    document.removeEventListener('visibilitychange', onScreen)
+    clearInterval(timer)
+  }
+}
+
+/** The saved rankings for this event, or null if there are none yet. They update by themselves while the page is open. */
+export function useRankings(): { saved: SavedRankings | null; status: RankingsStatus } {
+  useEffect(() => watchRankings(), [])
+  const saved = useStore(rankingsStore)
+  const status = useStore(rankingsStatus)
+  return { saved: saved?.event === EVENT_KEY ? saved : null, status }
+}
+
+/** One team's ranking, or null if they aren't ranked. For the team page. */
+export function rankOf(rankings: TbaRanking[], team: number): TbaRanking | null {
+  return rankings.find((r) => r.team_key === `frc${team}`) ?? null
 }
 
 // ---------------------------------------------------------------------------
@@ -1608,7 +1699,8 @@ function demoRankings(): TbaRanking[] {
   }
   return [...record]
     .sort(([a, ra], [b, rb]) => rb.wins - ra.wins || ra.losses - rb.losses || teamNumber(a) - teamNumber(b))
-    .map(([team_key, r], i) => ({ rank: i + 1, team_key, record: r, matches_played: r.wins + r.losses + r.ties }))
+    // Made-up ranking points: 3 for a win and 1 for a tie, with no bonus points.
+    .map(([team_key, r], i) => ({ rank: i + 1, team_key, record: r, matches_played: r.wins + r.losses + r.ties, extra_stats: [r.wins * 3 + r.ties] }))
 }
 
 // ---------------------------------------------------------------------------

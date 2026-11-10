@@ -5,6 +5,7 @@ import { href, navigate } from '../../core/router'
 import { toast } from '../../core/toast'
 import { Bar, PageHead, Panel, Pill } from '../../core/ui'
 import { useScoutedTeams, useTeamSummary, type Tally, type TeamSummary } from './data'
+import TeamRank from './TeamRank'
 import TeamVideos from './TeamVideos'
 import TeamRatings from './TeamRatings'
 
@@ -87,6 +88,7 @@ function TeamDetails(props: { team: number }) {
       <PageHead title={`Team ${props.team}`}>
         {summary.matchCount + summary.pitCount === 0 ? `Nothing scouted for team ${props.team} yet.` : `Everything we scouted at this event: ${scouted}.`}
       </PageHead>
+      <TeamRank team={props.team} />
       {summary.matchCount > 0 && <Numbers summary={summary} />}
       <TeamRatings team={props.team} />
       {summary.matchCount + summary.pitCount > 0 && <HowOften summary={summary} />}
