@@ -3,7 +3,8 @@
 // supabase/tests/bom.test.ts and bom-steps.test.ts. The checks here only
 // explain it first. Tests run as a student unless they say otherwise.
 import { beforeEach, describe, expect, it } from 'vitest'
-import { setDemoRole } from '../../core/demo'
+import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
+import { membersTable } from '../../core/members'
 import {
   addPart, addRobot, addSystem, bomSummary, canEditRobotsAndParts, changePart, changeSystem, checkPart, checkSystem, countParts, filterParts, kindLabel,
   nextPartNumber, partCountText, partsTable, orderWord, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, systemsTable,
@@ -14,6 +15,7 @@ import { STATUSES, itemsTable as purchaseTable, type PurchaseItem } from '../pur
 import {
   addStep, advance, changeDone, checkStep, moveBack, removeStep, stationName, stationQueue, stepName, stepsFor, stepsTable, type Step,
 } from './data'
+import { assignStep, checkAssignment, dueText, isOverdue, today } from './data'
 
 beforeEach(() => {
   setDemoRole('student')
@@ -21,6 +23,7 @@ beforeEach(() => {
   systemsTable.reset()
   robotsTable.reset()
   stepsTable.reset()
+  membersTable.reset()
 })
 
 const parts = () => partsTable.rows()
@@ -382,6 +385,82 @@ describe('addStep and removeStep', () => {
   it('remove a stage', async () => {
     expect((await removeStep(stage('Roller shaft', 'pre'))).ok).toBe(true)
     expect(stepsOf('Roller shaft').map((s) => s.stage)).toEqual(['design', 'process1'])
+  })
+})
+
+describe('the example stages', () => {
+  it('are only assigned to people on the team whose access is on', () => {
+    const active = new Set(membersTable.rows().filter((m) => m.active).map((m) => m.id))
+    const assigned = stepsTable.rows().filter((s) => s.assigned_to)
+    expect(assigned.length).toBeGreaterThan(0)
+    for (const s of assigned) expect(active.has(s.assigned_to!), s.id).toBe(true)
+  })
+})
+
+describe('checkAssignment', () => {
+  const members = () => membersTable.rows()
+
+  it('allows a person, a due date, both or neither', () => {
+    expect(checkAssignment({ assigned_to: DEMO_PEOPLE.alex, due_date: '2026-11-20' }, members())).toBeNull()
+    expect(checkAssignment({ assigned_to: DEMO_PEOPLE.alex, due_date: null }, members())).toBeNull()
+    expect(checkAssignment({ assigned_to: null, due_date: '2026-11-20' }, members())).toBeNull()
+    expect(checkAssignment({ assigned_to: null, due_date: null }, members())).toBeNull()
+  })
+
+  it("refuses someone who isn't on the team, or whose access is off", () => {
+    expect(checkAssignment({ assigned_to: 'nobody', due_date: null }, members())).toMatch(/isn't on the team/)
+    expect(checkAssignment({ assigned_to: DEMO_PEOPLE.sam, due_date: null }, members())).toBe(
+      "Sam Ortiz's access is switched off, so they can't be given work. Pick someone else.",
+    )
+  })
+
+  it("refuses a due date that isn't a real day", () => {
+    expect(checkAssignment({ assigned_to: null, due_date: 'next Friday' }, members())).toBe('Pick the due date from the calendar.')
+    expect(checkAssignment({ assigned_to: null, due_date: '2026-02-30' }, members())).toBe('Pick the due date from the calendar.')
+  })
+})
+
+describe('assignStep', () => {
+  it('lets a student assign a stage with a due date, and clear both', async () => {
+    const id = stage('Roller shaft', 'pre').id
+    const now = () => stepsTable.rows().find((s) => s.id === id)!
+    expect((await assignStep(now(), { assigned_to: DEMO_PEOPLE.jordan, due_date: '2026-11-20' })).ok).toBe(true)
+    expect(now()).toMatchObject({ assigned_to: DEMO_PEOPLE.jordan, due_date: '2026-11-20' })
+    expect((await assignStep(now(), { assigned_to: null, due_date: null })).ok).toBe(true)
+    expect(now()).toMatchObject({ assigned_to: null, due_date: null })
+  })
+
+  it("won't save an assignment checkAssignment refuses, and says why", async () => {
+    const before = stage('Roller shaft', 'pre')
+    expect(await assignStep(before, { assigned_to: DEMO_PEOPLE.sam, due_date: null })).toMatchObject({ ok: false, error: /switched off/ })
+    expect(stage('Roller shaft', 'pre')).toEqual(before)
+  })
+
+  it('starts new stages with nobody assigned and no due date', async () => {
+    await addStep(part('Roller shaft'), 'post', null)
+    expect(stage('Roller shaft', 'post')).toMatchObject({ assigned_to: null, due_date: null })
+  })
+})
+
+describe('isOverdue', () => {
+  const due = (due_date: string | null, status: Step['status'] = 'todo'): Step => ({ ...stage('Intake side plate', 'post'), due_date, status })
+
+  it('is late the day after its due date, not on the day', () => {
+    expect(isOverdue(due('2026-11-20'), '2026-11-19')).toBe(false)
+    expect(isOverdue(due('2026-11-20'), '2026-11-20')).toBe(false)
+    expect(isOverdue(due('2026-11-20'), '2026-11-21')).toBe(true)
+  })
+
+  it('is never late once done, or with no due date', () => {
+    expect(isOverdue(due('2026-11-20', 'done'), '2026-12-01')).toBe(false)
+    expect(isOverdue(due(null), '2026-12-01')).toBe(false)
+  })
+})
+
+describe('today and dueText', () => {
+  it('write the day where the person is, and a due date like "Nov 20"', () => {
+    expect(today(new Date(2026, 10, 9, 23, 30))).toBe('2026-11-09')
+    expect(dueText('2026-11-20')).toBe('Nov 20')
   })
 })
 

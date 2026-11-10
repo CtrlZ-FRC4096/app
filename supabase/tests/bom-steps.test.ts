@@ -1,6 +1,7 @@
 // Permission rules for the BOM's stages (bom_steps): anyone on the team can
-// read stages, add and remove them, and change a stage's status and how
-// many are done. Nobody else can do anything.
+// read stages, add and remove them, change a stage's status and how many
+// are done, and assign it to someone with a due date. Nobody else can do
+// anything.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
@@ -25,7 +26,7 @@ beforeEach(async () => {
   )
 })
 
-type Step = { id: string; status: string; quantity_done: number; created_by: string }
+type Step = { id: string; status: string; quantity_done: number; created_by: string; assigned_to: string | null; due_date: string | null }
 
 const addStep = (person: string, stage = 'process1', machine: string | null = 'cnc_router') =>
   db.as<Step>(person, 'insert into public.bom_steps (part_id, stage, machine) values ($1, $2, $3) returning *', [partId, stage, machine])
@@ -33,7 +34,7 @@ const addStep = (person: string, stage = 'process1', machine: string | null = 'c
 describe('BOM stages', () => {
   it('can be added by a student or a mentor, signed with their own id, starting at to do with none done', async () => {
     const [step] = await addStep(student)
-    expect(step).toMatchObject({ created_by: student, status: 'todo', quantity_done: 0 })
+    expect(step).toMatchObject({ created_by: student, status: 'todo', quantity_done: 0, assigned_to: null, due_date: null })
     const [other] = await addStep(mentor, 'post', null)
     expect(other.created_by).toBe(mentor)
   })
@@ -57,6 +58,39 @@ describe('BOM stages', () => {
       [step.id],
     )
     expect(changed).toMatchObject({ status: 'in_progress', quantity_done: 2 })
+  })
+
+  it('can be assigned to someone with a due date, and unassigned, by a student', async () => {
+    const [step] = await addStep(mentor)
+    const [assigned] = await db.as<{ assigned_to: string; due: string }>(
+      student,
+      "update public.bom_steps set assigned_to = $2, due_date = '2026-11-20' where id = $1 returning assigned_to, due_date::text as due",
+      [step.id, mentor],
+    )
+    expect(assigned).toEqual({ assigned_to: mentor, due: '2026-11-20' })
+    const [cleared] = await db.as<Step>(student, 'update public.bom_steps set assigned_to = null, due_date = null where id = $1 returning *', [step.id])
+    expect(cleared).toMatchObject({ assigned_to: null, due_date: null })
+  })
+
+  it("can't be assigned to someone who isn't on the team", async () => {
+    const [step] = await addStep(mentor)
+    await expect(
+      db.as(student, "update public.bom_steps set assigned_to = '00000000-0000-4000-8000-000000000001' where id = $1", [step.id]),
+    ).rejects.toThrow('foreign key')
+  })
+
+  it("can't be assigned by someone whose access is off", async () => {
+    const [step] = await addStep(mentor)
+    await db.switchOff(student)
+    expect(await db.as(student, 'update public.bom_steps set assigned_to = $2 where id = $1 returning id', [step.id, student])).toEqual([])
+  })
+
+  it('goes back to unassigned when the person is deleted from the team', async () => {
+    const helper = await db.member('Casey Helper')
+    const [step] = await addStep(mentor)
+    await db.as(mentor, 'update public.bom_steps set assigned_to = $2 where id = $1', [step.id, helper])
+    await db.sql('delete from public.members where id = $1', [helper])
+    expect(await db.sql('select assigned_to from public.bom_steps where id = $1', [step.id])).toEqual([{ assigned_to: null }])
   })
 
   it("can't have its part, stage or machine changed, even by a mentor", async () => {
