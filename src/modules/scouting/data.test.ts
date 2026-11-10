@@ -10,7 +10,10 @@ const FORM: EntryFields = {
   team: 9991,
   counts: { autoFuel: 3, teleopFuel: 14, fuelMissed: 2 },
   endgame: 'Level 2',
-  defense: true,
+  roles: ['Scorer', 'Defender'],
+  broke_down: true,
+  stop: 'A-stop',
+  driver_skill: 4,
   notes: '  Fast cycles  ',
 }
 
@@ -43,6 +46,20 @@ describe('saveEntry', () => {
   it('refuses an entry with no match number', () => {
     expect(checkEntry({ ...FORM, match: 0 })).toBe('Enter the match number first.')
     expect(checkEntry(FORM)).toBeNull()
+  })
+
+  it('refuses an entry until a driver skill from 1 to 5 is chosen', () => {
+    // The form sends 0 while no driver skill is chosen.
+    expect(saveEntry({ ...FORM, driver_skill: 0 })).toEqual({ ok: false, error: 'Choose a driver skill first.' })
+    expect(checkEntry({ ...FORM, driver_skill: 6 })).toBe('Choose a driver skill first.')
+    expect(checkEntry({ ...FORM, driver_skill: 1 })).toBeNull()
+    expect(checkEntry({ ...FORM, driver_skill: 5 })).toBeNull()
+    expect(entryStore.get()).toEqual([])
+  })
+
+  it('saves an entry with no role chosen', () => {
+    const result = saveEntry({ ...FORM, roles: [] })
+    expect(result).toMatchObject({ ok: true, value: { roles: [] } })
   })
 
   it('keeps entries when the example data is reset', () => {
