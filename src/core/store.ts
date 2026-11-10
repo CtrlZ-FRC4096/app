@@ -7,7 +7,13 @@
  * browser, like the "View as" switch.
  *
  * Saved copies survive a reload, but only on that device, and "Reset example
- * data" in the banner puts them back.
+ * data" in the banner puts them back. Tabs open on the same device share
+ * them: a change saved in one shows up in the others.
+ *
+ * The exception to "modules don't use this directly" is data that must be
+ * saved on the device even with no connection, like scouting entries
+ * waiting to sync: a table saves straight to the team database on the live
+ * site. Use keepOnReset for that, so "Reset example data" can't delete it.
  */
 import { useSyncExternalStore } from 'react'
 
@@ -86,6 +92,23 @@ export function createStore<T>(
         listeners.delete(listener)
       }
     },
+  }
+  // Another tab saved this store: take its copy, so a change here adds to it
+  // instead of writing an old copy over it (and losing what that tab saved).
+  if (persist) {
+    globalThis.addEventListener?.('storage', (event: StorageEvent) => {
+      if (event.key !== PREFIX + fullKey) return
+      if (event.newValue == null) {
+        value = initial()
+      } else {
+        try {
+          value = JSON.parse(event.newValue) as T
+        } catch {
+          return
+        }
+      }
+      notify()
+    })
   }
   if (!options.keepOnReset) resettable.push(store as Store<unknown>)
   return store

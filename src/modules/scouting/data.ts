@@ -1,6 +1,12 @@
 /**
  * Scouting module data.
  *
+ * Entries: what a scout counted for one robot in one match. Venue Wi-Fi is
+ * unreliable, so an entry is saved on this device first, in a store, and
+ * marked as not synced. Sending entries to the team database comes later.
+ * This is why entries aren't in a table from createTable(): on the live
+ * site a table saves straight to the database, which needs a connection.
+ *
  * The Blue Alliance (TBA): an event's match schedule and rankings, and a
  * team's matches and name. These come through the `tba` server function
  * (supabase/functions/tba/), which holds the team's TBA key, so the key is
@@ -11,8 +17,115 @@
  * https://www.thebluealliance.com/apidocs/v3 for everything.
  */
 import { callFunction } from '../../core/functions'
-import { ok, type Result } from '../../core/table'
+import { plural } from '../../core/format'
+import type { Notice } from '../../core/registry'
+import { currentUser } from '../../core/session'
+import { createStore, useStore } from '../../core/store'
+import { fail, ok, type Result } from '../../core/table'
 import { EVENT_KEY } from './season'
+
+// ---------------------------------------------------------------------------
+// Entries, saved on this device.
+
+/** Whether the robot was stopped during the match. These are FRC rules, so they don't change with the game. */
+export const STOPS = ['None', 'A-stop', 'E-stop'] as const
+export type Stop = (typeof STOPS)[number]
+
+/** Driver skill, from 1 (struggles to drive) to 5 (smooth and quick). */
+export const DRIVER_SKILLS = [1, 2, 3, 4, 5]
+
+/**
+ * What a scout recorded for one robot in one match.
+ *
+ * Entries saved before roles, broke_down, stop and driver_skill were added
+ * don't have them, and have a defense field instead. Syncing must fill in
+ * the missing ones rather than assume every entry has them.
+ */
+export interface Entry {
+  /** Made on the device, so sending an entry twice can't make two rows. */
+  id: string
+  /** ISO date and time it was saved. */
+  created_at: string
+  /** The qualification match number. */
+  match: number
+  /** The team number, like 4096. */
+  team: number
+  /** The count for each counter in season.ts, by its key. */
+  counts: Record<string, number>
+  /** One of ENDGAME in season.ts. */
+  endgame: string
+  /** Any of ROLES in season.ts. Empty if the scout chose none. */
+  roles: string[]
+  /** The robot stopped working or lost a mechanism. */
+  broke_down: boolean
+  stop: Stop
+  /** One of DRIVER_SKILLS. */
+  driver_skill: number
+  notes: string
+  /** Who scouted it. Show their name with useMemberNames(). */
+  scouted_by: string | null
+  /** False while it's only on this device (Waiting). */
+  synced: boolean
+}
+
+/** What the scout fills in on the form. saveEntry() adds the rest. */
+export type EntryFields = Pick<Entry, 'match' | 'team' | 'counts' | 'endgame' | 'roles' | 'broke_down' | 'stop' | 'driver_skill' | 'notes'>
+
+// Newest first. keepOnReset: "Reset example data" must never delete real
+// scouting. Don't raise the version while entries are waiting on people's
+// devices: copies saved under the old version are ignored.
+export const entryStore = createStore<Entry[]>('scouting-entries', 1, () => [], { keepOnReset: true })
+
+/** Every entry saved on this device, newest first. */
+export function useEntries(): Entry[] {
+  return useStore(entryStore)
+}
+
+/** The home page tile's status. */
+export function useEntrySummary(): Notice {
+  const entries = useEntries()
+  const waiting = entries.filter((e) => !e.synced).length
+  if (waiting > 0) return { tone: 'info', text: plural(waiting, 'entry waiting', 'entries waiting') }
+  return { tone: 'plain', text: entries.length === 0 ? 'No entries on this device' : `${plural(entries.length, 'entry', 'entries')} saved` }
+}
+
+const isCount = (value: number) => Number.isInteger(value) && value > 0
+
+/** Why an entry can't be saved, or null if it can. */
+export function checkEntry(fields: EntryFields): string | null {
+  if (!isCount(fields.team)) return 'Enter the team number first.'
+  if (!isCount(fields.match)) return 'Enter the match number first.'
+  if (!DRIVER_SKILLS.includes(fields.driver_skill)) return 'Choose a driver skill first.'
+  return null
+}
+
+/** Save an entry on this device, marked as not synced yet. */
+export function saveEntry(fields: EntryFields): Result<Entry> {
+  const problem = checkEntry(fields)
+  if (problem) return fail(problem)
+  const entry: Entry = {
+    ...fields,
+    notes: fields.notes.trim(),
+    id: newId(),
+    created_at: new Date().toISOString(),
+    scouted_by: currentUser()?.id ?? null,
+    synced: false,
+  }
+  entryStore.set((entries) => [entry, ...entries])
+  return ok(entry)
+}
+
+/** A random id like the database makes. Works on http:// pages too, unlike crypto.randomUUID(). */
+function newId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+// ---------------------------------------------------------------------------
+// The Blue Alliance.
 
 export interface TbaAlliance {
   /** -1 until the match is played. */
