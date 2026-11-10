@@ -4,6 +4,7 @@
  * every other module keeps working.
  */
 import { Component, Suspense, type ReactNode } from 'react'
+import { isUpdateError } from './updates'
 
 interface Props {
   moduleName: string
@@ -23,6 +24,24 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (!this.state.error) return this.props.children
+    // Not a bug: the app was updated, or this page isn't saved on the device
+    // and there's no connection. A reload fixes it; "Try again" can't.
+    if (isUpdateError(this.state.error)) {
+      const offline = navigator.onLine === false
+      return (
+        <div className="callout" role="alert">
+          <strong>{offline ? `${this.props.moduleName} can't open with no connection` : 'A new version of the app is out'}</strong>
+          <p style={{ margin: 0 }}>
+            {offline
+              ? "This page isn't saved on this device yet. Reload once you're back online. Anything you've saved is still here."
+              : 'Reload to get it. Anything you saved, like scouting entries, stays saved.'}
+          </p>
+          <div className="toolbar">
+            <button type="button" className="btn btn-primary" onClick={() => location.reload()}>Reload</button>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="crash" role="alert">
         <h2>{this.props.moduleName} stopped working</h2>
