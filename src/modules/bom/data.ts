@@ -8,18 +8,21 @@
  *
  * The tables are made in the team database by
  * supabase/migrations/..._bom.sql. Anyone on the team can add and change
- * robots, systems and parts, delete parts, and import from Onshape. Only
- * mentors can delete a system, because that deletes every part in it too
- * (..._bom_members_edit.sql).
+ * systems, and choose and move along a part's stages. Only student leaders,
+ * mentors and admins can add and rename robots, add, change and delete
+ * parts, import from Onshape, and delete a system, which deletes every part
+ * in it too (..._bom_student_leaders.sql).
  *
  * Made parts have stages (Design, Pre-process, Process 1 and 2,
  * Post-process), each with a status and how many are through it
- * (..._bom_steps.sql).
+ * (..._bom_steps.sql). A stage can be assigned to a person, with a due date
+ * (..._bom_steps_assign.sql).
  */
 import { callFunction } from '../../core/functions'
 import { createTable, fail, ok, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
-import { isMentor } from '../../core/roles'
+import { membersTable, type Member } from '../../core/members'
+import { isLeader, type Role } from '../../core/roles'
 import { currentUser } from '../../core/session'
 import { isLive } from '../../core/supabase'
 import { plural } from '../../core/format'
@@ -257,6 +260,25 @@ export function shelfText(part: Part, items: Item[], request?: PurchaseItem): st
 }
 
 // ---------------------------------------------------------------------------
+// Who can do what. The database checks the same (..._bom_student_leaders.sql):
+// these only explain it before trying.
+
+/**
+ * Can someone with this role add and rename robots, add, change and delete
+ * parts, import from Onshape and delete systems? Student leaders, mentors and
+ * admins can. Everyone can add and change systems and work on stages.
+ */
+export function canEditRobotsAndParts(role: Role): boolean {
+  return isLeader(role)
+}
+
+/** Why the signed-in person can't do this, or null if they can. `doing` is like "add parts". */
+function leadersOnly(doing: string): string | null {
+  const user = currentUser()
+  return user && canEditRobotsAndParts(user.role) ? null : `Only student leaders and mentors can ${doing}. Ask one of them.`
+}
+
+// ---------------------------------------------------------------------------
 // Robots and systems.
 
 /** Why a robot name won't do, or null if it will. */
@@ -268,13 +290,13 @@ export function checkRobotName(name: string): string | null {
 }
 
 export async function addRobot(name: string): Promise<Result<Robot>> {
-  const problem = checkRobotName(name)
+  const problem = leadersOnly('add robots') ?? checkRobotName(name)
   if (problem) return fail(problem)
   return robotsTable.insert({ name: name.trim() })
 }
 
 export async function renameRobot(robot: Robot, name: string): Promise<Result<Robot>> {
-  const problem = checkRobotName(name)
+  const problem = leadersOnly('rename robots') ?? checkRobotName(name)
   if (problem) return fail(problem)
   return robotsTable.update(robot.id, { name: name.trim() })
 }
@@ -330,10 +352,10 @@ export async function changeSystem(system: BomSystem, changes: NewSystem): Promi
   return systemsTable.update(system.id, systemFields(changes))
 }
 
-/** Delete a system and every part in it. Mentors only: the database enforces this too. */
+/** Delete a system and every part in it. Student leaders, mentors and admins only. */
 export async function removeSystem(system: BomSystem): Promise<Result> {
   const user = currentUser()
-  if (!user || !isMentor(user.role)) return fail('Only a mentor can delete a system, because it deletes every part in it.')
+  if (!user || !canEditRobotsAndParts(user.role)) return fail('Only student leaders and mentors can delete a system, because it deletes every part in it.')
   const result = await systemsTable.remove(system.id)
   // The database deletes the parts with the system. Example data has to do it here.
   if (result.ok && !isLive) {
@@ -398,28 +420,31 @@ function partFields(part: NewPart) {
   }
 }
 
-/** Add a part. Anyone on the team can add, change and delete parts. */
+/** Add a part. Student leaders, mentors and admins add, change and delete parts. */
 export async function addPart(part: NewPart): Promise<Result<Part>> {
-  const problem = checkPart(part, partsTable.rows())
+  const problem = leadersOnly('add parts') ?? checkPart(part, partsTable.rows())
   if (problem) return fail(problem)
   return partsTable.insert({ system_id: part.system_id, ...partFields(part), onshape_url: null, onshape_id: null, removed_in_onshape: false })
 }
 
 /** Change a part. It stays in its system. The next import from Onshape updates what Onshape has. */
 export async function changePart(part: Part, changes: NewPart): Promise<Result<Part>> {
-  const problem = checkPart(changes, partsTable.rows(), part.id, Boolean(part.onshape_id))
+  const problem = leadersOnly('change parts') ?? checkPart(changes, partsTable.rows(), part.id, Boolean(part.onshape_id))
   if (problem) return fail(problem)
   return partsTable.update(part.id, partFields(changes))
 }
 
 export async function removePart(part: Part): Promise<Result> {
+  const problem = leadersOnly('delete parts')
+  if (problem) return fail(problem)
   return partsTable.remove(part.id)
 }
 
 // ---------------------------------------------------------------------------
 // Stages: what a made part goes through before it's on the robot (#15).
-// Made by ..._bom_steps.sql. Anyone on the team can add and remove stages,
-// move a stage along and count parts through it.
+// Made by ..._bom_steps.sql. Anyone on the team, students too, can add and
+// remove stages, move a stage along and count parts through it, and assign
+// it to someone with a due date (#16, ..._bom_steps_assign.sql).
 
 export type Stage = 'design' | 'pre' | 'process1' | 'process2' | 'post'
 /** In order. A part only has the stages it needs. */
@@ -467,6 +492,10 @@ export interface Step extends Row {
   status: StepStatus
   /** How many of the part's quantity are through this stage. */
   quantity_done: number
+  /** Whose job this stage is (a member's id), or null if nobody's yet. */
+  assigned_to: string | null
+  /** The day it's due, like 2026-11-20, or null. */
+  due_date: string | null
   created_by: string | null
 }
 
@@ -478,39 +507,47 @@ const BELLYPAN = '00000000-0000-4000-8000-0000000b1007'
 const FRAME_RAIL = '00000000-0000-4000-8000-0000000b1008'
 
 let stepCount = 0
-function step(part_id: string, stage: Stage, status: StepStatus, quantity_done: number, machine: Machine | null = null): Step {
+function step(
+  part_id: string, stage: Stage, status: StepStatus, quantity_done: number, machine: Machine | null = null,
+  assigned_to: string | null = null, due_date: string | null = null,
+): Step {
   stepCount += 1
-  return { id: `00000000-0000-4000-8000-0000000b2${String(stepCount).padStart(3, '0')}`, part_id, stage, machine, status, quantity_done, ...CREATED }
+  return {
+    id: `00000000-0000-4000-8000-0000000b2${String(stepCount).padStart(3, '0')}`,
+    part_id, stage, machine, status, quantity_done, assigned_to, due_date, ...CREATED,
+  }
 }
 
 const EXAMPLE_STEPS: Step[] = [
   // Intake side plate (2): designed and CAMed, one routed so far.
   step(SIDE_PLATE, 'design', 'done', 2),
   step(SIDE_PLATE, 'pre', 'done', 2),
-  step(SIDE_PLATE, 'process1', 'in_progress', 1, 'cnc_router'),
-  step(SIDE_PLATE, 'post', 'todo', 0),
+  step(SIDE_PLATE, 'process1', 'in_progress', 1, 'cnc_router', DEMO_PEOPLE.alex, '2026-11-06'),
+  step(SIDE_PLATE, 'post', 'todo', 0, null, DEMO_PEOPLE.jordan, '2026-11-20'),
   // Roller shaft (3): cut to length, then turned on the lathe.
   step(ROLLER_SHAFT, 'design', 'done', 3),
   step(ROLLER_SHAFT, 'pre', 'done', 3),
-  step(ROLLER_SHAFT, 'process1', 'in_progress', 1, 'lathe'),
+  step(ROLLER_SHAFT, 'process1', 'in_progress', 1, 'lathe', DEMO_PEOPLE.jordan),
   // Pivot spacer (4): printed, then reamed by hand.
   step(PIVOT_SPACER, 'design', 'done', 4),
   step(PIVOT_SPACER, 'process1', 'done', 4, '3d_printer'),
   step(PIVOT_SPACER, 'post', 'in_progress', 2),
   // Bellypan (1): still being designed.
-  step(BELLYPAN, 'design', 'in_progress', 0),
+  step(BELLYPAN, 'design', 'in_progress', 0, null, DEMO_PEOPLE.alex, '2026-11-18'),
   step(BELLYPAN, 'process1', 'todo', 0, 'cnc_router'),
   // Frame rail (4): milled, then holes routed.
   step(FRAME_RAIL, 'design', 'done', 4),
   step(FRAME_RAIL, 'pre', 'done', 4),
   step(FRAME_RAIL, 'process1', 'done', 4, 'mill'),
   step(FRAME_RAIL, 'process2', 'in_progress', 2, 'cnc_router'),
-  step(FRAME_RAIL, 'post', 'todo', 0),
+  // Due, but nobody has taken it yet.
+  step(FRAME_RAIL, 'post', 'todo', 0, null, null, '2026-11-25'),
 ]
 
 const byStage = (a: { stage: Stage }, b: { stage: Stage }) => STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage)
 
-export const stepsTable = createTable<Step>('bom_steps', { demo: EXAMPLE_STEPS, sort: byStage })
+// Version 2: stages gained who they're assigned to and their due date.
+export const stepsTable = createTable<Step>('bom_steps', { demo: EXAMPLE_STEPS, version: 2, sort: byStage })
 
 /** Every stage of every part, in stage order. */
 export function useSteps(): Step[] {
@@ -565,12 +602,62 @@ export function checkStep(part: Part, stage: Stage, machine: Machine | null, ste
 export async function addStep(part: Part, stage: Stage, machine: Machine | null): Promise<Result<Step>> {
   const problem = checkStep(part, stage, machine, stepsFor(part, stepsTable.rows()))
   if (problem) return fail(problem)
-  return stepsTable.insert({ part_id: part.id, stage, machine: isProcess(stage) ? machine : null, status: 'todo', quantity_done: 0 })
+  return stepsTable.insert({
+    part_id: part.id, stage, machine: isProcess(stage) ? machine : null, status: 'todo', quantity_done: 0, assigned_to: null, due_date: null,
+  })
 }
 
 /** Take a stage off a part, with its progress. */
 export async function removeStep(step: Step): Promise<Result> {
   return stepsTable.remove(step.id)
+}
+
+/** Who a stage is assigned to and when it's due. Either can be null: nobody yet, or no due date. */
+export interface Assignment {
+  assigned_to: string | null
+  due_date: string | null
+}
+
+/** Is this a real day written like 2026-11-20? */
+function isDay(text: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false
+  const date = new Date(`${text}T00:00:00Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === text
+}
+
+/** Why a stage can't be assigned like this, or null if it can. `members` is the whole team. */
+export function checkAssignment(assignment: Assignment, members: Member[]): string | null {
+  if (assignment.assigned_to) {
+    const member = members.find((m) => m.id === assignment.assigned_to)
+    if (!member) return "That person isn't on the team any more. Pick someone else."
+    if (!member.active) return `${member.name}'s access is switched off, so they can't be given work. Pick someone else.`
+  }
+  if (assignment.due_date && !isDay(assignment.due_date)) return 'Pick the due date from the calendar.'
+  return null
+}
+
+/** Assign a stage to someone, set its due date, or clear either. Anyone on the team can. */
+export async function assignStep(step: Step, assignment: Assignment): Promise<Result<Step>> {
+  const problem = checkAssignment(assignment, membersTable.rows())
+  if (problem) return fail(problem)
+  return stepsTable.update(step.id, { assigned_to: assignment.assigned_to || null, due_date: assignment.due_date || null })
+}
+
+/** Today's date where the person is, like 2026-11-09. */
+export function today(now: Date = new Date()): string {
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`
+}
+
+/** Late: its due date has passed and it isn't done. Due today isn't late yet. */
+export function isOverdue(step: Step, day: string = today()): boolean {
+  return step.status !== 'done' && step.due_date !== null && step.due_date < day
+}
+
+/** A due date as it's written on the page, like "Nov 20". */
+export function dueText(due_date: string): string {
+  // Noon, so the day is the same in every time zone the team could be in.
+  return new Date(`${due_date}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 /**
@@ -610,6 +697,8 @@ export function stationQueue(parts: Part[], steps: Step[], station: Station): { 
  * it when someone asks to import. In demo mode it answers with example parts.
  */
 export function getOnshapeBom(system: BomSystem): Promise<Result<OnshapeBom>> {
+  const problem = leadersOnly('import from Onshape')
+  if (problem) return Promise.resolve(fail(problem))
   if (!system.onshape_url) {
     return Promise.resolve(fail(`Add ${system.name}'s Onshape link first: Change system, then paste the assembly's address.`))
   }
@@ -618,6 +707,8 @@ export function getOnshapeBom(system: BomSystem): Promise<Result<OnshapeBom>> {
 
 /** Make the changes an import plan lists, and note when the system was imported. */
 export async function applyOnshapeImport(system: BomSystem, plan: OnshapeImportPlan): Promise<Result<string>> {
+  const problem = leadersOnly('import from Onshape')
+  if (problem) return fail(problem)
   const added = await partsTable.insertMany(plan.add)
   if (!added.ok) return added
   for (const { part, changes } of plan.change) {

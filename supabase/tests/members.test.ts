@@ -74,6 +74,29 @@ describe('changing roles and access', () => {
     expect(await db.sql('select role from public.members where id = $1', [student])).toEqual([{ role: 'student' }])
   })
 
+  it("doesn't let a student leader change roles, even their own", async () => {
+    const leader = await db.member('Casey Leader', 'leader')
+    const student = await db.member('Riley Park')
+    expect(await db.as(leader, "update public.members set role = 'leader' where id = $1 returning id", [student])).toEqual([])
+    expect(await db.as(leader, "update public.members set role = 'mentor' where id = $1 returning id", [leader])).toEqual([])
+    expect(await db.sql('select role from public.members where id = $1', [leader])).toEqual([{ role: 'leader' }])
+  })
+
+  it('lets an admin make someone a student leader, and back to a student', async () => {
+    const admin = await db.member('Morgan Admin', 'admin')
+    const student = await db.member('Riley Park')
+    await db.as(admin, "update public.members set role = 'leader' where id = $1", [student])
+    expect(await db.sql('select role from public.members where id = $1', [student])).toEqual([{ role: 'leader' }])
+    await db.as(admin, "update public.members set role = 'student' where id = $1", [student])
+    expect(await db.sql('select role from public.members where id = $1', [student])).toEqual([{ role: 'student' }])
+  })
+
+  it('only takes the four roles', async () => {
+    const admin = await db.member('Morgan Admin', 'admin')
+    const student = await db.member('Riley Park')
+    await expect(db.as(admin, "update public.members set role = 'captain' where id = $1", [student])).rejects.toThrow('check constraint')
+  })
+
   it("doesn't let a mentor change roles", async () => {
     const mentor = await db.member('Pat Mentor', 'mentor')
     const student = await db.member('Riley Park')
@@ -128,24 +151,30 @@ describe('changing roles and access', () => {
 describe('the helpers every table uses', () => {
   it('report the role of whoever is asking', async () => {
     const student = await db.member('Riley Park')
+    const leader = await db.member('Casey Leader', 'leader')
     const mentor = await db.member('Pat Mentor', 'mentor')
     const admin = await db.member('Morgan Admin', 'admin')
     const ask = (id: string) =>
-      db.as(id, 'select private.is_member() as member, private.is_mentor() as mentor, private.is_admin() as admin')
-    expect(await ask(student)).toEqual([{ member: true, mentor: false, admin: false }])
-    expect(await ask(mentor)).toEqual([{ member: true, mentor: true, admin: false }])
-    expect(await ask(admin)).toEqual([{ member: true, mentor: true, admin: true }])
+      db.as(id, 'select private.is_member() as member, private.is_leader() as leader, private.is_mentor() as mentor, private.is_admin() as admin')
+    expect(await ask(student)).toEqual([{ member: true, leader: false, mentor: false, admin: false }])
+    // A student leader isn't a mentor, so everything checked with is_mentor() stays with mentors.
+    expect(await ask(leader)).toEqual([{ member: true, leader: true, mentor: false, admin: false }])
+    expect(await ask(mentor)).toEqual([{ member: true, leader: true, mentor: true, admin: false }])
+    expect(await ask(admin)).toEqual([{ member: true, leader: true, mentor: true, admin: true }])
   })
 
   it('treat someone whose access is off as not a member', async () => {
     const mentor = await db.member('Pat Mentor', 'mentor')
+    const leader = await db.member('Casey Leader', 'leader')
     await db.switchOff(mentor)
-    expect(await db.as(mentor, 'select private.is_member() as member, private.is_mentor() as mentor')).toEqual([
-      { member: false, mentor: false },
-    ])
+    await db.switchOff(leader)
+    const ask = (id: string) => db.as(id, 'select private.is_member() as member, private.is_leader() as leader, private.is_mentor() as mentor')
+    expect(await ask(mentor)).toEqual([{ member: false, leader: false, mentor: false }])
+    expect(await ask(leader)).toEqual([{ member: false, leader: false, mentor: false }])
   })
 
   it("can't be called by someone who isn't signed in", async () => {
     await expect(db.as(null, 'select private.is_member()')).rejects.toThrow(PERMISSION_DENIED)
+    await expect(db.as(null, 'select private.is_leader()')).rejects.toThrow(PERMISSION_DENIED)
   })
 })

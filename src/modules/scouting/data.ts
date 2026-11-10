@@ -3,9 +3,14 @@
  *
  * Entries: what a scout counted for one robot in one match. Venue Wi-Fi is
  * unreliable, so an entry is saved on this device first, in a store, and
- * marked as not synced. Sending entries to the team database comes later.
- * This is why entries aren't in a table from createTable(): on the live
- * site a table saves straight to the database, which needs a connection.
+ * marked Waiting (not synced). This is why entries aren't saved straight
+ * into a table from createTable(): on the live site a table saves to the
+ * database, which needs a connection.
+ *
+ * Syncing: Waiting entries are sent to the scouting_entries table whenever
+ * there's a connection (supabase/migrations/..._scouting_entries.sql), then
+ * marked Synced. Each keeps the id this device gave it, and the table skips
+ * an id it already has, so sending an entry twice never makes two rows.
  *
  * The Blue Alliance (TBA): an event's match schedule and rankings, and a
  * team's matches and name. These come through the `tba` server function
@@ -15,13 +20,20 @@
  *
  * The types are the parts of TBA's answers we use. TBA sends more; see
  * https://www.thebluealliance.com/apidocs/v3 for everything.
+ *
+ * Match 13 (match13.com): each team's rating at the event, and who's
+ * predicted to win each match. These come through the `match13` server
+ * function (supabase/functions/match13/) in the same way, with made-up
+ * example data in demo mode. See https://match13.com/docs/api for
+ * everything Match 13 sends.
  */
 import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 import { currentUser } from '../../core/session'
+import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore } from '../../core/store'
-import { fail, ok, type Result } from '../../core/table'
+import { createTable, fail, newestFirst, ok, type Result, type Row } from '../../core/table'
 import { EVENT_KEY } from './season'
 
 // ---------------------------------------------------------------------------
@@ -46,6 +58,11 @@ export interface Entry {
   id: string
   /** ISO date and time it was saved. */
   created_at: string
+  /**
+   * The event it was scouted at, like 2026ilch. Entries saved before this
+   * was added don't have one; they're sent with today's EVENT_KEY.
+   */
+  event_key?: string
   /** The qualification match number. */
   match: number
   /** The team number, like 4096. */
@@ -91,11 +108,21 @@ export function useEntrySummary(): Notice {
 
 const isCount = (value: number) => Number.isInteger(value) && value > 0
 
+// The team database allows the same: see the checks in the scouting_entries
+// migration. An entry it would refuse could never sync, so refuse it here.
+export const MAX_MATCH = 1000
+export const MAX_TEAM = 99999
+export const MAX_NOTES_LENGTH = 1000
+
 /** Why an entry can't be saved, or null if it can. */
 export function checkEntry(fields: EntryFields): string | null {
   if (!isCount(fields.team)) return 'Enter the team number first.'
+  if (fields.team > MAX_TEAM) return `Check the team number: ${fields.team} is too big.`
   if (!isCount(fields.match)) return 'Enter the match number first.'
+  if (fields.match > MAX_MATCH) return `Check the match number: ${fields.match} is too big.`
   if (!DRIVER_SKILLS.includes(fields.driver_skill)) return 'Choose a driver skill first.'
+  const notes = fields.notes.trim().length
+  if (notes > MAX_NOTES_LENGTH) return `Keep the notes under ${MAX_NOTES_LENGTH} characters. These are ${notes}.`
   return null
 }
 
@@ -108,12 +135,155 @@ export function saveEntry(fields: EntryFields): Result<Entry> {
     notes: fields.notes.trim(),
     id: newId(),
     created_at: new Date().toISOString(),
+    event_key: EVENT_KEY,
     scouted_by: currentUser()?.id ?? null,
     synced: false,
   }
   entryStore.set((entries) => [entry, ...entries])
+  // Send it now if there's a connection. If not, it waits on this device.
+  void syncEntries()
   return ok(entry)
 }
+
+// ---------------------------------------------------------------------------
+// Syncing entries to the team database.
+
+/** One row of the scouting_entries table: an entry that reached the team database. */
+export interface ScoutingEntry extends Row {
+  event_key: string
+  match_number: number
+  team_number: number
+  counts: Record<string, number>
+  endgame: string
+  /** Any of ROLES in season.ts. */
+  roles: string[]
+  broke_down: boolean
+  stop: Stop
+  /** 1 to 5. Empty for entries saved before driver skill was on the form. */
+  driver_skill: number | null
+  notes: string | null
+  /** Who scouted it, and when, on their phone. */
+  scouted_by: string | null
+  scouted_at: string
+  /** Who sent it. Usually the scout, but a shared phone can send someone else's entries. */
+  created_by: string | null
+}
+
+// Made up, for demo mode. Team numbers in the 9990s, so nobody mistakes them for real scouting.
+const EXAMPLE_ENTRIES: ScoutingEntry[] = [
+  { id: '00000000-0000-4000-8000-0000000d0001', event_key: EVENT_KEY, match_number: 1, team_number: 9991, counts: { autoFuel: 3, teleopFuel: 12, fuelMissed: 4 }, endgame: 'Level 2', roles: ['Scorer'], broke_down: false, stop: 'None', driver_skill: 4, notes: 'Fast intake', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-07T15:02:00Z', created_at: '2026-11-07T15:03:00Z', created_by: DEMO_PEOPLE.jordan },
+  { id: '00000000-0000-4000-8000-0000000d0002', event_key: EVENT_KEY, match_number: 1, team_number: 9992, counts: { autoFuel: 0, teleopFuel: 5, fuelMissed: 1 }, endgame: 'None', roles: ['Defender'], broke_down: true, stop: 'A-stop', driver_skill: 2, notes: null, scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-07T15:02:30Z', created_at: '2026-11-07T15:04:00Z', created_by: DEMO_PEOPLE.alex },
+]
+
+export const entriesTable = createTable<ScoutingEntry>('scouting_entries', { demo: EXAMPLE_ENTRIES, sort: newestFirst })
+
+/** An entry saved on a phone before roles, broke down, stop and driver skill were on the form (#28). */
+type OlderEntry = Omit<Entry, 'roles' | 'broke_down' | 'stop' | 'driver_skill'> &
+  Partial<Pick<Entry, 'roles' | 'broke_down' | 'stop' | 'driver_skill'>> & { defense?: boolean }
+
+/**
+ * An entry from this device, as a row for the team database. Entries saved
+ * before #28 have "played defense" instead of roles: it becomes the
+ * Defender role, the way the form treats it now. Their other new fields are
+ * left at "no", "None" and empty.
+ */
+export function toRow(saved: Entry | OlderEntry): Omit<ScoutingEntry, 'created_at' | 'created_by'> {
+  const entry = saved as OlderEntry
+  return {
+    id: entry.id,
+    event_key: entry.event_key ?? EVENT_KEY,
+    match_number: entry.match,
+    team_number: entry.team,
+    counts: entry.counts,
+    endgame: entry.endgame,
+    roles: entry.roles ?? (entry.defense ? ['Defender'] : []),
+    broke_down: entry.broke_down ?? false,
+    stop: entry.stop ?? 'None',
+    driver_skill: entry.driver_skill ?? null,
+    notes: entry.notes.trim() || null,
+    scouted_by: entry.scouted_by,
+    scouted_at: entry.created_at,
+  }
+}
+
+/** Whether entries are being sent right now, and why the last try didn't work, if it didn't. */
+export interface SyncStatus {
+  sending: boolean
+  problem: string | null
+}
+
+// Only for this page visit: not saved.
+export const syncStatus = createStore<SyncStatus>('scouting-sync', 1, () => ({ sending: false, problem: null }), { persist: false, keepOnReset: true })
+
+export function useSyncStatus(): SyncStatus {
+  return useStore(syncStatus)
+}
+
+const NO_CONNECTION = "No connection. They'll send by themselves when this phone is back online."
+
+// The send under way, if there is one, so two tries at once share it.
+let inFlight: Promise<Result<number>> | null = null
+
+/**
+ * Send every Waiting entry to the team database, and mark them Synced.
+ * Gives back how many were sent. If it can't (no connection, or not signed
+ * in), they stay Waiting and the next try sends them. If a send is already
+ * under way, this waits for it, then sends whatever is still waiting, such
+ * as an entry saved in the meantime.
+ */
+export function syncEntries(): Promise<Result<number>> {
+  if (inFlight) return inFlight.then(() => syncEntries())
+  inFlight = send().finally(() => {
+    inFlight = null
+  })
+  return inFlight
+}
+
+async function send(): Promise<Result<number>> {
+  const waiting = entryStore.get().filter((e) => !e.synced)
+  if (waiting.length === 0) return ok(0)
+  if (globalThis.navigator?.onLine === false) {
+    syncStatus.set({ sending: false, problem: NO_CONNECTION })
+    return fail(NO_CONNECTION)
+  }
+  if (!currentUser()) return fail('Sign in to send your entries.')
+
+  syncStatus.set({ sending: true, problem: syncStatus.get().problem })
+  const result = await entriesTable.insertOnce(waiting.map(toRow))
+  if (!result.ok) {
+    syncStatus.set({ sending: false, problem: result.error })
+    return result
+  }
+  // Mark only the ones just sent: entries saved while sending stay Waiting.
+  const sent = new Set(waiting.map((e) => e.id))
+  entryStore.set((entries) => entries.map((e) => (sent.has(e.id) ? { ...e, synced: true } : e)))
+  syncStatus.set({ sending: false, problem: null })
+  return ok(waiting.length)
+}
+
+/** How often to try again while entries are waiting. */
+export const RETRY_MS = 60 * 1000
+
+/**
+ * Keep trying to send Waiting entries: when the app opens, when the phone
+ * comes back online, when the app comes back on screen, and every minute
+ * while any are waiting. Venue Wi-Fi comes and goes, so this doesn't rely
+ * on any one of them.
+ */
+function keepSyncing() {
+  const tryNow = () => {
+    if (entryStore.get().some((e) => !e.synced)) void syncEntries()
+  }
+  globalThis.addEventListener('online', tryNow)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') tryNow()
+  })
+  setInterval(tryNow, RETRY_MS)
+  setTimeout(tryNow, 0)
+}
+
+// Only in a browser: the tests call syncEntries() themselves.
+if (typeof window !== 'undefined' && typeof document !== 'undefined') keepSyncing()
 
 /** A random id like the database makes. Works on http:// pages too, unlike crypto.randomUUID(). */
 function newId(): string {
@@ -298,6 +468,61 @@ export function getTeam(team: number): Promise<Result<TbaTeam>> {
 }
 
 // ---------------------------------------------------------------------------
+// Match 13: team ratings and match predictions.
+
+/**
+ * One team's Match 13 rating at the event. The numbers are points. xP
+ * ("expected points") is how many points the team adds to its alliance's
+ * score.
+ */
+export interface Match13Rating {
+  teamNumber: number
+  /** The rating going into the event. */
+  xpStart: number
+  /** The rating now (or at the end of the event). Rank teams by this one. */
+  xpEnd: number
+  /** The parts of xpEnd: auto, teleop and endgame. */
+  xAuto: number | null
+  xTele: number | null
+  xEnd: number | null
+  /** Statbotics' EPA, and The Blue Alliance's OPR and DPR, for comparison. */
+  epa: number | null
+  opr: number | null
+  dpr: number | null
+}
+
+/** Who Match 13 thinks will win a match, and by how much. */
+export interface MatchPrediction {
+  /** Like 2026ilch_qm12: the same as TbaMatch's key, so you can match them up. */
+  key: string
+  /** The chance red wins, from 0 to 1. Blue's chance is 1 minus this. */
+  redWinChance: number
+  redScore: number
+  blueScore: number
+}
+
+/** What Match 13 sends for predictions: the parts we use. */
+interface Match13Matches {
+  matches: { key: string; pred: { winProb: number; redScore: number; blueScore: number } }[]
+}
+
+/** Every team's Match 13 rating at the event, best first. Match 13 sends them in no order. */
+export async function getRatings(event = EVENT_KEY): Promise<Result<Match13Rating[]>> {
+  const result = await callFunction<{ teams: Match13Rating[] } | null>('match13', { kind: 'ratings', event }, () => ({ teams: demoRatings() }))
+  if (!result.ok) return result
+  return ok([...(result.value?.teams ?? [])].sort((a, b) => b.xpEnd - a.xpEnd || a.teamNumber - b.teamNumber))
+}
+
+/** Match 13's prediction for each of the event's matches. */
+export async function getPredictions(event = EVENT_KEY): Promise<Result<MatchPrediction[]>> {
+  const result = await callFunction<Match13Matches | null>('match13', { kind: 'predictions', event }, () => demoPredictions(event))
+  if (!result.ok) return result
+  return ok(
+    (result.value?.matches ?? []).map(({ key, pred }) => ({ key, redWinChance: pred.winProb, redScore: pred.redScore, blueScore: pred.blueScore })),
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Example data for demo mode. Made up: the other teams and the video don't exist.
 
 const DEMO_TEAMS: [number, string][] = [
@@ -337,6 +562,44 @@ function demoMatches(event: string): TbaMatchWithVideos[] {
     predicted_time: DEMO_START + i * 8 * 60,
     videos: redScore < 0 ? [] : [{ type: 'youtube', key: 'example-video' }],
   }))
+}
+
+// Made-up Match 13 ratings, in no order like the real ones: [team, xpStart, xpEnd].
+const DEMO_RATINGS: [team: number, start: number, end: number][] = [
+  [9993, 31.2, 30.4],
+  [4096, 44.0, 48.6],
+  [9995, 20.1, 22.8],
+  [9991, 40.3, 41.7],
+  [9994, 27.5, 26.1],
+  [9992, 33.9, 35.2],
+]
+
+function demoRatings(): Match13Rating[] {
+  const round = (n: number) => Math.round(n * 10) / 10
+  return DEMO_RATINGS.map(([teamNumber, xpStart, xpEnd]) => ({
+    teamNumber,
+    xpStart,
+    xpEnd,
+    xAuto: round(xpEnd * 0.25),
+    xTele: round(xpEnd * 0.6),
+    xEnd: round(xpEnd * 0.15),
+    epa: round(xpEnd * 0.95),
+    opr: round(xpEnd * 1.05),
+    dpr: round(30 - xpEnd * 0.2),
+  }))
+}
+
+/** Made-up predictions for the example schedule: each alliance's ratings added up. */
+function demoPredictions(event: string): Match13Matches {
+  const rating = new Map(demoRatings().map((r) => [r.teamNumber, r.xpEnd]))
+  const total = (teams: number[]) => Math.round(teams.reduce((sum, team) => sum + (rating.get(team) ?? 0), 0))
+  return {
+    matches: DEMO_SCHEDULE.map(([red, blue], i) => {
+      const redScore = total(red)
+      const blueScore = total(blue)
+      return { key: `${event}_qm${i + 1}`, pred: { winProb: Math.round((redScore / (redScore + blueScore)) * 100) / 100, redScore, blueScore } }
+    }),
+  }
 }
 
 function demoRankings(): TbaRanking[] {

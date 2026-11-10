@@ -14,6 +14,9 @@ import '../../src/core/notifications'
 const db = setUpTestDatabase()
 const tables = allTables()
 
+// Migration file names (each with its own number) are checked in
+// migrations.test.ts.
+
 describe('every table in the database', () => {
   it('has row level security on, so only its rules let anyone in', async () => {
     const open = await db.sql<{ name: string }>(

@@ -28,6 +28,7 @@ const DEMO_MEMBERS: Member[] = [
   { id: DEMO_PEOPLE.morgan, slack_user_id: 'U0DEMO0003', name: 'Morgan Lee', avatar_url: null, role: 'admin', active: true, created_at: '2026-09-01T17:00:00Z' },
   { id: DEMO_PEOPLE.jordan, slack_user_id: 'U0DEMO0004', name: 'Jordan Kim', avatar_url: null, role: 'student', active: true, created_at: '2026-09-03T19:00:00Z' },
   { id: DEMO_PEOPLE.sam, slack_user_id: 'U0DEMO0005', name: 'Sam Ortiz', avatar_url: null, role: 'student', active: false, created_at: '2025-09-04T19:00:00Z' },
+  { id: DEMO_PEOPLE.casey, slack_user_id: 'U0DEMO0006', name: 'Casey Nguyen', avatar_url: null, role: 'leader', active: true, created_at: '2026-09-02T19:00:00Z' },
 ]
 
 export const membersTable = createTable<Member>('members', {

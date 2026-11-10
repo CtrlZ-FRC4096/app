@@ -23,13 +23,14 @@ repo. Changes here need a mentor's approval (see `.github/CODEOWNERS`).
   signs in, a trigger in the members migration adds them to `members` as a
   student, but only if Slack says they came through the Ctrl-Z workspace.
   Anyone else is turned away before an account is made.
-- **Roles.** `members.role` is student, mentor or admin. Admins change it in
-  the app's Members module. Switching off someone's access (`active = false`)
-  locks them out straight away.
+- **Roles.** `members.role` is student, leader (shown as "Student leader"),
+  mentor or admin. Admins change it in the app's Members module. Switching
+  off someone's access (`active = false`) locks them out straight away.
 - **Permission rules.** Every table has row level security on, and policies
   that say who can read and change what, using `private.is_member()`,
-  `private.is_mentor()` and `private.is_admin()`. People who aren't signed in
-  get nothing. These rules are the real security: the browser can send the
+  `private.is_leader()` (student leaders, mentors and admins),
+  `private.is_mentor()` (mentors and admins) and `private.is_admin()`.
+  People who aren't signed in get nothing. These rules are the real security: the browser can send the
   database anything.
 - **Migrations go out automatically.** When a pull request is merged, the
   Deploy workflow applies any new migrations to the database before it
@@ -52,7 +53,9 @@ repo. Changes here need a mentor's approval (see `.github/CODEOWNERS`).
 
 `tests/tables.test.ts` checks every table for you: row level security is on,
 signed-out visitors get nothing, live updates are on, and the example rows
-fit the table.
+fit the table. `tests/migrations.test.ts` checks every migration's name, and
+that no two start with the same date and time: Supabase keeps track of
+which migrations it has run by that number.
 
 **Never edit a migration after it's merged.** The database has already run
 it. To change a table, add a new migration that alters it.
@@ -196,9 +199,10 @@ the functions can read.
 |:--|:--|
 | `hello` | The example to copy. Answers members with their name and which secrets are set |
 | `tba` | The Blue Alliance for scouting: an event's schedule and rankings, and a team's matches and name |
+| `match13` | Match 13 for scouting: each team's rating (xP) at an event, and who's predicted to win each match |
 | `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio. For the CNC module: parts' sizes and outlines, and where parts sit in a sheet's layout assembly |
 | `slack` | Slack messages from the team's bot: to yourself (anyone), or to people and a channel (mentors). Used through `src/core/slack.ts` |
-| `calendar` | The team's Google Calendar: everyone sees its events; mentors add events, and change or remove the ones the app added. Used through `src/core/calendar.ts` |
+| `calendar` | The team's Google Calendar: everyone sees its events; student leaders, mentors and admins add events, and change or remove the ones the app added. Used through `src/core/calendar.ts` |
 | `push` | Phone notifications (Web Push): the public key browsers need to turn them on, and a test to your own devices. Uses the `web-push` package (a mentor approved it). Used through `src/core/push.ts`. The same notifications are kept in the app too, in the `notifications` table behind the bell (`src/core/notifications.ts`) |
 
 Slack reminders that go out by themselves on a schedule don't use a server
@@ -228,6 +232,7 @@ paste a key anywhere else, including chat.
 |:--|:--|:--|
 | Supabase access token | `SUPABASE_ACCESS_TOKEN` | GitHub |
 | The Blue Alliance read key | `TBA_KEY` | Supabase |
+| Match 13 API key (`m13_live_...`) | `MATCH13_KEY` | Supabase |
 | Onshape access key and secret key | `ONSHAPE_ACCESS_KEY`, `ONSHAPE_SECRET_KEY` | Supabase |
 | Slack bot token (`xoxb-...`) | `SLACK_BOT_TOKEN` | Supabase **and** GitHub (the attendance pull and reminders use GitHub's) |
 | Google service account key (a JSON file) | `GOOGLE_SERVICE_ACCOUNT_KEY` | Supabase |
@@ -320,8 +325,19 @@ paste a key anywhere else, including chat.
    3. Only change them if the private key leaks. Everyone would have to
       turn notifications on again, because devices only accept the key
       they signed up with.
-7. **Deploy:** **Actions > Deploy > Run workflow** on `main`.
-8. **Check:** in the app, **Members > Server functions > Check them**. Every
+7. **Add Match 13's key.** Sign in at
+   [match13.com/account](https://www.match13.com/account) and make a key
+   described as `Ctrl-Z team app`. Match 13 shows it once, so copy it
+   straight into Supabase's **Edge Functions > Secrets** as `MATCH13_KEY`,
+   and keep a copy in Bitwarden.
+
+   Every key on one Match 13 account shares 60 requests a minute and 1000
+   an hour. The `match13` function remembers each answer for two minutes,
+   so a full stand of phones costs about one request every two minutes.
+   If a key is ever pasted somewhere it shouldn't be, delete it on the
+   account page and make a new one.
+8. **Deploy:** **Actions > Deploy > Run workflow** on `main`.
+9. **Check:** in the app, **Members > Server functions > Check them**. Every
    line should say OK, and the Slack bot sends you a test message. Then
    open **Notifications** from the menu at the top right, turn them on and
    **Send me a test**.
@@ -395,7 +411,7 @@ and `SLACK_BOT_TOKEN`, and only reads the database.
   | Monthly active users | 50,000 | About 100 |
   | Server function calls | 500,000 a month | Thousands. Live rankings at events (#39) will add the most |
   | Realtime connections at once | 200 | One per open tab |
-  | Server functions | 100 | 5 |
+  | Server functions | 100 | 7 |
 
   If egress gets close, the cheapest fixes are loading less of the
   attendance tables (only this season's rows, or only when the Attendance

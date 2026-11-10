@@ -1,10 +1,12 @@
 // Tests for data.ts. Run them with `npm test`.
 // Who is allowed to do what is the database's job: that's tested in
-// supabase/tests/bom.test.ts and bom-steps.test.ts.
+// supabase/tests/bom.test.ts and bom-steps.test.ts. The checks here only
+// explain it first. Tests run as a student unless they say otherwise.
 import { beforeEach, describe, expect, it } from 'vitest'
-import { setDemoRole } from '../../core/demo'
+import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
+import { membersTable } from '../../core/members'
 import {
-  addPart, addRobot, addSystem, bomSummary, changePart, changeSystem, checkPart, checkSystem, countParts, filterParts, kindLabel,
+  addPart, addRobot, addSystem, bomSummary, canEditRobotsAndParts, changePart, changeSystem, checkPart, checkSystem, countParts, filterParts, kindLabel,
   nextPartNumber, partCountText, partsTable, orderWord, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, systemsTable,
   type NewPart, type Part,
 } from './data'
@@ -13,6 +15,7 @@ import { STATUSES, itemsTable as purchaseTable, type PurchaseItem } from '../pur
 import {
   addStep, advance, changeDone, checkStep, moveBack, removeStep, stationName, stationQueue, stepName, stepsFor, stepsTable, type Step,
 } from './data'
+import { assignStep, checkAssignment, dueText, isOverdue, today } from './data'
 
 beforeEach(() => {
   setDemoRole('student')
@@ -20,6 +23,7 @@ beforeEach(() => {
   systemsTable.reset()
   robotsTable.reset()
   stepsTable.reset()
+  membersTable.reset()
 })
 
 const parts = () => partsTable.rows()
@@ -150,7 +154,24 @@ describe('checkPart', () => {
   })
 })
 
+describe('canEditRobotsAndParts', () => {
+  it('is true for student leaders, mentors and admins, not students', () => {
+    expect(canEditRobotsAndParts('student')).toBe(false)
+    expect(canEditRobotsAndParts('leader')).toBe(true)
+    expect(canEditRobotsAndParts('mentor')).toBe(true)
+    expect(canEditRobotsAndParts('admin')).toBe(true)
+  })
+})
+
 describe('addPart', () => {
+  beforeEach(() => setDemoRole('leader'))
+
+  it("doesn't let a student add a part, and says who can", async () => {
+    setDemoRole('student')
+    expect(await addPart(newMadePart())).toEqual({ ok: false, error: 'Only student leaders and mentors can add parts. Ask one of them.' })
+    expect(parts()).toHaveLength(12)
+  })
+
   it('adds a made part, trimmed, without vendor details', async () => {
     const result = await addPart(newMadePart({ name: '  Roller bracket ', vendor: 'Left over' }))
     expect(result.ok).toBe(true)
@@ -175,6 +196,16 @@ describe('addPart', () => {
 
 describe('changePart and removePart', () => {
   const plate = () => parts().find((p) => p.part_number === '4096-26-INT-001')!
+  beforeEach(() => setDemoRole('leader'))
+
+  it("doesn't let a student change or delete a part", async () => {
+    setDemoRole('student')
+    expect(await changePart(plate(), newMadePart({ part_number: '4096-26-INT-001', quantity: 9 }))).toEqual({
+      ok: false, error: 'Only student leaders and mentors can change parts. Ask one of them.',
+    })
+    expect(await removePart(plate())).toEqual({ ok: false, error: 'Only student leaders and mentors can delete parts. Ask one of them.' })
+    expect(plate().quantity).not.toBe(9)
+  })
 
   it('changes a part, keeping its own part number allowed', async () => {
     const result = await changePart(plate(), newMadePart({ part_number: '4096-26-INT-001', name: 'Intake side plate', revision: 'C', quantity: 4 }))
@@ -202,7 +233,16 @@ describe('changePart and removePart', () => {
 describe('robots and systems', () => {
   const system = { name: 'Shooter', code: ' sho ', onshape_url: '' }
 
-  it('adds and renames a robot', async () => {
+  it("doesn't let a student add or rename a robot", async () => {
+    expect(await addRobot('2027 competition robot')).toEqual({ ok: false, error: 'Only student leaders and mentors can add robots. Ask one of them.' })
+    expect(await renameRobot(robotsTable.rows()[0], 'Renamed')).toEqual({
+      ok: false, error: 'Only student leaders and mentors can rename robots. Ask one of them.',
+    })
+    expect(robotsTable.rows().map((r) => r.name)).not.toContain('Renamed')
+  })
+
+  it('lets a student leader add and rename a robot', async () => {
+    setDemoRole('leader')
     const added = await addRobot('  2027 competition robot ')
     if (!added.ok) throw new Error(added.error)
     expect(added.value.name).toBe('2027 competition robot')
@@ -211,7 +251,7 @@ describe('robots and systems', () => {
     expect(await addRobot(' ')).toEqual({ ok: false, error: 'Name the robot, like "2027 competition robot".' })
   })
 
-  it('adds a system, with its code in capitals', async () => {
+  it('lets a student add a system, with its code in capitals', async () => {
     const robot = robotsTable.rows()[0]
     const added = await addSystem(robot.id, system)
     expect(added.ok && added.value).toMatchObject({ robot_id: robot.id, name: 'Shooter', code: 'SHO', onshape_url: null })
@@ -227,16 +267,18 @@ describe('robots and systems', () => {
     expect(checkSystem(system, others)).toBeNull()
   })
 
-  it('changes a system, keeping its own name and code allowed', async () => {
+  it('lets a student change a system, keeping its own name and code allowed', async () => {
     const intake = systemsTable.rows().find((s) => s.code === 'INT')!
     const result = await changeSystem(intake, { name: 'Intake', code: 'INT', onshape_url: 'https://cad.onshape.com/documents/0123456789abcdef01234567/w/0123456789abcdef01234567/e/0123456789abcdef01234567' })
     expect(result.ok && result.value.onshape_url).toBe('https://cad.onshape.com/documents/0123456789abcdef01234567/w/0123456789abcdef01234567/e/0123456789abcdef01234567')
   })
 
-  it('only lets a mentor delete a system, which deletes its parts too', async () => {
+  it('only lets a student leader or mentor delete a system, which deletes its parts too', async () => {
     const intake = systemsTable.rows().find((s) => s.code === 'INT')!
-    expect((await removeSystem(intake)).ok).toBe(false)
-    setDemoRole('mentor')
+    expect(await removeSystem(intake)).toEqual({
+      ok: false, error: 'Only student leaders and mentors can delete a system, because it deletes every part in it.',
+    })
+    setDemoRole('leader')
     expect((await removeSystem(intake)).ok).toBe(true)
     expect(systemsTable.rows().some((s) => s.id === intake.id)).toBe(false)
     expect(parts().some((p) => p.system_id === intake.id)).toBe(false)
@@ -343,6 +385,82 @@ describe('addStep and removeStep', () => {
   it('remove a stage', async () => {
     expect((await removeStep(stage('Roller shaft', 'pre'))).ok).toBe(true)
     expect(stepsOf('Roller shaft').map((s) => s.stage)).toEqual(['design', 'process1'])
+  })
+})
+
+describe('the example stages', () => {
+  it('are only assigned to people on the team whose access is on', () => {
+    const active = new Set(membersTable.rows().filter((m) => m.active).map((m) => m.id))
+    const assigned = stepsTable.rows().filter((s) => s.assigned_to)
+    expect(assigned.length).toBeGreaterThan(0)
+    for (const s of assigned) expect(active.has(s.assigned_to!), s.id).toBe(true)
+  })
+})
+
+describe('checkAssignment', () => {
+  const members = () => membersTable.rows()
+
+  it('allows a person, a due date, both or neither', () => {
+    expect(checkAssignment({ assigned_to: DEMO_PEOPLE.alex, due_date: '2026-11-20' }, members())).toBeNull()
+    expect(checkAssignment({ assigned_to: DEMO_PEOPLE.alex, due_date: null }, members())).toBeNull()
+    expect(checkAssignment({ assigned_to: null, due_date: '2026-11-20' }, members())).toBeNull()
+    expect(checkAssignment({ assigned_to: null, due_date: null }, members())).toBeNull()
+  })
+
+  it("refuses someone who isn't on the team, or whose access is off", () => {
+    expect(checkAssignment({ assigned_to: 'nobody', due_date: null }, members())).toMatch(/isn't on the team/)
+    expect(checkAssignment({ assigned_to: DEMO_PEOPLE.sam, due_date: null }, members())).toBe(
+      "Sam Ortiz's access is switched off, so they can't be given work. Pick someone else.",
+    )
+  })
+
+  it("refuses a due date that isn't a real day", () => {
+    expect(checkAssignment({ assigned_to: null, due_date: 'next Friday' }, members())).toBe('Pick the due date from the calendar.')
+    expect(checkAssignment({ assigned_to: null, due_date: '2026-02-30' }, members())).toBe('Pick the due date from the calendar.')
+  })
+})
+
+describe('assignStep', () => {
+  it('lets a student assign a stage with a due date, and clear both', async () => {
+    const id = stage('Roller shaft', 'pre').id
+    const now = () => stepsTable.rows().find((s) => s.id === id)!
+    expect((await assignStep(now(), { assigned_to: DEMO_PEOPLE.jordan, due_date: '2026-11-20' })).ok).toBe(true)
+    expect(now()).toMatchObject({ assigned_to: DEMO_PEOPLE.jordan, due_date: '2026-11-20' })
+    expect((await assignStep(now(), { assigned_to: null, due_date: null })).ok).toBe(true)
+    expect(now()).toMatchObject({ assigned_to: null, due_date: null })
+  })
+
+  it("won't save an assignment checkAssignment refuses, and says why", async () => {
+    const before = stage('Roller shaft', 'pre')
+    expect(await assignStep(before, { assigned_to: DEMO_PEOPLE.sam, due_date: null })).toMatchObject({ ok: false, error: /switched off/ })
+    expect(stage('Roller shaft', 'pre')).toEqual(before)
+  })
+
+  it('starts new stages with nobody assigned and no due date', async () => {
+    await addStep(part('Roller shaft'), 'post', null)
+    expect(stage('Roller shaft', 'post')).toMatchObject({ assigned_to: null, due_date: null })
+  })
+})
+
+describe('isOverdue', () => {
+  const due = (due_date: string | null, status: Step['status'] = 'todo'): Step => ({ ...stage('Intake side plate', 'post'), due_date, status })
+
+  it('is late the day after its due date, not on the day', () => {
+    expect(isOverdue(due('2026-11-20'), '2026-11-19')).toBe(false)
+    expect(isOverdue(due('2026-11-20'), '2026-11-20')).toBe(false)
+    expect(isOverdue(due('2026-11-20'), '2026-11-21')).toBe(true)
+  })
+
+  it('is never late once done, or with no due date', () => {
+    expect(isOverdue(due('2026-11-20', 'done'), '2026-12-01')).toBe(false)
+    expect(isOverdue(due(null), '2026-12-01')).toBe(false)
+  })
+})
+
+describe('today and dueText', () => {
+  it('write the day where the person is, and a due date like "Nov 20"', () => {
+    expect(today(new Date(2026, 10, 9, 23, 30))).toBe('2026-11-09')
+    expect(dueText('2026-11-20')).toBe('Nov 20')
   })
 })
 

@@ -1,11 +1,14 @@
-// Tests for data.ts, in demo mode: the tests never call The Blue Alliance.
-// The server function itself is tested in supabase/tests/functions.test.ts.
-import { beforeEach, describe, expect, it } from 'vitest'
+// Tests for data.ts, in demo mode: the tests never call The Blue Alliance
+// or Match 13. The server functions themselves are tested in
+// supabase/tests/functions.test.ts and supabase/tests/match13.test.ts.
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetAllStores } from '../../core/store'
+import { DEMO_PEOPLE } from '../../core/demo'
 import {
-  blankOrNumber, checkEntry, checkPitEntry, entryStore, getRankings, getSchedule, getTeam, getTeamMatches, numberOnly, pitStore, saveEntry, savePitEntry, teamNumber,
-  type EntryFields, type PitFields,
+  MAX_NOTES_LENGTH, blankOrNumber, checkEntry, checkPitEntry, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
+  numberOnly, pitStore, saveEntry, savePitEntry, syncEntries, syncStatus, teamNumber, toRow, type EntryFields, type PitFields,
 } from './data'
+import { EVENT_KEY } from './season'
 
 // A filled-in pit form. Each test changes only the part it's about.
 const PIT: PitFields = {
@@ -148,6 +151,102 @@ describe('saveEntry', () => {
   })
 })
 
+describe('checkEntry', () => {
+  it("refuses what the team database would refuse, so an entry can't get stuck Waiting", () => {
+    expect(checkEntry({ ...FORM, team: 100000 })).toMatch(/team number/)
+    expect(checkEntry({ ...FORM, match: 1001 })).toMatch(/match number/)
+    expect(checkEntry({ ...FORM, notes: 'x'.repeat(MAX_NOTES_LENGTH + 1) })).toMatch(/notes/)
+    expect(checkEntry({ ...FORM, notes: 'x'.repeat(MAX_NOTES_LENGTH) })).toBeNull()
+  })
+})
+
+describe('syncing to the team database', () => {
+  beforeEach(async () => {
+    // Let any send from an earlier test finish before starting fresh.
+    await syncEntries()
+    entryStore.reset()
+    entriesTable.reset()
+    syncStatus.reset()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const sent = (id: string) => entriesTable.rows().filter((row) => row.id === id)
+
+  it('sends Waiting entries, then marks them Synced', async () => {
+    const first = saveEntry(FORM)
+    const second = saveEntry({ ...FORM, match: 13 })
+    if (!first.ok || !second.ok) throw new Error('not saved')
+    expect(await syncEntries()).toEqual({ ok: true, value: expect.any(Number) })
+    expect(entryStore.get().every((e) => e.synced)).toBe(true)
+    expect(sent(first.value.id)).toEqual([
+      expect.objectContaining({
+        event_key: EVENT_KEY,
+        match_number: 12,
+        team_number: 9991,
+        counts: FORM.counts,
+        endgame: 'Level 2',
+        roles: ['Scorer', 'Defender'],
+        broke_down: true,
+        stop: 'A-stop',
+        driver_skill: 4,
+        notes: 'Fast cycles',
+        scouted_by: DEMO_PEOPLE.alex,
+        scouted_at: first.value.created_at,
+      }),
+    ])
+    expect(sent(second.value.id)).toHaveLength(1)
+  })
+
+  it('never sends an entry twice, even if the phone sends it again', async () => {
+    const saved = saveEntry(FORM)
+    if (!saved.ok) throw new Error(saved.error)
+    await syncEntries()
+    // As if the phone lost the connection before it heard back.
+    entryStore.set((entries) => entries.map((e) => ({ ...e, synced: false })))
+    await syncEntries()
+    expect(sent(saved.value.id)).toHaveLength(1)
+    expect(entryStore.get()[0].synced).toBe(true)
+  })
+
+  it('keeps entries Waiting with no connection, then sends them once it is back', async () => {
+    vi.stubGlobal('navigator', { onLine: false })
+    const saved = saveEntry(FORM)
+    if (!saved.ok) throw new Error(saved.error)
+    const offline = await syncEntries()
+    expect(offline).toEqual({ ok: false, error: expect.stringMatching(/No connection/) })
+    expect(entryStore.get()[0].synced).toBe(false)
+    expect(syncStatus.get().problem).toMatch(/No connection/)
+    expect(sent(saved.value.id)).toEqual([])
+
+    vi.stubGlobal('navigator', { onLine: true })
+    expect(await syncEntries()).toEqual({ ok: true, value: 1 })
+    expect(entryStore.get()[0].synced).toBe(true)
+    expect(syncStatus.get()).toEqual({ sending: false, problem: null })
+  })
+
+  it('has nothing to send when every entry is synced', async () => {
+    expect(await syncEntries()).toEqual({ ok: true, value: 0 })
+  })
+
+  it("sends an entry saved before #28 with Defender for played defense, and the other new fields left empty", () => {
+    const saved = saveEntry(FORM)
+    if (!saved.ok) throw new Error(saved.error)
+    const { roles: _r, broke_down: _b, stop: _s, driver_skill: _d, ...rest } = saved.value
+    expect(toRow({ ...rest, defense: true })).toMatchObject({ roles: ['Defender'], broke_down: false, stop: 'None', driver_skill: null })
+    expect(toRow({ ...rest, defense: false }).roles).toEqual([])
+  })
+
+  it('sends an entry saved before events were recorded with the current event', () => {
+    const saved = saveEntry(FORM)
+    if (!saved.ok) throw new Error(saved.error)
+    const { event_key: _old, ...older } = saved.value
+    expect(toRow(older).event_key).toBe(EVENT_KEY)
+  })
+})
+
 describe('The Blue Alliance in demo mode', () => {
   it('has a schedule of qualification matches, three teams a side', async () => {
     const result = await getSchedule('2026demo')
@@ -180,5 +279,65 @@ describe('The Blue Alliance in demo mode', () => {
   it('names teams', async () => {
     expect(await getTeam(4096)).toMatchObject({ ok: true, value: { team_number: 4096, nickname: 'Ctrl-Z' } })
     expect(teamNumber('frc4096')).toBe(4096)
+  })
+})
+
+describe('Match 13 in demo mode', () => {
+  it('rates every example team once, best first', async () => {
+    const result = await getRatings()
+    if (!result.ok) throw new Error(result.error)
+    expect(result.value.map((r) => r.teamNumber).sort()).toEqual([4096, 9991, 9992, 9993, 9994, 9995])
+    const ratings = result.value.map((r) => r.xpEnd)
+    expect(ratings).toEqual([...ratings].sort((a, b) => b - a))
+  })
+
+  it('predicts every match in the schedule, with the same keys', async () => {
+    const schedule = await getSchedule('2026demo')
+    const predictions = await getPredictions('2026demo')
+    if (!schedule.ok || !predictions.ok) throw new Error('No example data')
+    expect(predictions.value.map((p) => p.key)).toEqual(schedule.value.map((m) => m.key))
+    for (const p of predictions.value) {
+      expect(p.redWinChance).toBeGreaterThanOrEqual(0)
+      expect(p.redWinChance).toBeLessThanOrEqual(1)
+      expect(p.redWinChance > 0.5).toBe(p.redScore > p.blueScore)
+    }
+  })
+})
+
+describe('Match 13 answers', () => {
+  // Shaped like Match 13's real answers, which have more in them than we use.
+  const row = (teamNumber: number, xpEnd: number) => ({
+    teamNumber, xpStart: 40, xpEnd, xAuto: 10, xTele: 25, xEnd: 5, epa: 38, opr: 41, dpr: 20, sos: 0.5, components: { fuel: 3 },
+  })
+  const match = { key: '2026ilch_qm1', pred: { winProb: 0.81, redScore: 120.4, blueScore: 95.2, redVar: 500, blueVar: 480 }, teams: {} }
+
+  async function withAnswer(answer: { ok: true; value: unknown } | { ok: false; error: string }) {
+    vi.resetModules()
+    const callFunction = vi.fn(async () => answer)
+    vi.doMock('../../core/functions', () => ({ callFunction }))
+    return { data: await import('./data'), callFunction }
+  }
+  afterEach(() => {
+    vi.doUnmock('../../core/functions')
+    vi.resetModules()
+  })
+
+  it('asks the match13 function for the event, and ranks the ratings best first', async () => {
+    const { data, callFunction } = await withAnswer({ ok: true, value: { eventKey: '2026ilch', teams: [row(9991, 30), row(4096, 50), row(9992, 50)], year: 2026 } })
+    const result = await data.getRatings('2026ilch')
+    expect(callFunction).toHaveBeenCalledWith('match13', { kind: 'ratings', event: '2026ilch' }, expect.any(Function))
+    expect(result.ok && result.value.map((r) => r.teamNumber)).toEqual([4096, 9992, 9991])
+  })
+
+  it('turns a prediction into who is likely to win, and by how much', async () => {
+    const { data, callFunction } = await withAnswer({ ok: true, value: { eventKey: '2026ilch', matches: [match], year: 2026 } })
+    expect(await data.getPredictions('2026ilch')).toEqual({ ok: true, value: [{ key: '2026ilch_qm1', redWinChance: 0.81, redScore: 120.4, blueScore: 95.2 }] })
+    expect(callFunction).toHaveBeenCalledWith('match13', { kind: 'predictions', event: '2026ilch' }, expect.any(Function))
+  })
+
+  it('passes on what went wrong, written for the person', async () => {
+    const { data } = await withAnswer({ ok: false, error: 'Match 13 turned down the key. A mentor should check the MATCH13_KEY secret.' })
+    expect(await data.getRatings()).toEqual({ ok: false, error: expect.stringMatching(/MATCH13_KEY/) })
+    expect(await data.getPredictions()).toEqual({ ok: false, error: expect.stringMatching(/MATCH13_KEY/) })
   })
 })

@@ -1,10 +1,11 @@
 // Google Calendar, for the team calendar: everyone on the team can see its
-// events, and mentors can add events from the app (and change or remove
-// the ones the app added). Needs the GOOGLE_SERVICE_ACCOUNT_KEY and
-// GOOGLE_CALENDAR_ID secrets; see "Server functions" in supabase/README.md.
+// events. Student leaders, mentors and admins can add events from the app,
+// and change or remove the ones the app added. Needs the
+// GOOGLE_SERVICE_ACCOUNT_KEY and GOOGLE_CALENDAR_ID secrets; see "Server
+// functions" in supabase/README.md.
 // The app calls this through src/core/calendar.ts.
 import { forMembers, reply } from '../_shared/members.ts'
-import { calendarRequest, createCalendar, fromGoogle, isAppEvent, parseServiceAccount, paths, toGoogle, type CalendarEvent, type GoogleEvent } from './calendar.ts'
+import { addedBy, calendarRequest, createCalendar, fromGoogle, mayChange, parseServiceAccount, paths, toGoogle, type CalendarEvent, type GoogleEvent } from './calendar.ts'
 
 const keySecret = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_KEY') ?? ''
 const calendarId = (Deno.env.get('GOOGLE_CALENDAR_ID') ?? '').trim()
@@ -50,21 +51,21 @@ export default {
     }
 
     if (request.kind === 'add') {
-      const answer = await calendar('POST', '', toGoogle(request.event))
+      const answer = await calendar('POST', '', toGoogle(request.event, member.id))
       return answer.ok ? reply({ event: fromGoogle(answer.data as GoogleEvent) }) : reply({ error: answer.error }, answer.status)
     }
 
-    // Changing or removing: only events the app added.
+    // Changing or removing: only events the app added, by a student leader, mentor or admin.
     const existing = await calendar('GET', paths.event(request.id))
     if (!existing.ok) return reply({ error: existing.error }, existing.status)
-    if (!isAppEvent(existing.data as GoogleEvent)) {
-      return reply({ error: 'The app only changes events it added. Change this one in Google Calendar.' }, 403)
-    }
+    const problem = mayChange(existing.data as GoogleEvent, member.role)
+    if (problem) return reply({ error: problem }, 403)
     if (request.kind === 'remove') {
       const answer = await calendar('DELETE', paths.event(request.id))
       return answer.ok ? reply({ removed: true }) : reply({ error: answer.error }, answer.status)
     }
-    const answer = await calendar('PUT', paths.event(request.id), { ...(existing.data as GoogleEvent), ...toGoogle(request.event) })
+    // Keep who added it, even when someone else changes it.
+    const answer = await calendar('PUT', paths.event(request.id), { ...(existing.data as GoogleEvent), ...toGoogle(request.event, addedBy(existing.data as GoogleEvent)) })
     return answer.ok ? reply({ event: fromGoogle(answer.data as GoogleEvent) }) : reply({ error: answer.error }, answer.status)
   }),
 }
