@@ -12,6 +12,7 @@ export const scouting: ModuleDefinition = {
     { name: 'Match', path: '' },
     { name: 'Pit', path: 'pit' },
     { name: 'Schedule', path: 'schedule' },
+    { name: 'Rankings', path: 'rankings' },
     { name: 'Teams', path: 'team' },
   ],
   useSummary: useEntrySummary,
