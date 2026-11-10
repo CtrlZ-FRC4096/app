@@ -3,7 +3,7 @@
 // supabase/tests/functions.test.ts and supabase/tests/match13.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetAllStores } from '../../core/store'
-import { DEMO_PEOPLE } from '../../core/demo'
+import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import {
   MAX_NOTES_LENGTH, blankOrNumber, checkEntry, checkPitEntry, getEventTeams, tbaTeamUrl, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
   MAX_PIT_NUMBER, numberOnly, pitAnswers, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, scoutedTeams, syncEntries, syncStatus, teamNumber,
@@ -21,6 +21,7 @@ import { addMissingTeams, byPosition, moveTeam, picklist, picklistTable, positio
 import { COUNTERS, DRIVETRAINS, EVENT_KEY } from './season'
 import { loadSchedule, positionStore, setPosition, teamFor, type SavedSchedule } from './data'
 import { rankOf } from './data'
+import { chooseEvent, currentEvent, eventStore, eventWhenWhere, eventsTable, getOurEvents, latestEvent, lookupSeasons, searchEvents, type TbaEvent } from './data'
 
 // A filled-in pit form. Each test changes only the part it's about.
 const PIT: PitFields = {
@@ -1496,5 +1497,90 @@ describe("the saved copy when Match 13 or The Blue Alliance can't be reached", (
     data.ratingsStore.set({ event: '2025old', ratings: [rating(9991, 30)], rankings, loadedAt: now.toISOString(), error: null })
     await data.loadRatings(later)
     expect(data.savedRatings()).toEqual({ event: EVENT_KEY, ratings: [], rankings: [], loadedAt: null, error: DOWN })
+  })
+})
+
+describe('the event the team is scouting', () => {
+  beforeEach(() => {
+    eventStore.reset()
+    eventsTable.reset()
+    resetAllStores()
+  })
+  afterEach(() => setDemoRole('student'))
+
+  const regional: TbaEvent = {
+    key: '2027ilpe', name: 'Example Peoria Regional', city: 'Peoria', state_prov: 'Illinois', country: 'USA', start_date: '2027-03-25', end_date: '2027-03-27', year: 2027,
+  }
+
+  it("is season.ts's EVENT_KEY until a mentor picks one on this phone", () => {
+    expect(currentEvent()).toBe(EVENT_KEY)
+  })
+
+  it('is the newest pick in the table', () => {
+    const pick = (event_key: string, created_at: string) => ({ id: event_key, event_key, name: event_key, created_at, created_by: null })
+    expect(latestEvent([pick('2027new', '2026-11-10T12:00:00Z'), pick('2026old', '2026-11-01T12:00:00Z')])).toEqual({ key: '2027new', name: '2027new' })
+    expect(latestEvent([])).toBeNull()
+  })
+
+  it("lets a mentor pick it, and then everything uses it: the schedule's event and new entries", async () => {
+    setDemoRole('mentor')
+    expect(await chooseEvent(regional)).toEqual({ ok: true, value: { key: '2027ilpe', name: 'Example Peoria Regional' } })
+    expect(currentEvent()).toBe('2027ilpe')
+    expect(latestEvent(eventsTable.rows())).toEqual({ key: '2027ilpe', name: 'Example Peoria Regional' })
+    const saved = saveEntry(FORM)
+    expect(saved.ok && saved.value.event_key).toBe('2027ilpe')
+    const schedule = await getSchedule()
+    expect(schedule.ok && schedule.value[0].key).toBe('2027ilpe_qm1')
+  })
+
+  it("doesn't let a student pick it, and says who can", async () => {
+    expect(await chooseEvent(regional)).toEqual({ ok: false, error: 'Only a mentor can change the event. Ask a mentor to pick it.' })
+    expect(currentEvent()).toBe(EVENT_KEY)
+  })
+})
+
+describe('looking up an event', () => {
+  const event = (key: string, name: string, city: string, state_prov: string, start_date: string, end_date = start_date): TbaEvent => ({
+    key, name, city, state_prov, country: 'USA', start_date, end_date, year: Number(key.slice(0, 4)),
+  })
+  const EVENTS = [
+    event('2027ilch', 'Central Illinois Regional', 'Peoria', 'Illinois', '2027-03-11', '2027-03-13'),
+    event('2027mosl', 'St. Louis Regional', 'St. Louis', 'Missouri', '2027-03-30', '2027-04-02'),
+    event('2027arc', 'Archimedes Division', 'Houston', 'Texas', '2027-04-21', '2027-04-24'),
+  ]
+
+  it('finds events by any part of the name, city, state or key, ignoring capitals', () => {
+    expect(searchEvents(EVENTS, 'regional').map((e) => e.key)).toEqual(['2027ilch', '2027mosl'])
+    expect(searchEvents(EVENTS, 'ARCHIMEDES').map((e) => e.key)).toEqual(['2027arc'])
+    expect(searchEvents(EVENTS, 'houston').map((e) => e.key)).toEqual(['2027arc'])
+    expect(searchEvents(EVENTS, '2027mosl').map((e) => e.key)).toEqual(['2027mosl'])
+  })
+
+  it('needs every word to match, and shows nothing until something is typed', () => {
+    expect(searchEvents(EVENTS, 'illinois regional').map((e) => e.key)).toEqual(['2027ilch'])
+    expect(searchEvents(EVENTS, 'illinois houston')).toEqual([])
+    expect(searchEvents(EVENTS, '   ')).toEqual([])
+  })
+
+  it('shows at most 20', () => {
+    const many = Array.from({ length: 30 }, (_, i) => event(`2027r${i}`, `Regional ${i}`, 'Town', 'Ohio', '2027-03-01'))
+    expect(searchEvents(many, 'regional')).toHaveLength(20)
+  })
+
+  it('says when and where, joining dates in the same month', () => {
+    expect(eventWhenWhere(EVENTS[0])).toBe('Mar 11–13, 2027 · Peoria, Illinois')
+    expect(eventWhenWhere(EVENTS[1])).toBe('Mar 30–Apr 2, 2027 · St. Louis, Missouri')
+    expect(eventWhenWhere({ ...EVENTS[2], city: null, state_prov: null, end_date: EVENTS[2].start_date })).toBe('Apr 21, 2027')
+  })
+
+  it("looks in this year's and next year's events, since next season's are out in the fall", () => {
+    expect(lookupSeasons(new Date('2026-11-10T12:00:00'))).toEqual([2026, 2027])
+  })
+
+  it("lists our team's events soonest first in demo mode, including the example event", async () => {
+    const result = await getOurEvents(Number(EVENT_KEY.slice(0, 4)))
+    if (!result.ok) throw new Error(result.error)
+    expect(result.value.map((e) => e.key)[0]).toBe(EVENT_KEY)
+    expect(result.value.map((e) => e.start_date)).toEqual([...result.value.map((e) => e.start_date)].sort())
   })
 })

@@ -3,6 +3,7 @@ import { navigate, useRoute } from '../../core/router'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
 import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
+import EventPicker from './EventPicker'
 import FormSection from './FormSection'
 import MatchTeamFields from './MatchTeamFields'
 import Picklist from './Picklist'
@@ -62,6 +63,7 @@ export default function ScoutingPage() {
   const team = Number(teamText)
   return (
     <>
+      <EventPicker />
       <div style={{ marginBottom: 12 }}>
         <Pick label="Which page" options={VIEWS} value={view} onChange={(v) => navigate('scouting', PATHS[v])} />
       </div>

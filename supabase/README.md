@@ -198,7 +198,7 @@ the functions can read.
 | Function | What it does |
 |:--|:--|
 | `hello` | The example to copy. Answers members with their name and which secrets are set |
-| `tba` | The Blue Alliance for scouting: an event's schedule and rankings, and a team's matches and name |
+| `tba` | The Blue Alliance for scouting: an event's schedule, rankings and teams, a team's matches and name, and the season's events (ours, or all of them) for picking the event |
 | `match13` | Match 13 for scouting: each team's rating (xP) at an event, and who's predicted to win each match |
 | `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio. For the CNC module: parts' sizes and outlines, and where parts sit in a sheet's layout assembly |
 | `slack` | Slack messages from the team's bot: to yourself (anyone), or to people and a channel (mentors). Used through `src/core/slack.ts` |

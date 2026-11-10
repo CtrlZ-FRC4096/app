@@ -35,9 +35,10 @@ export const DRIVETRAINS: string[] = ['Swerve', 'Tank', 'Mecanum', 'H-drive', 'O
 export const AUTO_SIDES: string[] = ['Left', 'Center', 'Right']
 
 /**
- * The event we're at, the way The Blue Alliance names it: the year and a
- * short code, like 2026ilch. It's the end of the event page's address on
- * thebluealliance.com. Change it before each event: the schedule and
- * rankings come from it (see data.ts).
+ * The event the app uses until a mentor picks one in the app (Change event,
+ * at the top of every Scouting page). The way The Blue Alliance names it:
+ * the year and a short code, like 2026ilch. You don't need to change it
+ * before each event any more: pick the event in the app instead (see "The
+ * event" in README.md). Demo mode's example data is for this event.
  */
 export const EVENT_KEY = '2026ilch'
