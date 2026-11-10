@@ -1,7 +1,56 @@
 // Tests for data.ts, in demo mode: the tests never call The Blue Alliance.
 // The server function itself is tested in supabase/tests/functions.test.ts.
-import { describe, expect, it } from 'vitest'
-import { getRankings, getSchedule, getTeam, getTeamMatches, teamNumber } from './data'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { resetAllStores } from '../../core/store'
+import { checkEntry, entryStore, getRankings, getSchedule, getTeam, getTeamMatches, saveEntry, teamNumber, type EntryFields } from './data'
+
+// A filled-in form. Each test changes only the part it's about.
+const FORM: EntryFields = {
+  match: 12,
+  team: 9991,
+  counts: { autoFuel: 3, teleopFuel: 14, fuelMissed: 2 },
+  endgame: 'Level 2',
+  defense: true,
+  notes: '  Fast cycles  ',
+}
+
+describe('saveEntry', () => {
+  beforeEach(() => {
+    entryStore.reset()
+  })
+
+  it('saves what the scout entered, marked as not synced yet', () => {
+    const result = saveEntry(FORM)
+    if (!result.ok) throw new Error(result.error)
+    expect(entryStore.get()).toEqual([result.value])
+    expect(result.value).toMatchObject({ ...FORM, notes: 'Fast cycles', synced: false })
+    expect(result.value.scouted_by).not.toBeNull()
+  })
+
+  it('lists entries newest first, each with its own id', () => {
+    saveEntry(FORM)
+    saveEntry({ ...FORM, match: 13 })
+    expect(entryStore.get().map((e) => e.match)).toEqual([13, 12])
+    expect(entryStore.get()[0].id).not.toBe(entryStore.get()[1].id)
+  })
+
+  it('refuses an entry with no team and says why', () => {
+    expect(saveEntry({ ...FORM, team: 0 })).toEqual({ ok: false, error: 'Enter the team number first.' })
+    expect(saveEntry({ ...FORM, team: Number.NaN })).toEqual({ ok: false, error: 'Enter the team number first.' })
+    expect(entryStore.get()).toEqual([])
+  })
+
+  it('refuses an entry with no match number', () => {
+    expect(checkEntry({ ...FORM, match: 0 })).toBe('Enter the match number first.')
+    expect(checkEntry(FORM)).toBeNull()
+  })
+
+  it('keeps entries when the example data is reset', () => {
+    saveEntry(FORM)
+    resetAllStores()
+    expect(entryStore.get()).toHaveLength(1)
+  })
+})
 
 describe('The Blue Alliance in demo mode', () => {
   it('has a schedule of qualification matches, three teams a side', async () => {
