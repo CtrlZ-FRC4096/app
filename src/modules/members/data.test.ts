@@ -19,6 +19,18 @@ describe('changeRole', () => {
     expect(person(DEMO_PEOPLE.jordan).role).toBe('mentor')
   })
 
+  it('lets an admin make a student a student leader', async () => {
+    const result = await changeRole(person(DEMO_PEOPLE.jordan), 'leader')
+    expect(result.ok).toBe(true)
+    expect(person(DEMO_PEOPLE.jordan).role).toBe('leader')
+  })
+
+  it("doesn't let a student leader change roles", async () => {
+    setDemoRole('leader')
+    expect(await changeRole(person(DEMO_PEOPLE.jordan), 'leader')).toEqual({ ok: false, error: 'Only admins can change roles and access.' })
+    expect(person(DEMO_PEOPLE.jordan).role).toBe('student')
+  })
+
   it("doesn't let a mentor change roles", async () => {
     setDemoRole('mentor')
     expect(await changeRole(person(DEMO_PEOPLE.jordan), 'mentor')).toEqual({ ok: false, error: 'Only admins can change roles and access.' })

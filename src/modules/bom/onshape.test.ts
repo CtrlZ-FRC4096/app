@@ -1,10 +1,13 @@
 // Tests for importing from Onshape: planOnshapeImport() in onshape.ts, and
 // getOnshapeBom() and applyOnshapeImport() in data.ts, in demo mode.
+// Importing is for student leaders, mentors and admins.
 import { beforeEach, describe, expect, it } from 'vitest'
+import { setDemoRole } from '../../core/demo'
 import { applyOnshapeImport, getOnshapeBom, isOnshapeLink, partsTable, systemsTable, type BomSystem, type Part } from './data'
 import { planOnshapeImport, type OnshapeBom, type OnshapeLine } from './onshape'
 
 beforeEach(() => {
+  setDemoRole('leader')
   partsTable.reset()
   systemsTable.reset()
 })
@@ -111,6 +114,17 @@ describe('importing the example Intake', () => {
     // Importing again changes nothing.
     const again = planOnshapeImport(intake(), answer.value, partsTable.rows())
     expect([again.add.length, again.change.length, again.removed.length]).toEqual([0, 0, 0])
+  })
+
+  it("doesn't let a student import, and says who can", async () => {
+    const answer = await getOnshapeBom(intake())
+    if (!answer.ok) throw new Error(answer.error)
+    const plan = planOnshapeImport(intake(), answer.value, partsTable.rows())
+    setDemoRole('student')
+    const leadersOnly = { ok: false, error: 'Only student leaders and mentors can import from Onshape. Ask one of them.' }
+    expect(await getOnshapeBom(intake())).toEqual(leadersOnly)
+    expect(await applyOnshapeImport(intake(), plan)).toEqual(leadersOnly)
+    expect(intakeParts()).toHaveLength(6)
   })
 
   it('needs an Onshape link first', async () => {

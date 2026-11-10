@@ -1,10 +1,11 @@
 // Tests for data.ts. Run them with `npm test`.
 // Who is allowed to do what is the database's job: that's tested in
-// supabase/tests/bom.test.ts and bom-steps.test.ts.
+// supabase/tests/bom.test.ts and bom-steps.test.ts. The checks here only
+// explain it first. Tests run as a student unless they say otherwise.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { setDemoRole } from '../../core/demo'
 import {
-  addPart, addRobot, addSystem, bomSummary, changePart, changeSystem, checkPart, checkSystem, countParts, filterParts, kindLabel,
+  addPart, addRobot, addSystem, bomSummary, canEditRobotsAndParts, changePart, changeSystem, checkPart, checkSystem, countParts, filterParts, kindLabel,
   nextPartNumber, partCountText, partsTable, orderWord, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, systemsTable,
   type NewPart, type Part,
 } from './data'
@@ -150,7 +151,24 @@ describe('checkPart', () => {
   })
 })
 
+describe('canEditRobotsAndParts', () => {
+  it('is true for student leaders, mentors and admins, not students', () => {
+    expect(canEditRobotsAndParts('student')).toBe(false)
+    expect(canEditRobotsAndParts('leader')).toBe(true)
+    expect(canEditRobotsAndParts('mentor')).toBe(true)
+    expect(canEditRobotsAndParts('admin')).toBe(true)
+  })
+})
+
 describe('addPart', () => {
+  beforeEach(() => setDemoRole('leader'))
+
+  it("doesn't let a student add a part, and says who can", async () => {
+    setDemoRole('student')
+    expect(await addPart(newMadePart())).toEqual({ ok: false, error: 'Only student leaders and mentors can add parts. Ask one of them.' })
+    expect(parts()).toHaveLength(12)
+  })
+
   it('adds a made part, trimmed, without vendor details', async () => {
     const result = await addPart(newMadePart({ name: '  Roller bracket ', vendor: 'Left over' }))
     expect(result.ok).toBe(true)
@@ -175,6 +193,16 @@ describe('addPart', () => {
 
 describe('changePart and removePart', () => {
   const plate = () => parts().find((p) => p.part_number === '4096-26-INT-001')!
+  beforeEach(() => setDemoRole('leader'))
+
+  it("doesn't let a student change or delete a part", async () => {
+    setDemoRole('student')
+    expect(await changePart(plate(), newMadePart({ part_number: '4096-26-INT-001', quantity: 9 }))).toEqual({
+      ok: false, error: 'Only student leaders and mentors can change parts. Ask one of them.',
+    })
+    expect(await removePart(plate())).toEqual({ ok: false, error: 'Only student leaders and mentors can delete parts. Ask one of them.' })
+    expect(plate().quantity).not.toBe(9)
+  })
 
   it('changes a part, keeping its own part number allowed', async () => {
     const result = await changePart(plate(), newMadePart({ part_number: '4096-26-INT-001', name: 'Intake side plate', revision: 'C', quantity: 4 }))
@@ -202,7 +230,16 @@ describe('changePart and removePart', () => {
 describe('robots and systems', () => {
   const system = { name: 'Shooter', code: ' sho ', onshape_url: '' }
 
-  it('adds and renames a robot', async () => {
+  it("doesn't let a student add or rename a robot", async () => {
+    expect(await addRobot('2027 competition robot')).toEqual({ ok: false, error: 'Only student leaders and mentors can add robots. Ask one of them.' })
+    expect(await renameRobot(robotsTable.rows()[0], 'Renamed')).toEqual({
+      ok: false, error: 'Only student leaders and mentors can rename robots. Ask one of them.',
+    })
+    expect(robotsTable.rows().map((r) => r.name)).not.toContain('Renamed')
+  })
+
+  it('lets a student leader add and rename a robot', async () => {
+    setDemoRole('leader')
     const added = await addRobot('  2027 competition robot ')
     if (!added.ok) throw new Error(added.error)
     expect(added.value.name).toBe('2027 competition robot')
@@ -211,7 +248,7 @@ describe('robots and systems', () => {
     expect(await addRobot(' ')).toEqual({ ok: false, error: 'Name the robot, like "2027 competition robot".' })
   })
 
-  it('adds a system, with its code in capitals', async () => {
+  it('lets a student add a system, with its code in capitals', async () => {
     const robot = robotsTable.rows()[0]
     const added = await addSystem(robot.id, system)
     expect(added.ok && added.value).toMatchObject({ robot_id: robot.id, name: 'Shooter', code: 'SHO', onshape_url: null })
@@ -227,16 +264,18 @@ describe('robots and systems', () => {
     expect(checkSystem(system, others)).toBeNull()
   })
 
-  it('changes a system, keeping its own name and code allowed', async () => {
+  it('lets a student change a system, keeping its own name and code allowed', async () => {
     const intake = systemsTable.rows().find((s) => s.code === 'INT')!
     const result = await changeSystem(intake, { name: 'Intake', code: 'INT', onshape_url: 'https://cad.onshape.com/documents/0123456789abcdef01234567/w/0123456789abcdef01234567/e/0123456789abcdef01234567' })
     expect(result.ok && result.value.onshape_url).toBe('https://cad.onshape.com/documents/0123456789abcdef01234567/w/0123456789abcdef01234567/e/0123456789abcdef01234567')
   })
 
-  it('only lets a mentor delete a system, which deletes its parts too', async () => {
+  it('only lets a student leader or mentor delete a system, which deletes its parts too', async () => {
     const intake = systemsTable.rows().find((s) => s.code === 'INT')!
-    expect((await removeSystem(intake)).ok).toBe(false)
-    setDemoRole('mentor')
+    expect(await removeSystem(intake)).toEqual({
+      ok: false, error: 'Only student leaders and mentors can delete a system, because it deletes every part in it.',
+    })
+    setDemoRole('leader')
     expect((await removeSystem(intake)).ok).toBe(true)
     expect(systemsTable.rows().some((s) => s.id === intake.id)).toBe(false)
     expect(parts().some((p) => p.system_id === intake.id)).toBe(false)
