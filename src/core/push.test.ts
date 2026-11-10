@@ -2,7 +2,23 @@
 // notifications on is tried by hand on a phone; who can save a device is
 // tested in supabase/tests/push-subscriptions.test.ts.
 import { describe, expect, it } from 'vitest'
-import { BLOCKED_TEXT, SUPPORT_TEXT, detailLines, keyBytes, pushServiceName, pushSupport, savedDevice, showTestHere, testResultText, thisDevice, type PushDetails } from './push'
+import {
+  BLOCKED_TEXT,
+  SUPPORT_TEXT,
+  countSaved,
+  detailLines,
+  keyBytes,
+  otherDevicesText,
+  pushServiceName,
+  pushSupport,
+  removeOtherDevices,
+  removedText,
+  savedDevice,
+  showTestHere,
+  testResultText,
+  thisDevice,
+  type PushDetails,
+} from './push'
 
 const everything = { serviceWorker: true, pushManager: true, notification: true, ios: false, standalone: false }
 
@@ -94,15 +110,17 @@ describe('detailLines', () => {
     worker: 'running',
     workerScope: 'https://app.team4096.org/',
     pushService: 'fcm.googleapis.com',
+    saved: { thisOne: true, others: 0 },
     demo: false,
   }
   const line = (details: PushDetails, label: string) => detailLines(details).find((l) => l.label === label)
 
   it('is all OK when everything is set up', () => {
-    expect(detailLines(working).map((l) => l.tone)).toEqual(['ok', 'ok', 'ok', 'ok'])
+    expect(detailLines(working).map((l) => l.tone)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok'])
     expect(line(working, 'Site address')?.text).toBe('https://app.team4096.org/')
     expect(line(working, 'Service worker')?.text).toBe('Running, for https://app.team4096.org/')
     expect(line(working, 'Push service')?.text).toBe('fcm.googleapis.com')
+    expect(line(working, 'Your devices')?.text).toBe('Just this one.')
   })
 
   it('says to use https on an address that is not secure', () => {
@@ -118,10 +136,31 @@ describe('detailLines', () => {
   })
 
   it("says what's not set up yet before notifications are turned on", () => {
-    const off = { ...working, permission: 'default' as const, worker: 'none' as const, workerScope: null, pushService: null }
-    expect(detailLines(off).map((l) => l.tone)).toEqual(['ok', 'plain', 'plain', 'plain'])
+    const off = { ...working, permission: 'default' as const, worker: 'none' as const, workerScope: null, pushService: null, saved: { thisOne: false, others: 0 } }
+    expect(detailLines(off).map((l) => l.tone)).toEqual(['ok', 'plain', 'plain', 'plain', 'plain'])
     expect(line(off, 'Service worker')?.text).toContain('Turn on')
     expect(line(off, 'Push service')?.text).toContain('Turn on')
+    expect(line(off, 'Your devices')?.text).toContain('Turn on')
+  })
+
+  it('counts your other saved devices', () => {
+    expect(line({ ...working, saved: { thisOne: true, others: 2 } }, 'Your devices')?.text).toBe('This one, and 2 other devices.')
+  })
+
+  it("says to turn off and on again when this device is on but isn't saved, so nothing can reach it", () => {
+    const lost = line({ ...working, saved: { thisOne: false, others: 1 } }, 'Your devices')
+    expect(lost?.tone).toBe('warn')
+    expect(lost?.text).toBe("This device isn't saved, so notifications can't reach it. Tap Turn off, then Turn on. You have 1 other device saved.")
+  })
+
+  it("mentions other saved devices when it's not on here, like one from the old address", () => {
+    const off = { ...working, pushService: null, saved: { thisOne: false, others: 1 } }
+    expect(line(off, 'Your devices')).toEqual({ label: 'Your devices', tone: 'plain', text: 'Not this one yet. You have 1 other device saved.' })
+  })
+
+  it("says when your devices couldn't be read, and that demo mode doesn't save any", () => {
+    expect(line({ ...working, saved: null }, 'Your devices')?.tone).toBe('warn')
+    expect(line({ ...working, saved: null, demo: true }, 'Your devices')?.text).toContain('demo mode')
   })
 
   it('says a service worker that is starting needs a moment', () => {
@@ -130,6 +169,36 @@ describe('detailLines', () => {
 
   it('explains there is no push service in demo mode', () => {
     expect(line({ ...working, pushService: null, demo: true }, 'Push service')?.text).toContain('demo mode')
+  })
+})
+
+describe('countSaved', () => {
+  const saved = ['https://push.example.com/1', 'https://push.example.com/2', 'https://push.example.com/3']
+
+  it('finds this device among your saved ones and counts the rest', () => {
+    expect(countSaved(saved, 'https://push.example.com/2')).toEqual({ thisOne: true, others: 2 })
+  })
+
+  it("counts them all as others when this device isn't saved, or isn't on", () => {
+    expect(countSaved(saved, 'https://push.example.com/9')).toEqual({ thisOne: false, others: 3 })
+    expect(countSaved(saved, null)).toEqual({ thisOne: false, others: 3 })
+    expect(countSaved([], null)).toEqual({ thisOne: false, others: 0 })
+  })
+})
+
+describe('removing your other devices', () => {
+  it('counts them in words', () => {
+    expect(otherDevicesText(1)).toBe('1 other device')
+    expect(otherDevicesText(3)).toBe('3 other devices')
+  })
+
+  it('says how many it removed, and how to get one back', () => {
+    expect(removedText(0)).toBe('You had no other devices saved.')
+    expect(removedText(2)).toBe('Removed 2 other devices. To use one again, open the app on it and turn notifications back on.')
+  })
+
+  it('has nothing to remove in demo mode, like the tests', async () => {
+    expect(await removeOtherDevices()).toEqual({ ok: true, value: "Demo mode doesn't save devices, so there's nothing to remove." })
   })
 })
 

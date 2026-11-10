@@ -9,9 +9,11 @@ import {
   IPHONE_STEPS,
   SUPPORT_TEXT,
   detailLines,
+  otherDevicesText,
   pushDetails,
   pushKey,
   pushState,
+  removeOtherDevices,
   sendTest,
   showTestHere,
   turnOffPush,
@@ -179,6 +181,12 @@ function Details(props: { state: PushState | null; busy: boolean; run: (action: 
   }, [state, busy])
 
   const canTest = state === 'on' || state === 'off' || state === 'blocked'
+  const others = details?.saved?.others ?? 0
+
+  function removeOthers() {
+    if (!window.confirm(`Remove your ${otherDevicesText(others)}? They stop getting notifications until they're turned on again there.`)) return
+    void run(removeOtherDevices, 'Removed.')
+  }
 
   return (
     <details>
@@ -192,6 +200,17 @@ function Details(props: { state: PushState | null; busy: boolean; run: (action: 
               <Pill tone={line.tone}>{PILL_TEXT[line.tone]}</Pill> <strong>{line.label}:</strong> {line.text}
             </p>
           ))
+        )}
+        {others > 0 && (
+          <>
+            <p className="note" style={{ margin: 0 }}>
+              Notifications sent to you also go to your {otherDevicesText(others)}. If you don't use one any more, or you
+              turned notifications on at the app's old github.io address, remove them here.
+            </p>
+            <div className="toolbar">
+              <button type="button" className="btn" disabled={busy} onClick={removeOthers}>Remove my other devices</button>
+            </div>
+          </>
         )}
         {canTest && (
           <>

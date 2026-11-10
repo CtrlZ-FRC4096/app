@@ -9,8 +9,11 @@
  * - `test` (anyone on the team): a test notification to each of your own
  *   devices. The Notifications page's "Send me a test" button uses it.
  *
- * Step 1 of phone notifications: real notifications, like "your request
- * was ordered", come in a later step.
+ * For now it only sends to your own devices. Real notifications, like
+ * "Your request was ordered", are already in the app's bell (see
+ * supabase/migrations/..._purchase_notifications.sql). Sending those to
+ * phones too comes in a later step, because it means sending to other
+ * people's devices.
  */
 
 export type PushRequest = { kind: 'key' } | { kind: 'test' }
