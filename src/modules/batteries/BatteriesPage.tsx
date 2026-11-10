@@ -1,8 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { isMentor, useSession } from '../../core/session'
 import { toast } from '../../core/toast'
-import { PageHead, Panel } from '../../core/ui'
-import { NAME_LIMIT, NOTES_LIMIT, addBattery, ago, changeBattery, groupByStatus, moveToNext, nextStatus, removeBattery, useBatteries, type Battery } from './data'
+import { Callout, PageHead, Panel, Pill } from '../../core/ui'
+import BatteryDetails from './BatteryDetails'
+import {
+  IN_THE_ROBOT, MATCH_LIMIT, NAME_LIMIT, NOTES_LIMIT, addBattery, ago, changeBattery, findBatteries, groupByStatus, isTired, moveToNext, nextStatus,
+  nextUp, removeBattery, suggestMatch, useBatteries, useLog, type Battery, type LogEntry,
+} from './data'
+import Labels from './Labels'
 
 // Big enough to tap with gloves on.
 const BIG_BUTTON = { minHeight: 56, fontSize: 17, flex: '1 1 12rem' }
@@ -21,35 +26,54 @@ function useNow(): Date {
 // functions from data.ts. It never saves anything itself.
 export default function BatteriesPage() {
   const batteries = useBatteries()
+  const log = useLog()
   const now = useNow()
   const { role } = useSession()
   const mentor = isMentor(role)
   const [adding, setAdding] = useState(false)
+  const [labels, setLabels] = useState(false)
+  const [query, setQuery] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const editing = batteries.find((b) => b.id === editingId)
   const retired = batteries.filter((b) => b.retired)
+  const next = nextUp(batteries, log)
+  const found = findBatteries(batteries, query)
 
   return (
     <>
       <PageHead title="Batteries">
-        Where each battery is: charged, in the robot, or charging. Tap a battery's button when it moves on.
+        Where each battery is: charged, in the robot, or charging. Tap a battery's button when it moves on, and its number for its readings and history.
       </PageHead>
-      {/* Only mentors and admins add, rename, retire and delete batteries. The database's rules enforce this too. */}
-      {mentor && !adding && (
-        <div className="toolbar" style={{ marginBottom: 12 }}>
-          <button type="button" className="btn" onClick={() => setAdding(true)}>Add a battery</button>
-        </div>
-      )}
+      <Callout title={next ? `Next up: ${next.name}` : 'Next up: none'}>
+        <span>
+          {next
+            ? `Charged the longest, ${ago(next.status_changed_at, now)}. Tired batteries are left out.`
+            : 'No charged battery that isn\'t tired. Check what\'s on the chargers.'}
+        </span>
+      </Callout>
+      <div className="toolbar" style={{ margin: '12px 0' }}>
+        <label className="field" htmlFor="battery-find">
+          Find a battery
+          <input id="battery-find" className="input" type="search" style={{ width: '12ch', minHeight: 46, fontSize: 16 }} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="2026-3" />
+        </label>
+        {!labels && <button type="button" className="btn btn-lg" onClick={() => setLabels(true)}>Labels</button>}
+        {/* Only mentors and admins add, rename, retire and delete batteries. The database's rules enforce this too. */}
+        {mentor && !adding && <button type="button" className="btn btn-lg" onClick={() => setAdding(true)}>Add a battery</button>}
+      </div>
+      {labels && <Labels batteries={batteries.filter((b) => !b.retired)} onDone={() => setLabels(false)} />}
       {mentor && adding && <AddBatteryForm onDone={() => setAdding(false)} />}
       {mentor && editing && <EditBatteryForm key={editing.id} battery={editing} onDone={() => setEditingId(null)} />}
-      {groupByStatus(batteries).map((group) => (
+      {query && found.filter((b) => !b.retired).length === 0 && (
+        <p className="muted">No battery with "{query}" in its number.</p>
+      )}
+      {groupByStatus(found).filter((group) => !query || group.batteries.length > 0).map((group) => (
         <Panel key={group.status} title={`${group.status} (${group.batteries.length})`} aside={group.hint && <span className="note">{group.hint}</span>}>
           {group.batteries.length === 0 ? (
             <p className="panel-body muted">None.</p>
           ) : (
             <div className="row-list">
               {group.batteries.map((battery) => (
-                <BatteryRow key={battery.id} battery={battery} now={now} onEdit={mentor ? () => setEditingId(battery.id) : undefined} />
+                <BatteryRow key={battery.id} battery={battery} log={log} now={now} onEdit={mentor ? () => setEditingId(battery.id) : undefined} />
               ))}
             </div>
           )}
@@ -74,35 +98,64 @@ export default function BatteriesPage() {
   )
 }
 
-function BatteryRow(props: { battery: Battery; now: Date; onEdit?: () => void }) {
+function BatteryRow(props: { battery: Battery; log: LogEntry[]; now: Date; onEdit?: () => void }) {
   const { battery } = props
   const next = nextStatus(battery.status)
   const [saving, setSaving] = useState(false)
+  const [open, setOpen] = useState(false)
+  // Going In the robot asks which match first: null while it isn't asking.
+  const [match, setMatch] = useState<string | null>(null)
 
-  async function move() {
+  async function move(forMatch = '') {
     setSaving(true)
-    const result = await moveToNext(battery)
+    const result = await moveToNext(battery, forMatch)
     setSaving(false)
-    toast(result.ok ? `${battery.name}: ${next}.` : result.error)
+    setMatch(null)
+    toast(result.ok ? `${battery.name}: ${next}${forMatch.trim() ? ` for ${forMatch.trim()}` : ''}.` : result.error)
+  }
+
+  async function askMatch() {
+    setMatch('')
+    // Fill in our next match from the event schedule. The box can be changed, or left empty.
+    const suggested = await suggestMatch()
+    setMatch((typed) => (typed === '' ? suggested : typed))
   }
 
   return (
     // flexWrap: on a phone the big button goes under the battery's number and fills the width.
     <div style={{ flexWrap: 'wrap' }}>
       <span style={{ minWidth: 0, overflowWrap: 'anywhere', flex: '1 1 10rem' }}>
-        <strong style={{ fontSize: 20 }}>{battery.name}</strong>
+        <button type="button" className="link-btn" style={{ fontSize: 20, fontWeight: 700, minHeight: 44 }} aria-expanded={open} onClick={() => setOpen(!open)}>
+          {battery.name} {open ? '▴' : '▾'}
+        </button>
+        {isTired(battery.id, props.log) && <> <Pill tone="warn">Tired</Pill></>}
         <br />
         <span className="note">{battery.status} {ago(battery.status_changed_at, props.now)}</span>
         {battery.notes && <><br /><span className="note">{battery.notes}</span></>}
       </span>
-      <span className="toolbar" style={{ flex: '1 1 14rem' }}>
-        <button type="button" className="btn btn-lg btn-primary" style={BIG_BUTTON} disabled={saving} onClick={() => void move()}>
-          Move to {next}
-        </button>
-        {props.onEdit && (
-          <button type="button" className="btn btn-lg" style={{ minHeight: 56 }} aria-label={`Edit ${battery.name}`} onClick={props.onEdit}>Edit</button>
-        )}
-      </span>
+      {match === null ? (
+        <span className="toolbar" style={{ flex: '1 1 14rem' }}>
+          <button type="button" className="btn btn-lg btn-primary" style={BIG_BUTTON} disabled={saving} onClick={() => void (next === IN_THE_ROBOT ? askMatch() : move())}>
+            Move to {next}
+          </button>
+          {props.onEdit && (
+            <button type="button" className="btn btn-lg" style={{ minHeight: 56 }} aria-label={`Edit ${battery.name}`} onClick={props.onEdit}>Edit</button>
+          )}
+        </span>
+      ) : (
+        <form
+          style={{ flexBasis: '100%', display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'end' }}
+          onSubmit={(e) => { e.preventDefault(); void move(match) }}
+        >
+          <label className="field" htmlFor={`match-${battery.id}`}>
+            Which match is it for?
+            <input id={`match-${battery.id}`} className="input" style={{ width: '12ch', minHeight: 46, fontSize: 16 }} maxLength={MATCH_LIMIT} value={match} onChange={(e) => setMatch(e.target.value)} placeholder="Qual 12" />
+          </label>
+          <button type="submit" className="btn btn-lg btn-primary" style={BIG_BUTTON} disabled={saving}>Put {battery.name} in the robot</button>
+          <button type="button" className="btn btn-lg" style={{ minHeight: 56 }} onClick={() => setMatch(null)}>Cancel</button>
+        </form>
+      )}
+      {open && <BatteryDetails battery={battery} log={props.log} now={props.now} />}
     </div>
   )
 }
