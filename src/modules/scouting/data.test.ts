@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetAllStores } from '../../core/store'
 import { DEMO_PEOPLE } from '../../core/demo'
 import {
-  MAX_NOTES_LENGTH, blankOrNumber, checkEntry, checkPitEntry, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
+  MAX_NOTES_LENGTH, blankOrNumber, checkEntry, checkPitEntry, getEventTeams, tbaTeamUrl, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
   MAX_PIT_NUMBER, numberOnly, pitAnswers, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, scoutedTeams, syncEntries, syncStatus, teamNumber,
   teamSummary, toRow, type EntryFields, type MatchRow, type PitFields, type PitRow, type TeamSummary,
 } from './data'
@@ -737,6 +737,39 @@ describe('when The Blue Alliance or Match 13 has a problem', () => {
     expect(await data.refreshSchedule('2026ilch')).toEqual({ ok: false, error: 'The Blue Alliance is down. Try again in a minute.' })
     expect(data.savedSchedule('2026ilch')).toBe(before)
     expect(data.scheduleStatus.get()).toEqual({ loading: false, problem: 'The Blue Alliance is down. Try again in a minute.' })
+  })
+})
+
+describe("The Blue Alliance: an event's teams", () => {
+  const team = (team_number: number) => ({ key: `frc${team_number}`, team_number, nickname: `Team ${team_number}`, city: null, state_prov: null, country: null })
+
+  async function withAnswers(answers: Record<string, { ok: true; value: unknown } | { ok: false; error: string }>) {
+    vi.resetModules()
+    const callFunction = vi.fn(async (name: string) => answers[name])
+    vi.doMock('../../core/functions', () => ({ callFunction }))
+    return { data: await import('./data'), callFunction }
+  }
+  afterEach(() => {
+    vi.doUnmock('../../core/functions')
+    vi.resetModules()
+  })
+
+  it("lists the example event's teams by number in demo mode", async () => {
+    const result = await getEventTeams()
+    expect(result.ok && result.value.map((t) => t.team_number)).toEqual([4096, 9991, 9992, 9993, 9994, 9995])
+  })
+
+  it("links to a team's page on The Blue Alliance for the event's season", () => {
+    expect(tbaTeamUrl(4096, '2026ilch')).toBe('https://www.thebluealliance.com/team/4096/2026')
+    expect(tbaTeamUrl(9991, '2027cmptx')).toBe('https://www.thebluealliance.com/team/9991/2027')
+    expect(tbaTeamUrl(4096)).toBe(`https://www.thebluealliance.com/team/4096/${EVENT_KEY.slice(0, 4)}`)
+  })
+
+  it("asks the tba function for the event's teams, and sorts them by number", async () => {
+    const { data, callFunction } = await withAnswers({ tba: { ok: true, value: [team(9993), team(254), team(9991)] } })
+    const result = await data.getEventTeams('2026arc')
+    expect(callFunction).toHaveBeenCalledWith('tba', { kind: 'teams', event: '2026arc' }, expect.any(Function))
+    expect(result.ok && result.value.map((t) => t.team_number)).toEqual([254, 9991, 9993])
   })
 })
 

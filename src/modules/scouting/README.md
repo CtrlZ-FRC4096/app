@@ -29,6 +29,7 @@
 
   The sums are `teamSummary()` in `data.ts`, a plain function so the picklist can use the same numbers. Adding a counter to `season.ts` adds it to the page with no other change. It counts this event's match and pit entries from the team database plus this phone's Waiting ones; two scouts watching the same robot count as two entries. `pitAnswers()` and `pitDrivetrain()` are the only code that reads a pit entry's answers. Each panel is its own component, so new ones (like Match 13's numbers or match videos) go below the others.
 - The Competition menu lists Match, Pit, Schedule and Teams under Scouting (`pages` in `index.ts`).
+- Prescouting is its own module, just above Scouting in the Competition menu: see [its README](../prescouting/README.md). It gets the teams and EPA from `getEventTeams()` and `getRatings()` here.
 
 Entries are kept on the device in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. `syncEntries()` sends the Waiting ones to the `scouting_entries` table (`supabase/migrations/..._scouting_entries.sql`, rules tested in `supabase/tests/scouting-entries.test.ts`) and marks them Synced.
 
@@ -60,6 +61,7 @@ server function, which holds the team's key (see "Server functions" in
 |:--|:--|
 | `getSchedule()` | The event's matches: who's red and blue, and the scores once played |
 | `getRankings()` | The event's rankings, best first |
+| `getEventTeams()` | Every team registered for the event, by number, before the schedule is out |
 | `getTeamMatches(team)` | One team's matches at the event, with their videos |
 | `getTeam(team)` | A team's nickname and home |
 

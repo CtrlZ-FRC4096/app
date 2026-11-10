@@ -1,4 +1,4 @@
-// The Blue Alliance, for scouting: an event's match schedule and rankings,
+// The Blue Alliance, for scouting: an event's match schedule, teams and rankings,
 // a team's matches at an event (with videos), and a team's name.
 //
 // The key is the TBA_KEY secret in Supabase, never in this repo or the
