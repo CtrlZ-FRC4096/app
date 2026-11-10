@@ -11,6 +11,7 @@ export const scouting: ModuleDefinition = {
   pages: [
     { name: 'Match', path: '' },
     { name: 'Pit', path: 'pit' },
+    { name: 'Schedule', path: 'schedule' },
   ],
   useSummary: useEntrySummary,
 }
