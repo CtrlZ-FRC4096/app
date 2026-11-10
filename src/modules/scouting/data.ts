@@ -915,6 +915,82 @@ export function picklistCsv(ranked: RankedTeam[], parts: PicklistPart[]): string
   ])
 }
 
+// The picklist page (#42). Each team's numbers come from teamSummary(), the
+// same sums as the team page, so the two never disagree, and from the saved
+// Match 13 ratings (useRatings()), so the list still works with no Wi-Fi.
+
+/**
+ * Every team in Match 13's ratings or our entries at this event, with its
+ * numbers for rankTeams(): Match 13's auto, teleop and endgame xP, and our
+ * average for each counter. Lowest team number first.
+ */
+export function picklistTeams(ratings: Match13Rating[], entries: MatchRow[], pitEntries: PitRow[]): TeamNumbers[] {
+  const teams = [...new Set([...ratings.map((r) => r.teamNumber), ...scoutedTeams(entries, pitEntries)])].sort((a, b) => a - b)
+  return teams.map((team) => {
+    const rating = ratings.find((r) => r.teamNumber === team)
+    const summary = teamSummary(team, entries, pitEntries)
+    // Two scouts watching the same robot in the same match is still one match.
+    const matches = new Set(entries.filter((e) => e.event_key === EVENT_KEY && e.team_number === team).map((e) => e.match_number))
+    return {
+      team,
+      values: {
+        xAuto: rating?.xAuto ?? null,
+        xTele: rating?.xTele ?? null,
+        xEnd: rating?.xEnd ?? null,
+        ...Object.fromEntries(summary.counters.map((c) => [c.key, c.average])),
+      },
+      matches: matches.size,
+      rated: rating !== undefined,
+    }
+  })
+}
+
+/** How much one part counts. A part with no saved weight counts DEFAULT_WEIGHT. */
+export function weightOf(weights: Weights, key: string): number {
+  return weights[key] ?? DEFAULT_WEIGHT
+}
+
+/** True when every part's weight is 0, so no team can be scored. */
+export function allWeightsZero(weights: Weights): boolean {
+  return picklistParts().every((part) => weightOf(weights, part.key) <= 0)
+}
+
+/** Set how much one part counts: a whole number from 0 to MAX_WEIGHT. Saved on this phone. */
+export function setWeight(key: string, weight: number) {
+  const clamped = Math.min(MAX_WEIGHT, Math.max(0, Math.round(weight)))
+  weightsStore.set((prev) => ({ ...prev, [key]: clamped }))
+}
+
+/** Put every weight back to DEFAULT_WEIGHT. */
+export function resetWeights() {
+  weightsStore.set({ ...DEFAULT_WEIGHTS })
+}
+
+/** One line of the picklist page: a RankedTeam, and what we know about the team. */
+export interface PicklistLine extends RankedTeam {
+  /** How many matches we scouted them in. 0 if none yet. */
+  matches: number
+  /** False if Match 13 hasn't rated them yet. */
+  rated: boolean
+}
+
+/**
+ * The picklist page's list: every team ranked with this phone's weights,
+ * re-sorted as soon as a weight changes. `ratings` is useRatings(), for
+ * when the Match 13 numbers are from and whether they could be loaded.
+ */
+export function useRankedPicklist() {
+  const ratings = useRatings()
+  const { entries, pitEntries } = useScoutingRows()
+  const weights = useStore(weightsStore)
+  const teams = useMemo(() => picklistTeams(ratings.ratings, entries, pitEntries), [ratings.ratings, entries, pitEntries])
+  const ranked = useMemo(() => {
+    const known = new Map(teams.map((t) => [t.team, t]))
+    return rankTeams(teams, weights).map((line): PicklistLine => ({ ...line, matches: known.get(line.team)?.matches ?? 0, rated: known.get(line.team)?.rated ?? false }))
+  }, [teams, weights])
+  return { ranked, weights, ratings }
+}
+
 // The match schedule page: The Blue Alliance's schedule with Match 13's
 // prediction for each match. The last ones fetched are saved on this
 // device, so the schedule still shows with no connection.

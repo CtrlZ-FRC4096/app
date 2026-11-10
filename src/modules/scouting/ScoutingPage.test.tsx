@@ -1,11 +1,13 @@
 // Tests for the match form. The form's choices come from season.ts, so a
 // new role there should show up on the form with no other change.
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
+import { getRatings, picklistParts, ratingsStore, resetRatings, setWeight, weightsStore } from './data'
+import Picklist from './Picklist'
 import ScoutingPage from './ScoutingPage'
 import Schedule from './Schedule'
 import TeamPage from './TeamPage'
-import { AUTO_SIDES, COUNTERS, DRIVETRAINS, ROLES } from './season'
+import { AUTO_SIDES, COUNTERS, DRIVETRAINS, EVENT_KEY, ROLES } from './season'
 
 describe('the team page', () => {
   // Team 9991 is in the example entries (EXAMPLE_ENTRIES in data.ts), in match 1.
@@ -51,6 +53,58 @@ describe('the schedule', () => {
     const html = renderToString(<Schedule />)
     expect(html).toContain('Just ours (<!-- -->4096<!-- -->)')
     expect(html).toContain('Getting the schedule…')
+  })
+})
+
+describe('the picklist', () => {
+  // Save the example Match 13 ratings on this "phone", as useRatings() would.
+  beforeEach(async () => {
+    const ratings = await getRatings()
+    if (!ratings.ok) throw new Error(ratings.error)
+    ratingsStore.set({ event: EVENT_KEY, ratings: ratings.value, rankings: [], loadedAt: '2026-11-07T21:40:00Z', error: null })
+    weightsStore.reset()
+  })
+  afterEach(() => {
+    resetRatings()
+    weightsStore.reset()
+  })
+  const first = (html: string) => html.match(/>1\. Team (\d+)</)?.[1]
+
+  it('is a choice in the switch, and not on the page until chosen', () => {
+    const html = renderToString(<ScoutingPage />)
+    expect(html).toContain('aria-pressed="false">Picklist</button>')
+    expect(html).not.toContain('Ranked teams')
+  })
+
+  it('re-ranks when the weights change', () => {
+    // Every weight 1: 4096 has the best Match 13 numbers and isn't scouted, so it's first.
+    expect(first(renderToString(<Picklist />))).toBe('4096')
+    // Only auto fuel scored: 9991 scored 3 in the example entries, 9992 none.
+    for (const part of picklistParts()) setWeight(part.key, part.key === 'autoFuel' ? 1 : 0)
+    expect(first(renderToString(<Picklist />))).toBe('9991')
+  })
+
+  it('links each team to its team page, and says what we have no numbers for yet', () => {
+    const html = renderToString(<Picklist />)
+    expect(html).toContain('href="#/scouting/team/9993"')
+    expect(html).toContain('No scouting yet')
+    expect(html).toContain('saved on this phone')
+    expect(html).toContain('Copy as CSV')
+  })
+
+  it('asks for a weight above 0 when every weight is 0', () => {
+    for (const part of picklistParts()) setWeight(part.key, 0)
+    const html = renderToString(<Picklist />)
+    expect(html).toContain('Set at least one weight above 0 to rank teams.')
+    expect(first(html)).toBeUndefined()
+  })
+
+  it("says when Match 13 couldn't be reached, and leaves out its numbers if none are saved", () => {
+    resetRatings()
+    ratingsStore.set({ event: EVENT_KEY, ratings: [], rankings: [], loadedAt: null, error: 'Match 13 is down.' })
+    const html = renderToString(<Picklist />)
+    expect(html).toContain("Couldn&#x27;t reach Match 13: Match 13 is down.")
+    expect(html).toContain('No Match 13 rating yet')
   })
 })
 

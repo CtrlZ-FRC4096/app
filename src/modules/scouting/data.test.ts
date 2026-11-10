@@ -10,6 +10,7 @@ import {
   teamSummary, toRow, type EntryFields, type MatchRow, type PitFields, type PitRow, type TeamSummary,
   loadRatings, needsLoading, ratingsStore, resetRatings, savedRatings, savedWhen, signed, STALE_MS, teamRating, teamRecord, type Match13Rating,
   DEFAULT_WEIGHTS, picklistCsv, picklistParts, rankTeams, type TeamNumbers, type Weights,
+  MAX_WEIGHT, allWeightsZero, picklistTeams, resetWeights, setWeight, weightOf, weightsStore,
 } from './data'
 import {
   SCHEDULE_REFRESH_MS, keepScheduleFresh, likelyWinner, matchLabel, matchesWithPredictions, refreshSchedule, savedSchedule, scheduleStatus, scheduleStore, updatedAgo,
@@ -540,6 +541,75 @@ describe('picklist score', () => {
       '2,9992,0,3,\r\n' +
       '3,9993,,,\r\n',
     )
+  })
+})
+
+describe("the picklist page: each team's numbers and the weights", () => {
+  // A match entry as the team database has it, for team 9991 unless changed.
+  let next = 0
+  const row = (match: number, fields: Partial<MatchRow> = {}): MatchRow => ({
+    id: `picklist-entry-${++next}`,
+    event_key: EVENT_KEY,
+    match_number: match,
+    team_number: 9991,
+    counts: { autoFuel: 2, teleopFuel: 10, fuelMissed: 1 },
+    endgame: 'Level 1',
+    roles: ['Scorer'],
+    broke_down: false,
+    stop: 'None',
+    driver_skill: 3,
+    notes: null,
+    scouted_by: DEMO_PEOPLE.alex,
+    scouted_at: '2026-11-07T15:00:00Z',
+    ...fields,
+  })
+  const rated = (teamNumber: number, xAuto: number): Match13Rating => ({
+    teamNumber, xpStart: 30, xpEnd: 40, xAuto, xTele: 20, xEnd: 5, epa: null, opr: null, dpr: null,
+  })
+
+  beforeEach(() => weightsStore.reset())
+
+  it("uses the team page's averages and Match 13's auto, teleop and endgame", () => {
+    const entries = [row(1, { counts: { autoFuel: 1, teleopFuel: 10, fuelMissed: 2 } }), row(2, { counts: { autoFuel: 4, teleopFuel: 6, fuelMissed: 0 } })]
+    const [team] = picklistTeams([rated(9991, 12)], entries, [])
+    expect(team).toEqual({ team: 9991, values: { xAuto: 12, xTele: 20, xEnd: 5, autoFuel: 2.5, teleopFuel: 8, fuelMissed: 1 }, matches: 2, rated: true })
+    const summary = teamSummary(9991, entries, [])
+    for (const c of summary.counters) expect(team.values[c.key]).toBe(c.average)
+  })
+
+  it('lists every team rated by Match 13 or scouted at this event, each once, lowest number first', () => {
+    const entries = [row(1, { team_number: 9993 }), row(2), row(3, { team_number: 9995, event_key: '2025ilch' })]
+    const pit = pitToRow({ ...PIT, team: 9992, id: 'picklist-pit', created_at: '2026-11-07T14:00:00Z', event_key: EVENT_KEY, scouted_by: null, synced: false })
+    expect(picklistTeams([rated(9991, 1), rated(4096, 2)], entries, [pit]).map((t) => t.team)).toEqual([4096, 9991, 9992, 9993])
+  })
+
+  it("leaves our numbers empty for a team with no scouting yet, and Match 13's for a team it hasn't rated", () => {
+    const [notScouted, notRated] = picklistTeams([rated(4096, 9)], [row(1, { team_number: 9991 })], [])
+    expect(notScouted).toMatchObject({ team: 4096, matches: 0, rated: true, values: { xAuto: 9, autoFuel: null, fuelMissed: null } })
+    expect(notRated).toMatchObject({ team: 9991, matches: 1, rated: false, values: { xAuto: null, xTele: null, xEnd: null, autoFuel: 2 } })
+  })
+
+  it('counts two scouts watching the same match as one match', () => {
+    expect(picklistTeams([], [row(5), row(5), row(6)], [])[0].matches).toBe(2)
+  })
+
+  it('keeps each weight a whole number from 0 to 5, and resets them', () => {
+    setWeight('autoFuel', 9)
+    setWeight('xAuto', -2)
+    setWeight('xTele', 2.4)
+    expect(weightsStore.get()).toMatchObject({ autoFuel: MAX_WEIGHT, xAuto: 0, xTele: 2 })
+    resetWeights()
+    expect(weightsStore.get()).toEqual(DEFAULT_WEIGHTS)
+  })
+
+  it('knows when every weight is 0, counting a missing weight as the default', () => {
+    const zero = Object.fromEntries(picklistParts().map((p) => [p.key, 0]))
+    expect(allWeightsZero(zero)).toBe(true)
+    expect(allWeightsZero({ ...zero, xEnd: 1 })).toBe(false)
+    const missingOne = { ...zero }
+    delete missingOne.autoFuel
+    expect(weightOf(missingOne, 'autoFuel')).toBe(1)
+    expect(allWeightsZero(missingOne)).toBe(false)
   })
 })
 

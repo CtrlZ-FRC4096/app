@@ -18,14 +18,15 @@
   - `matchesWithPredictions()` matches each prediction to its match by key and puts them in the order they're played.
   - `refreshSchedule()` gets both and saves them on the device (`scheduleStore`), so with no connection the page shows the last ones with when they're from. Other features that need the schedule offline, like #40, can read it with `savedSchedule()`.
   - `keepScheduleFresh()` asks again every 2 minutes while the page is open, when the app comes back on screen, and when the phone comes back online. (The `match13` function reuses its answer for 2 minutes, so asking more often doesn't help.)
-- A Match / Pit / Schedule switch at the top of the page. The choice is in the address: `#/scouting` is the match form, `#/scouting/pit` the pit form and `#/scouting/schedule` the schedule. Each form is one panel, with a line between its sections (`FormSection.tsx`). The pit form (`PitForm.tsx`) asks for the team, drivetrain, weight and size, motors, preferred auto and strategy. Its choice lists are `DRIVETRAINS` and `AUTO_SIDES` in `season.ts`. Save pit entry: `savePitEntry()` in `data.ts` keeps it on this device (`pitStore`). It needs a team number; the match number is optional. Pit entries are sent to the team database the same way as match entries (#35): `syncEntries()` sends both, to the `scouting_pit_entries` table (`supabase/migrations/..._scouting_pit_entries.sql`, rules tested in `supabase/tests/scouting-pit-entries.test.ts`). Every visit to a team is kept. Both forms show what's saved on this device, Waiting or Synced, with `SavedOnDevice.tsx`.
+- A Match / Pit / Schedule / Picklist switch at the top of the page. The choice is in the address: `#/scouting` is the match form, `#/scouting/pit` the pit form, `#/scouting/schedule` the schedule and `#/scouting/picklist` the picklist. Each form is one panel, with a line between its sections (`FormSection.tsx`). The pit form (`PitForm.tsx`) asks for the team, drivetrain, weight and size, motors, preferred auto and strategy. Its choice lists are `DRIVETRAINS` and `AUTO_SIDES` in `season.ts`. Save pit entry: `savePitEntry()` in `data.ts` keeps it on this device (`pitStore`). It needs a team number; the match number is optional. Pit entries are sent to the team database the same way as match entries (#35): `syncEntries()` sends both, to the `scouting_pit_entries` table (`supabase/migrations/..._scouting_pit_entries.sql`, rules tested in `supabase/tests/scouting-pit-entries.test.ts`). Every visit to a team is kept. Both forms show what's saved on this device, Waiting or Synced, with `SavedOnDevice.tsx`.
 - A team page (#36, `TeamPage.tsx`), at `#/scouting/team/9991`: everything scouted about one team at this event (`EVENT_KEY`). Type a team number, tap a team from the list of scouted teams, or tap "Team 9991" in the list of saved entries. It shows:
   - **Numbers**: each counter in `season.ts`, its average per match and each match's count
   - **How often**: bars for endgame, role, driver skill, E-stop or A-stop, and drivetrain (from the pit form), and how often it broke down
   - **Written answers**: match notes and pit answers, newest first, with who wrote them
 
   The sums are `teamSummary()` in `data.ts`, a plain function so the picklist can use the same numbers. Adding a counter to `season.ts` adds it to the page with no other change. It counts this event's match and pit entries from the team database plus this phone's Waiting ones; two scouts watching the same robot count as two entries. `pitAnswers()` and `pitDrivetrain()` are the only code that reads a pit entry's answers. Each panel is its own component, so new ones (like Match 13's numbers or match videos) go below the others.
-- The Competition menu lists Match, Pit, Schedule and Teams under Scouting (`pages` in `index.ts`).
+- The picklist (#42, `Picklist.tsx`, at `#/scouting/picklist`): every team at the event ranked best first, from our scouting and Match 13. See "Picklist score" below.
+- The Competition menu lists Match, Pit, Schedule, Teams and Picklist under Scouting (`pages` in `index.ts`).
 
 Entries are kept on the device in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. `syncEntries()` sends the Waiting ones to the `scouting_entries` table (`supabase/migrations/..._scouting_entries.sql`, rules tested in `supabase/tests/scouting-entries.test.ts`) and marks them Synced.
 
@@ -103,8 +104,14 @@ clear the copy; that's fine, it loads again.
 
 ## Picklist score (#42)
 
-The functions are ready; the page isn't built yet. It waits on the team
-page (#36), for our averages, and saved Match 13 ratings (#37).
+The picklist page (`Picklist.tsx`) shows every team in Match 13's ratings
+or our entries at this event, ranked, as one card each: rank, team and
+score, the numbers behind the score, how many matches we scouted, and a
+"No scouting yet" or "No Match 13 rating yet" note. Tapping a card opens
+the team page. A folded-away **Weights** panel has a 0 to 5 stepper for
+each part; changing one re-sorts the list straight away. **Copy as CSV**
+copies the list for a spreadsheet. The page says when the Match 13 numbers
+are from, and if Match 13 couldn't be reached it keeps using the saved copy.
 
 | In `data.ts` | Does |
 |:--|:--|
@@ -112,6 +119,9 @@ page (#36), for our averages, and saved Match 13 ratings (#37).
 | `rankTeams(teams, weights)` | Ranks teams best first, with a score from 0 to 100 |
 | `picklistCsv(ranked, parts)` | The list as CSV, for a spreadsheet |
 | `weightsStore` | How much each part counts (0 to 5), saved on this phone |
+| `setWeight(key, n)`, `resetWeights()` | Change a weight (kept between 0 and 5), or put them all back to 1 |
+| `picklistTeams(ratings, entries, pitEntries)` | Each team's numbers for `rankTeams()`: Match 13's `xAuto`, `xTele` and `xEnd`, and our averages from `teamSummary()`, so the team page and the picklist never disagree |
+| `useRankedPicklist()` | For the page: the ranked list with this phone's weights, the weights, and `useRatings()` |
 
 For each part, the best team gets 1 and the worst 0. A counter with
 `lowerIsBetter` in `season.ts` (fuel missed) counts the other way. A team's

@@ -4,6 +4,7 @@ import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
 import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
 import FormSection from './FormSection'
+import Picklist from './Picklist'
 import PitForm from './PitForm'
 import Schedule from './Schedule'
 import SavedOnDevice from './SavedOnDevice'
@@ -38,16 +39,16 @@ function PickMany(props: { label: string; options: string[]; value: string[]; on
   )
 }
 
-const VIEWS = ['Match', 'Pit', 'Schedule']
+const VIEWS = ['Match', 'Pit', 'Schedule', 'Picklist']
 /** Each view's address after #/scouting/. */
-const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule' }
+const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule', Picklist: 'picklist' }
 
-// A Match / Pit / Schedule switch at the top. The choice is in the address,
-// so #/scouting/pit opens the pit form straight away: a menu or a bookmark
-// can link to any of them. Both forms stay on the page, and the one not
-// chosen is hidden, so switching doesn't lose what's typed. The schedule is
-// only on the page while it's chosen, so it only updates while someone's
-// looking at it.
+// A Match / Pit / Schedule / Picklist switch at the top. The choice is in the
+// address, so #/scouting/pit opens the pit form straight away: a menu or a
+// bookmark can link to any of them. Both forms stay on the page, and the one
+// not chosen is hidden, so switching doesn't lose what's typed. The schedule
+// and the picklist are only on the page while chosen, so they only load
+// while someone's looking at them.
 //
 // #/scouting/team/9991 is the team page for team 9991 (TeamPage.tsx), with
 // both forms hidden. It's only drawn while open: it waits for the team
@@ -64,6 +65,7 @@ export default function ScoutingPage() {
       <div hidden={view !== 'Match'}><MatchForm /></div>
       <div hidden={view !== 'Pit'}><PitForm /></div>
       {view === 'Schedule' && <Schedule />}
+      {view === 'Picklist' && <Picklist />}
       {view === 'Team' && <TeamPage team={Number.isInteger(team) && team > 0 ? team : null} />}
     </>
   )
