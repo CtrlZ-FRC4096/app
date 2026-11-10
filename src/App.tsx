@@ -8,7 +8,7 @@ import { groupModules } from './core/registry'
 import { href, useRoute } from './core/router'
 import { resetAllStores } from './core/store'
 import { toast, useToast } from './core/toast'
-import { ErrorBoundary } from './core/ErrorBoundary'
+import { ErrorBoundary, QuietBoundary } from './core/ErrorBoundary'
 import { loadPage } from './core/updates'
 import { Home } from './core/pages/Home'
 import { Message } from './core/pages/Message'
@@ -189,7 +189,8 @@ function Shell({ user }: { user: User }) {
               </Menu>
             ))}
           </nav>
-          <Bell current={id === 'notifications'} />
+          {/* Notifications come from the team database: with no connection, the bell just isn't shown. */}
+          <QuietBoundary><Bell current={id === 'notifications'} /></QuietBoundary>
           <Menu
             className="account"
             panelId="menu-account"

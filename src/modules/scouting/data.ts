@@ -30,7 +30,7 @@
 import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
-import { currentUser } from '../../core/session'
+import { currentUser, onSignedIn } from '../../core/session'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore, type Store } from '../../core/store'
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row, type Table } from '../../core/table'
@@ -299,6 +299,8 @@ function keepSyncing() {
     if (hasWaiting()) void syncEntries()
   }
   globalThis.addEventListener('online', tryNow)
+  // The sign-in is checked again once the connection is back: send then too.
+  onSignedIn(tryNow)
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') tryNow()
   })
