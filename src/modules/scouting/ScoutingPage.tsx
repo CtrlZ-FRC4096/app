@@ -4,6 +4,7 @@ import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
 import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
 import FormSection from './FormSection'
+import MatchTeamFields from './MatchTeamFields'
 import PitForm from './PitForm'
 import RankingsPage from './RankingsPage'
 import Schedule from './Schedule'
@@ -132,16 +133,8 @@ function MatchForm() {
       <form onSubmit={save}>
         <Panel>
           <FormSection title="Match" first>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-              <label className="field" htmlFor="scout-match">
-                Match number
-                <input id="scout-match" className="input" style={{ width: '9ch', minHeight: 46, fontSize: 16 }} inputMode="numeric" value={match} onChange={(e) => setMatch(e.target.value)} placeholder="12" />
-              </label>
-              <label className="field" htmlFor="scout-team">
-                Team number
-                <input id="scout-team" className="input" style={{ width: '9ch', minHeight: 46, fontSize: 16 }} inputMode="numeric" value={team} onChange={(e) => setTeam(e.target.value)} placeholder="4096" />
-              </label>
-            </div>
+            {/* Position, match and team. The team fills in from the schedule: see MatchTeamFields.tsx. */}
+            <MatchTeamFields match={match} team={team} onMatch={setMatch} onTeam={setTeam} />
           </FormSection>
           <FormSection title="Scoring">
             {COUNTERS.map((c) => (

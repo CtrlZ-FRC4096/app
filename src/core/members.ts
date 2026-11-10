@@ -34,6 +34,8 @@ const DEMO_MEMBERS: Member[] = [
 export const membersTable = createTable<Member>('members', {
   demo: DEMO_MEMBERS,
   sort: (a, b) => a.name.localeCompare(b.name),
+  // So the app knows who you are and what you can open with no connection (offline.ts).
+  keepOffline: true,
 })
 
 export function useMembers(): Member[] {

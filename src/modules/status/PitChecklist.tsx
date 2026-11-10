@@ -5,6 +5,7 @@ import { useMembers } from '../../core/members'
 import { isMentor, useSession } from '../../core/session'
 import { usePitDrag } from './usePitDrag'
 import { ItemPopup, type ItemPopupMode } from './ItemPopup'
+import { MemberPicker } from './MemberPicker'
 
 /** The pit checklist section of the Robot status page. */
 export function PitChecklist() {
@@ -95,27 +96,23 @@ export function PitChecklist() {
                       <p className="note">Selections save automatically and mark this item incomplete. Clear all to leave it unassigned.</p>
                       <p className="note">Showing {item.subgroup ?? 'General'} members only.</p>
                       {membersFor(item.subgroup ?? 'General').length === 0 && <p className="note">No active members in this subgroup. Edit subgroup members below.</p>}
-                      {membersFor(item.subgroup ?? 'General').map((member) => <label key={member.id} className="check">
-                        <input type="checkbox" checked={item.assigneeIds?.includes(member.id) ?? false} onChange={(event) => {
-                          const ids = event.target.checked ? [...(item.assigneeIds ?? []), member.id] : (item.assigneeIds ?? []).filter((id) => id !== member.id)
-                          const result = assignPitItem(item.id, ids)
-                          setError(result.ok ? '' : result.error)
-                          if (result.ok) setAnnouncement('Assignment saved.')
-                        }} />{member.name}
-                      </label>)}
+                      <MemberPicker members={membersFor(item.subgroup ?? 'General')} chosenIds={item.assigneeIds ?? []} onChange={(memberId, chosen) => {
+                        const ids = chosen ? [...(item.assigneeIds ?? []), memberId] : (item.assigneeIds ?? []).filter((id) => id !== memberId)
+                        const result = assignPitItem(item.id, ids)
+                        setError(result.ok ? '' : result.error)
+                        if (result.ok) setAnnouncement('Assignment saved.')
+                      }} />
                     </div>
                     {(item.subgroup ?? 'General') !== 'General' && <details className="pit-members-editor">
                       <summary>Edit subgroup members</summary>
                       <div className="pit-assign">
                         <p className="note">Applies to all {item.subgroup} items in this browser. Removing people also removes their assignments.</p>
-                        {activeMembers.map((member) => <label key={member.id} className="check">
-                          <input type="checkbox" checked={subgroupMembers[item.subgroup!]?.includes(member.id) ?? false} onChange={(event) => {
-                            const ids = subgroupMembers[item.subgroup!] ?? []
-                            const result = setSubgroupMembers(item.subgroup!, event.target.checked ? [...ids, member.id] : ids.filter((id) => id !== member.id))
-                            setError(result.ok ? '' : result.error)
-                            if (result.ok) setAnnouncement('Subgroup members saved.')
-                          }} />{member.name}
-                        </label>)}
+                        <MemberPicker members={activeMembers} chosenIds={subgroupMembers[item.subgroup!] ?? []} onChange={(memberId, chosen) => {
+                          const ids = subgroupMembers[item.subgroup!] ?? []
+                          const result = setSubgroupMembers(item.subgroup!, chosen ? [...ids, memberId] : ids.filter((id) => id !== memberId))
+                          setError(result.ok ? '' : result.error)
+                          if (result.ok) setAnnouncement('Subgroup members saved.')
+                        }} />
                       </div>
                     </details>}
                     </details>
@@ -177,11 +174,9 @@ export function PitChecklist() {
           <fieldset className="pit-assign">
             <legend>Assign people (choose at least one)</legend>
             {membersFor(subgroup).length === 0 && <p className="note">No active members in this subgroup. Ask a mentor to edit subgroup members.</p>}
-            {membersFor(subgroup).map((member) => <label key={member.id} className="check">
-              <input type="checkbox" checked={assigneeIds.includes(member.id)} onChange={(event) => {
-                setAssigneeIds(event.target.checked ? [...assigneeIds, member.id] : assigneeIds.filter((id) => id !== member.id))
-              }} />{member.name}
-            </label>)}
+            <MemberPicker members={membersFor(subgroup)} chosenIds={assigneeIds} onChange={(memberId, chosen) => {
+              setAssigneeIds(chosen ? [...assigneeIds, memberId] : assigneeIds.filter((id) => id !== memberId))
+            }} />
           </fieldset>
           <div className="toolbar">
             <button type="submit" className="btn btn-primary pit-add">Add item</button>
