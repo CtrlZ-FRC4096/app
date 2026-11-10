@@ -6,6 +6,8 @@ import { toast } from '../../core/toast'
 import { Bar, PageHead, Panel, Pill } from '../../core/ui'
 import { useScoutedTeams, useTeamSummary, type Tally, type TeamSummary } from './data'
 import TeamRank from './TeamRank'
+import TeamVideos from './TeamVideos'
+import TeamRatings from './TeamRatings'
 
 /** "Team 9991", as a link to its team page. */
 export function TeamLink(props: { team: number }) {
@@ -88,8 +90,10 @@ function TeamDetails(props: { team: number }) {
       </PageHead>
       <TeamRank team={props.team} />
       {summary.matchCount > 0 && <Numbers summary={summary} />}
+      <TeamRatings team={props.team} />
       {summary.matchCount + summary.pitCount > 0 && <HowOften summary={summary} />}
       {summary.written.length > 0 && <WrittenAnswers summary={summary} />}
+      <TeamVideos team={props.team} />
     </>
   )
 }
