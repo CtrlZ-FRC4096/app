@@ -1,17 +1,21 @@
-// Permission rules for the BOM module's tables: members can read and add
-// robots, systems and parts, change them, and delete parts. Only mentors
-// can delete robots and systems, because that deletes every part in them.
+// Permission rules for the BOM module's tables: everyone on the team can
+// read them, and add and change systems. Only student leaders, mentors and
+// admins can add, change and delete robots and parts (which includes
+// importing from Onshape), and delete systems, because that deletes every
+// part in them. Stages are tested in bom-steps.test.ts.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
 const db = setUpTestDatabase()
 let student: string
+let leader: string
 let mentor: string
 let robotId: string
 let systemId: string
 
 beforeEach(async () => {
   student = await db.member('Riley Park')
+  leader = await db.member('Casey Leader', 'leader')
   mentor = await db.member('Pat Mentor', 'mentor')
   ;[{ id: robotId }] = await db.as<{ id: string }>(mentor, "insert into public.bom_robots (name) values ('Test robot') returning id")
   ;[{ id: systemId }] = await db.as<{ id: string }>(
@@ -36,24 +40,26 @@ describe('BOM robots, systems and parts', () => {
     expect(await db.as(student, 'select id from public.bom_parts')).toHaveLength(1)
   })
 
-  it('can be added by a mentor, signed with their own id', async () => {
+  it('can be added by a mentor or a student leader, signed with their own id', async () => {
     const [part] = await addMadePart(mentor)
     expect(part.created_by).toBe(mentor)
+    const [other] = await addMadePart(leader, '4096-26-INT-002')
+    expect(other.created_by).toBe(leader)
+    const [robot] = await db.as<{ created_by: string }>(leader, "insert into public.bom_robots (name) values ('2027 robot') returning created_by")
+    expect(robot.created_by).toBe(leader)
   })
 
-  it('lets a student add a part, signed with their own id', async () => {
-    const [part] = await addMadePart(student)
-    expect(part.created_by).toBe(student)
+  it("doesn't let a student add a part or a robot", async () => {
+    await expect(addMadePart(student)).rejects.toThrow(PERMISSION_DENIED)
+    await expect(db.as(student, "insert into public.bom_robots (name) values ('2027 robot')")).rejects.toThrow(PERMISSION_DENIED)
   })
 
-  it('lets a student add robots and systems, signed with their own id', async () => {
-    const [robot] = await db.as<{ created_by: string }>(student, "insert into public.bom_robots (name) values ('2027 robot') returning created_by")
+  it('lets a student add a system, signed with their own id', async () => {
     const [system] = await db.as<{ created_by: string }>(
       student,
       "insert into public.bom_systems (robot_id, name, code) values ($1, 'Shooter', 'SHO') returning created_by",
       [robotId],
     )
-    expect(robot.created_by).toBe(student)
     expect(system.created_by).toBe(student)
   })
 
@@ -63,47 +69,67 @@ describe('BOM robots, systems and parts', () => {
     ).rejects.toThrow(PERMISSION_DENIED)
     await expect(
       db.as(
-        student,
+        leader,
         "insert into public.bom_parts (system_id, part_number, name, kind, material, quantity, created_by) values ($1, '4096-26-INT-009', 'Plate', 'made', 'Aluminum', 1, $2)",
         [systemId, mentor],
       ),
     ).rejects.toThrow(PERMISSION_DENIED)
   })
 
-  it("doesn't let someone whose access is off add a part", async () => {
-    await db.switchOff(student)
-    await expect(addMadePart(student)).rejects.toThrow(PERMISSION_DENIED)
+  it("doesn't let a student leader whose access is off add a part", async () => {
+    await db.switchOff(leader)
+    await expect(addMadePart(leader)).rejects.toThrow(PERMISSION_DENIED)
   })
 
-  it('can be changed by anyone on the team', async () => {
+  it('lets a student change systems, but not parts or robots', async () => {
     const [part] = await addMadePart(mentor)
-    expect(await db.as(student, 'update public.bom_parts set quantity = 4 where id = $1 returning id', [part.id])).toEqual([{ id: part.id }])
     expect(await db.as(student, "update public.bom_systems set name = 'Changed', code = 'CHG' returning id")).toEqual([{ id: systemId }])
-    expect(await db.as(student, "update public.bom_robots set name = 'Changed' returning id")).toEqual([{ id: robotId }])
+    expect(await db.as(student, 'update public.bom_parts set quantity = 4 where id = $1 returning id', [part.id])).toEqual([])
+    expect(await db.as(student, "update public.bom_robots set name = 'Changed' returning id")).toEqual([])
+    expect(await db.sql('select quantity from public.bom_parts')).toEqual([{ quantity: 2 }])
+    expect(await db.sql('select name from public.bom_robots')).toEqual([{ name: 'Test robot' }])
+  })
+
+  it('lets student leaders and mentors change parts, robots and systems', async () => {
+    const [part] = await addMadePart(mentor)
+    expect(await db.as(leader, 'update public.bom_parts set quantity = 4 where id = $1 returning id', [part.id])).toEqual([{ id: part.id }])
+    expect(await db.as(leader, "update public.bom_robots set name = 'Changed' returning id")).toEqual([{ id: robotId }])
+    expect(await db.as(leader, "update public.bom_systems set name = 'Changed', code = 'CHG' returning id")).toEqual([{ id: systemId }])
     expect(await db.as(mentor, 'update public.bom_parts set quantity = 5 where id = $1 returning id', [part.id])).toEqual([{ id: part.id }])
   })
 
   it("doesn't let anyone change who made something, or move it to another robot or system", async () => {
-    const [part] = await addMadePart(student)
-    for (const person of [student, mentor]) {
+    const [part] = await addMadePart(leader)
+    for (const person of [student, leader, mentor]) {
       await expect(db.as(person, 'update public.bom_parts set created_by = $1 where id = $2', [mentor, part.id])).rejects.toThrow(PERMISSION_DENIED)
       await expect(db.as(person, 'update public.bom_systems set robot_id = robot_id')).rejects.toThrow(PERMISSION_DENIED)
       await expect(db.as(person, 'update public.bom_robots set created_at = now()')).rejects.toThrow(PERMISSION_DENIED)
     }
   })
 
-  it("doesn't let someone whose access is off change or delete a part", async () => {
-    const [part] = await addMadePart(student)
-    await db.switchOff(student)
-    expect(await db.as(student, 'update public.bom_parts set quantity = 9 where id = $1 returning id', [part.id])).toEqual([])
-    expect(await db.as(student, 'delete from public.bom_parts where id = $1 returning id', [part.id])).toEqual([])
+  it("doesn't let a student leader whose access is off change or delete a part", async () => {
+    const [part] = await addMadePart(leader)
+    await db.switchOff(leader)
+    expect(await db.as(leader, 'update public.bom_parts set quantity = 9 where id = $1 returning id', [part.id])).toEqual([])
+    expect(await db.as(leader, 'delete from public.bom_parts where id = $1 returning id', [part.id])).toEqual([])
   })
 
-  it('lets a student delete parts, but only mentors delete robots and systems', async () => {
-    const [part] = await addMadePart(mentor)
-    expect(await db.as(student, 'delete from public.bom_parts where id = $1 returning id', [part.id])).toEqual([{ id: part.id }])
+  it("doesn't let a student delete parts, systems or robots", async () => {
+    await addMadePart(mentor)
+    expect(await db.as(student, 'delete from public.bom_parts returning id')).toEqual([])
     expect(await db.as(student, 'delete from public.bom_systems returning id')).toEqual([])
     expect(await db.as(student, 'delete from public.bom_robots returning id')).toEqual([])
+    expect(await db.sql('select count(*)::int as n from public.bom_parts')).toEqual([{ n: 1 }])
+  })
+
+  it('lets a student leader delete parts, systems and robots', async () => {
+    const [part] = await addMadePart(mentor)
+    expect(await db.as(leader, 'delete from public.bom_parts where id = $1 returning id', [part.id])).toEqual([{ id: part.id }])
+    expect(await db.as(leader, 'delete from public.bom_systems returning id')).toEqual([{ id: systemId }])
+    expect(await db.as(leader, 'delete from public.bom_robots returning id')).toEqual([{ id: robotId }])
+  })
+
+  it('lets a mentor delete systems and robots', async () => {
     expect(await db.as(mentor, 'delete from public.bom_systems returning id')).toEqual([{ id: systemId }])
     expect(await db.as(mentor, 'delete from public.bom_robots returning id')).toEqual([{ id: robotId }])
   })
@@ -164,27 +190,36 @@ describe('BOM robots, systems and parts', () => {
         [systemId, partNumber, onshapeId],
       )
 
-    it('lets a student add parts from Onshape with no material or vendor yet', async () => {
-      await addImported(student)
-      await db.as(student, "insert into public.bom_parts (system_id, part_number, name, kind, quantity, onshape_id) values ($1, '4096-26-INT-051', 'Bolt', 'cots', 4, 'x/y/z')", [systemId])
+    it('lets a student leader add parts from Onshape with no material or vendor yet', async () => {
+      await addImported(leader)
+      await db.as(leader, "insert into public.bom_parts (system_id, part_number, name, kind, quantity, onshape_id) values ($1, '4096-26-INT-051', 'Bolt', 'cots', 4, 'x/y/z')", [systemId])
       expect(await db.sql('select count(*)::int as n from public.bom_parts')).toEqual([{ n: 2 }])
+    })
+
+    it("doesn't let a student add parts from Onshape", async () => {
+      await expect(addImported(student)).rejects.toThrow(PERMISSION_DENIED)
     })
 
     it('still needs a material or vendor for parts typed in by hand', async () => {
       await expect(
-        db.as(student, "insert into public.bom_parts (system_id, part_number, name, kind, quantity) values ($1, '4096-26-INT-052', 'Plate', 'made', 1)", [systemId]),
+        db.as(leader, "insert into public.bom_parts (system_id, part_number, name, kind, quantity) values ($1, '4096-26-INT-052', 'Plate', 'made', 1)", [systemId]),
       ).rejects.toThrow('check constraint')
     })
 
     it('keeps one row per Onshape part in a system', async () => {
-      await addImported(student)
-      await expect(addImported(student, ONSHAPE_ID, '4096-26-INT-053')).rejects.toThrow('duplicate key')
+      await addImported(leader)
+      await expect(addImported(leader, ONSHAPE_ID, '4096-26-INT-053')).rejects.toThrow('duplicate key')
     })
 
-    it('lets a student mark a part removed in Onshape, link a part, and record the import', async () => {
-      const [part] = await addMadePart(student)
-      expect(await db.as(student, "update public.bom_parts set onshape_id = 'a/b/c', removed_in_onshape = true where id = $1 returning id", [part.id])).toEqual([{ id: part.id }])
-      expect(await db.as(student, 'update public.bom_systems set onshape_imported_at = now() returning id')).toEqual([{ id: systemId }])
+    it('lets a student leader mark a part removed in Onshape, link a part, and record the import', async () => {
+      const [part] = await addMadePart(leader)
+      expect(await db.as(leader, "update public.bom_parts set onshape_id = 'a/b/c', removed_in_onshape = true where id = $1 returning id", [part.id])).toEqual([{ id: part.id }])
+      expect(await db.as(leader, 'update public.bom_systems set onshape_imported_at = now() returning id')).toEqual([{ id: systemId }])
+    })
+
+    it("doesn't let a student mark a part removed in Onshape", async () => {
+      const [part] = await addMadePart(leader)
+      expect(await db.as(student, 'update public.bom_parts set removed_in_onshape = true where id = $1 returning id', [part.id])).toEqual([])
     })
   })
 })
