@@ -81,8 +81,23 @@ Parts are matched by which Onshape part they are (`onshape_id`), never by name, 
 
 The example Intake in demo mode is linked to a made-up assembly, so **Import from Onshape** shows how it works without keys. The import columns are added by `supabase/migrations/20261028090000_bom_onshape_import.sql`.
 
+## Files for the machines
+
+Not on the page yet (#23). `data.ts` already works out which file each machine needs (`MACHINE_FILE_FORMATS`) and what it's called (`partFileName()`), and `partFiles()` lists a part's files from its stages:
+
+| Machine | File |
+|:--|:--|
+| Lathe, mill | STEP |
+| 3D printer | STL (or 3MF) |
+| Laser | DXF |
+| CNC router | DXF (or STEP) |
+| Hand tools | none |
+
+Files are named by part number and revision, like `4096-26-INT-014_revB.step`.
+
 ## Still to do
 
+- View 3D and download buttons for a part's files, and a whole queue's (#23). They need a mentor: a viewer library, and file exports in the `onshape` server function
 - A shared catalog of bought parts with names and links to buy them, filled in once and reused each season (#20)
 - Write team part numbers into Onshape (#21)
 - A "My work" list of the stages assigned to you

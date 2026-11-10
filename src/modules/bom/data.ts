@@ -849,6 +849,67 @@ export function stationQueue(parts: Part[], steps: Step[], station: Station): { 
 }
 
 // ---------------------------------------------------------------------------
+// Files for the machines (#23): which kind of file each machine needs, and
+// what to call it. Getting the file itself from Onshape isn't built yet: it
+// goes through the onshape server function, which a mentor sets up.
+
+export type FileFormat = 'step' | 'stl' | '3mf' | 'dxf'
+export const FILE_FORMAT_NAMES: Record<FileFormat, string> = { step: 'STEP', stl: 'STL', '3mf': '3MF', dxf: 'DXF' }
+
+/**
+ * The kinds of file a machine can use, the usual one first. STEP is the
+ * solid shape, for CAM; STL and 3MF are for the 3D printer's slicer; DXF is
+ * a flat face's outline, for cutting from sheet. Hand tools need no file.
+ */
+export const MACHINE_FILE_FORMATS: Record<Machine, FileFormat[]> = {
+  cnc_router: ['dxf', 'step'],
+  lathe: ['step'],
+  mill: ['step'],
+  '3d_printer': ['stl', '3mf'],
+  laser: ['dxf'],
+  hand_tools: [],
+}
+
+/**
+ * What a part's file is called: its part number and revision, like
+ * 4096-26-INT-014_revB.step. Anything a file name can't have, such as a
+ * slash or a space, becomes a dash.
+ */
+export function partFileName(part: Pick<Part, 'part_number' | 'revision'>, format: FileFormat): string {
+  const safe = (text: string) => text.trim().replace(/[^A-Za-z0-9._-]+/g, '-')
+  const revision = part.revision?.trim() ? `_rev${safe(part.revision)}` : ''
+  return `${safe(part.part_number)}${revision}.${format}`
+}
+
+/** One file a part's machines need. */
+export interface PartFile {
+  format: FileFormat
+  /** Like 4096-26-INT-014_revB.step. */
+  name: string
+  /** The machines it's for, in the order of the part's stages. */
+  machines: Machine[]
+}
+
+/**
+ * The files a part needs for the machines in its stages, each kind once.
+ * `steps` are the part's stages. With `machine`, only that machine's files,
+ * for its queue. A machine's usual kind of file is used, so a 3D printed
+ * part gets an STL. Empty for parts with no machine stages.
+ */
+export function partFiles(part: Part, steps: Step[], machine?: Machine): PartFile[] {
+  const files: PartFile[] = []
+  for (const step of steps) {
+    if (!step.machine || (machine && step.machine !== machine)) continue
+    const format = MACHINE_FILE_FORMATS[step.machine][0]
+    if (!format) continue
+    const file = files.find((f) => f.format === format)
+    if (!file) files.push({ format, name: partFileName(part, format), machines: [step.machine] })
+    else if (!file.machines.includes(step.machine)) file.machines.push(step.machine)
+  }
+  return files
+}
+
+// ---------------------------------------------------------------------------
 // Importing from Onshape. planOnshapeImport() in onshape.ts works out what changes.
 
 /**

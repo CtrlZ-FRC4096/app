@@ -16,6 +16,7 @@ import {
   addStep, advance, changeDone, checkStep, moveBack, removeStep, stationName, stationQueue, stepName, stepsFor, stepsTable, type Step,
 } from './data'
 import { assignStep, checkAssignment, dueText, isOverdue, today } from './data'
+import { MACHINES, MACHINE_FILE_FORMATS, partFileName, partFiles } from './data'
 
 beforeEach(() => {
   setDemoRole('student')
@@ -728,5 +729,68 @@ describe('identifyCots', () => {
       [null, 'Plate 2026-11-09'],
     ]
     for (const [part_number, name] of made) expect(found(part_number, name), `${part_number} ${name}`).toBeNull()
+  })
+})
+
+describe('MACHINE_FILE_FORMATS', () => {
+  it('gives each machine the kind of file it needs, the usual one first', () => {
+    expect(MACHINE_FILE_FORMATS.lathe).toEqual(['step'])
+    expect(MACHINE_FILE_FORMATS.mill).toEqual(['step'])
+    expect(MACHINE_FILE_FORMATS['3d_printer']).toEqual(['stl', '3mf'])
+    expect(MACHINE_FILE_FORMATS.laser).toEqual(['dxf'])
+    expect(MACHINE_FILE_FORMATS.cnc_router).toEqual(['dxf', 'step'])
+    expect(MACHINE_FILE_FORMATS.hand_tools).toEqual([])
+  })
+
+  it('has every machine', () => {
+    expect(Object.keys(MACHINE_FILE_FORMATS).sort()).toEqual([...MACHINES].sort())
+  })
+})
+
+describe('partFileName', () => {
+  it('uses the part number and revision', () => {
+    expect(partFileName({ part_number: '4096-26-INT-014', revision: 'B' }, 'step')).toBe('4096-26-INT-014_revB.step')
+    expect(partFileName({ part_number: '4096-26-INT-014', revision: 'B' }, '3mf')).toBe('4096-26-INT-014_revB.3mf')
+  })
+
+  it('leaves the revision out when there is none', () => {
+    expect(partFileName({ part_number: '4096-26-INT-014', revision: null }, 'dxf')).toBe('4096-26-INT-014.dxf')
+    expect(partFileName({ part_number: '4096-26-INT-014', revision: ' ' }, 'dxf')).toBe('4096-26-INT-014.dxf')
+  })
+
+  it("swaps anything a file name can't have for a dash", () => {
+    expect(partFileName({ part_number: ' Side plate/left ', revision: 'B 2' }, 'stl')).toBe('Side-plate-left_revB-2.stl')
+    expect(partFileName({ part_number: '..\\secret', revision: null }, 'stl')).toBe('..-secret.stl')
+  })
+})
+
+describe('partFiles', () => {
+  const files = (name: string, machine?: Parameters<typeof partFiles>[2]) => partFiles(part(name), stepsOf(name), machine)
+
+  it("gives the file for each machine in the part's stages", () => {
+    expect(files('Roller shaft')).toEqual([{ format: 'step', name: '4096-26-INT-002_revA.step', machines: ['lathe'] }])
+    expect(files('Pivot spacer')).toEqual([{ format: 'stl', name: '4096-26-INT-003_revA.stl', machines: ['3d_printer'] }])
+    // The frame rail is milled, then routed: a STEP for the mill and a DXF for the router.
+    expect(files('Frame rail')).toEqual([
+      { format: 'step', name: '4096-26-DRV-002_revB.step', machines: ['mill'] },
+      { format: 'dxf', name: '4096-26-DRV-002_revB.dxf', machines: ['cnc_router'] },
+    ])
+  })
+
+  it('gives each kind of file once when two machines use it', () => {
+    const shaft = part('Roller shaft')
+    const steps = [{ ...stage('Roller shaft', 'process1') }, { ...stage('Roller shaft', 'process1'), id: 'second', stage: 'process2' as const, machine: 'mill' as const }]
+    expect(partFiles(shaft, steps)).toEqual([{ format: 'step', name: '4096-26-INT-002_revA.step', machines: ['lathe', 'mill'] }])
+  })
+
+  it("gives only one machine's files for its queue", () => {
+    expect(files('Frame rail', 'cnc_router')).toEqual([{ format: 'dxf', name: '4096-26-DRV-002_revB.dxf', machines: ['cnc_router'] }])
+    expect(files('Frame rail', 'lathe')).toEqual([])
+  })
+
+  it('gives nothing for hand tools, or a part with no machine stages', () => {
+    const shaft = part('Roller shaft')
+    expect(partFiles(shaft, [{ ...stage('Roller shaft', 'process1'), machine: 'hand_tools' }])).toEqual([])
+    expect(files('Brushless motor')).toEqual([])
   })
 })
