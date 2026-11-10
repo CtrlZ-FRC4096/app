@@ -6,13 +6,14 @@ import { resetAllStores } from '../../core/store'
 import { DEMO_PEOPLE } from '../../core/demo'
 import {
   MAX_NOTES_LENGTH, blankOrNumber, checkEntry, checkPitEntry, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
-  MAX_PIT_NUMBER, numberOnly, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, syncEntries, syncStatus, teamNumber, toRow, type EntryFields, type PitFields,
+  MAX_PIT_NUMBER, numberOnly, pitAnswers, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, scoutedTeams, syncEntries, syncStatus, teamNumber,
+  teamSummary, toRow, type EntryFields, type MatchRow, type PitFields, type PitRow, type TeamSummary,
 } from './data'
 import {
   SCHEDULE_REFRESH_MS, keepScheduleFresh, likelyWinner, matchLabel, matchesWithPredictions, refreshSchedule, savedSchedule, scheduleStatus, scheduleStore, updatedAgo,
   type MatchPrediction, type TbaMatch,
 } from './data'
-import { EVENT_KEY } from './season'
+import { COUNTERS, DRIVETRAINS, EVENT_KEY } from './season'
 
 // A filled-in pit form. Each test changes only the part it's about.
 const PIT: PitFields = {
@@ -629,5 +630,130 @@ describe('when The Blue Alliance or Match 13 has a problem', () => {
     expect(await data.refreshSchedule('2026ilch')).toEqual({ ok: false, error: 'The Blue Alliance is down. Try again in a minute.' })
     expect(data.savedSchedule('2026ilch')).toBe(before)
     expect(data.scheduleStatus.get()).toEqual({ loading: false, problem: 'The Blue Alliance is down. Try again in a minute.' })
+  })
+})
+
+describe('teamSummary', () => {
+  // A match entry as the team database has it. Each test changes only the part it's about.
+  let next = 0
+  const row = (match: number, fields: Partial<MatchRow> = {}): MatchRow => ({
+    id: `entry-${++next}`,
+    event_key: EVENT_KEY,
+    match_number: match,
+    team_number: 9991,
+    counts: { autoFuel: 2, teleopFuel: 10, fuelMissed: 1 },
+    endgame: 'Level 1',
+    roles: ['Scorer'],
+    broke_down: false,
+    stop: 'None',
+    driver_skill: 3,
+    notes: null,
+    scouted_by: DEMO_PEOPLE.alex,
+    scouted_at: `2026-11-07T15:${String(match).padStart(2, '0')}:00Z`,
+    ...fields,
+  })
+  const pit = (fields: Partial<PitRow> = {}): PitRow => ({
+    ...pitToRow({ ...PIT, team: 9991, id: `pit-${++next}`, created_at: '2026-11-07T14:00:00Z', event_key: EVENT_KEY, scouted_by: DEMO_PEOPLE.jordan, synced: false }),
+    ...fields,
+  })
+  const counter = (summary: TeamSummary, key: string) => summary.counters.find((c) => c.key === key)
+
+  it('averages each counter, and lists each match', () => {
+    const summary = teamSummary(9991, [row(4, { counts: { autoFuel: 1 } }), row(2, { counts: { autoFuel: 4 } })], [])
+    expect(summary.matchCount).toBe(2)
+    expect(counter(summary, 'autoFuel')).toEqual({ key: 'autoFuel', label: 'Auto fuel scored', average: 2.5, perMatch: [{ match: 2, count: 4 }, { match: 4, count: 1 }] })
+  })
+
+  it('leaves out other teams and other events', () => {
+    const summary = teamSummary(9991, [row(1), row(2, { team_number: 9992 }), row(3, { event_key: '2025ilch' })], [pit({ team_number: 9992 }), pit({ event_key: '2025ilch' })])
+    expect(summary.matchCount).toBe(1)
+    expect(summary.pitCount).toBe(0)
+  })
+
+  it('counts two scouts on the same robot in the same match as two entries', () => {
+    expect(teamSummary(9991, [row(5), row(5)], []).matchCount).toBe(2)
+  })
+
+  it('shows a counter added to season.ts with no other change', () => {
+    const summary = teamSummary(9991, [row(1, { counts: { climbs: 2 } }), row(2, { counts: { climbs: 4 } })], [], [...COUNTERS, { key: 'climbs', label: 'Climbs' }])
+    expect(counter(summary, 'climbs')).toMatchObject({ label: 'Climbs', average: 3 })
+  })
+
+  it("averages only entries that have the counter, gives null when none do, and ignores counters season.ts doesn't have", () => {
+    const summary = teamSummary(9991, [row(1, { counts: { autoFuel: 3, oldCounter: 9 } }), row(2, { counts: {} })], [])
+    expect(counter(summary, 'autoFuel')).toMatchObject({ average: 3, perMatch: [{ match: 1, count: 3 }] })
+    expect(counter(summary, 'teleopFuel')).toMatchObject({ average: null, perMatch: [] })
+    expect(counter(summary, 'oldCounter')).toBeUndefined()
+  })
+
+  it('counts every endgame choice in order, including ones that never came up', () => {
+    const summary = teamSummary(9991, [row(1, { endgame: 'Level 2' }), row(2, { endgame: 'Level 2' }), row(3, { endgame: 'None' }), row(4, { endgame: 'Level 2' })], [])
+    expect(summary.endgame).toEqual([
+      { option: 'None', count: 1, share: 0.25 },
+      { option: 'Level 1', count: 0, share: 0 },
+      { option: 'Level 2', count: 3, share: 0.75 },
+      { option: 'Level 3', count: 0, share: 0 },
+    ])
+  })
+
+  it('counts each role an entry chose, out of the number of matches', () => {
+    const summary = teamSummary(9991, [row(1, { roles: ['Scorer', 'Defender'] }), row(2, { roles: ['Scorer'] }), row(3, { roles: [] })], [])
+    expect(summary.roles.map((t) => [t.option, t.count])).toEqual([['Scorer', 2], ['Defender', 1], ['Feeder', 0]])
+    expect(summary.roles[0].share).toBeCloseTo(2 / 3)
+  })
+
+  it('skips entries with no driver skill', () => {
+    const summary = teamSummary(9991, [row(1, { driver_skill: 4 }), row(2, { driver_skill: null })], [])
+    expect(summary.driverSkill.map((t) => t.option)).toEqual(['1', '2', '3', '4', '5'])
+    expect(summary.driverSkill[3]).toEqual({ option: '4', count: 1, share: 1 })
+  })
+
+  it('counts stops, break-downs and the drivetrain from the pit form', () => {
+    const summary = teamSummary(9991, [row(1, { stop: 'E-stop', broke_down: true }), row(2)], [pit({ drivetrain: 'Tank' }), pit({ drivetrain: '' })])
+    expect(summary.stops.find((t) => t.option === 'E-stop')).toEqual({ option: 'E-stop', count: 1, share: 0.5 })
+    expect(summary.brokeDown).toBe(1)
+    expect(summary.drivetrain.find((t) => t.option === 'Tank')).toEqual({ option: 'Tank', count: 1, share: 1 })
+    expect(summary.drivetrain).toHaveLength(DRIVETRAINS.length)
+  })
+
+  it('lists notes and pit answers newest first, leaving out blank ones', () => {
+    const blankPit = { motors: null, auto_path: null, partners_do: null, auto_side: null, weight: null, length: null, width: null, height: null }
+    const summary = teamSummary(
+      9991,
+      [row(1, { notes: 'Slow intake' }), row(3, { notes: '  ' }), row(2, { notes: 'Fast cycles', scouted_by: DEMO_PEOPLE.jordan })],
+      [pit({ ...blankPit, they_do: 'Score fuel' })],
+    )
+    expect(summary.written).toEqual([
+      { kind: 'match', question: 'Notes', text: 'Fast cycles', match: 2, by: DEMO_PEOPLE.jordan, at: '2026-11-07T15:02:00Z' },
+      { kind: 'match', question: 'Notes', text: 'Slow intake', match: 1, by: DEMO_PEOPLE.alex, at: '2026-11-07T15:01:00Z' },
+      { kind: 'pit', question: 'What they will do', text: 'Score fuel', match: null, by: DEMO_PEOPLE.jordan, at: '2026-11-07T14:00:00Z' },
+    ])
+  })
+
+  it('gives nothing for a team with no entries', () => {
+    const summary = teamSummary(1234, [row(1)], [pit()])
+    expect(summary).toMatchObject({ matchCount: 0, pitCount: 0, brokeDown: 0, written: [] })
+    expect(summary.counters.every((c) => c.average === null && c.perMatch.length === 0)).toBe(true)
+    expect(summary.endgame.every((t) => t.count === 0 && t.share === 0)).toBe(true)
+  })
+
+  it("counts an entry once when it's both Waiting on this phone and in the team database", () => {
+    const waiting = toRow({ ...FORM, id: 'entry-on-phone', created_at: '2026-11-07T15:00:00Z', event_key: EVENT_KEY, scouted_by: null, synced: false })
+    const pitWaiting = pitToRow({ ...PIT, id: 'pit-on-phone', created_at: '2026-11-07T14:00:00Z', scouted_by: null, synced: false })
+    expect(teamSummary(FORM.team, [waiting, { ...waiting }], []).matchCount).toBe(1)
+    expect(teamSummary(PIT.team, [], [pitWaiting, { ...pitWaiting }]).pitCount).toBe(1)
+  })
+
+  it('lists the teams scouted at this event, each once', () => {
+    const entries = [row(1, { team_number: 9993 }), row(2), row(3), row(4, { team_number: 9995, event_key: '2025ilch' })]
+    expect(scoutedTeams(entries, [pit({ team_number: 9992 })])).toEqual([9991, 9992, 9993])
+  })
+})
+
+describe('pitAnswers', () => {
+  it("gives each answer the scout filled in, with the robot's size together", () => {
+    const answers = pitAnswers(pitToRow({ ...PIT, id: 'pit-1', created_at: '2026-11-07T14:00:00Z', scouted_by: null, synced: false, motors: '' }))
+    expect(answers.map((a) => a.question)).toEqual(['Weight', 'Size', 'Auto starting side', 'Auto path', 'What they want partners to do', 'What they will do'])
+    expect(answers[1].text).toBe('28 × 28 × 36 inches (length × width × height)')
   })
 })
