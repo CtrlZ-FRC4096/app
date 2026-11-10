@@ -5,6 +5,9 @@
 ## What works so far
 
 - The match form, drawn from `season.ts`: counters, role (choose any), broke down, E-stop or A-stop, driver skill, endgame and notes
+- The team fills in from the schedule (#40). The scout picks their position once (Red 1 to Blue 3), and the phone remembers it (`positionStore` in `data.ts`). Typing the match number fills in the team for that position and shows it big, in the alliance's colour, to check against the robot's bumpers. The scout can still change it. This is `MatchTeamFields.tsx`.
+  - The schedule comes from `loadSchedule()` when the form opens. It saves the qualification matches on the phone (`scheduleStore`), so it keeps working with no Wi-Fi once it's loaded. With no saved copy (no Wi-Fi the first time, or The Blue Alliance doesn't have the schedule yet) the form says so, and the scout types the team in.
+  - `teamFor()` finds the team for a match and position.
 - Save entry: `saveEntry()` in `data.ts` keeps the entry on this device, marked Waiting. It refuses an entry with no team or match number, or no driver skill chosen.
 - A list of the entries saved on this device, newest first, each Waiting or Synced
 - Syncing (#31): Waiting entries are sent to the team database by themselves, with nothing to press:
@@ -23,11 +26,13 @@
   - **Numbers**: each counter in `season.ts`, its average per match and each match's count
   - **How often**: bars for endgame, role, driver skill, E-stop or A-stop, and drivetrain (from the pit form), and how often it broke down
   - **Written answers**: match notes and pit answers, newest first, with who wrote them
+  - **Match 13** (#37, `TeamRatings.tsx`): the team's xP rank at the event ("Rank 3 of 42"), its xP and how much it changed since the event started, the Auto / Teleop / Endgame parts, Statbotics' EPA and the win-loss-tie record, with when the numbers are from and a **Refresh** button. It reads the saved copy from `useRatings()` (see "One team's numbers" below), so with no connection it shows the saved numbers and says so. A team Match 13 hasn't rated shows "No Match 13 rating yet", and a part Match 13 left out shows "not given".
 
   The sums are `teamSummary()` in `data.ts`, a plain function so the picklist can use the same numbers. Adding a counter to `season.ts` adds it to the page with no other change. It counts this event's match and pit entries from the team database plus this phone's Waiting ones; two scouts watching the same robot count as two entries. `pitAnswers()` and `pitDrivetrain()` are the only code that reads a pit entry's answers. Each panel is its own component, so new ones (like Match 13's numbers or match videos) go below the others.
 - The picklist (#42, `Picklist.tsx`, at `#/scouting/picklist`): every team at the event ranked best first, from our scouting and Match 13. See "Picklist score" below.
 - The final picklist (#43, `SharedPicklist.tsx`, at `#/scouting/shared-picklist`): the order the strategy team wants to pick teams in, shared by every phone. See "Shared picklist" below.
 - The Competition menu lists Match, Pit, Schedule, Teams, Picklist and Final picklist under Scouting (`pages` in `index.ts`).
+- Prescouting is its own module, just above Scouting in the Competition menu: see [its README](../prescouting/README.md). It gets the teams and EPA from `getEventTeams()` and `getRatings()` here.
 
 Entries are kept on the device in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. `syncEntries()` sends the Waiting ones to the `scouting_entries` table (`supabase/migrations/..._scouting_entries.sql`, rules tested in `supabase/tests/scouting-entries.test.ts`) and marks them Synced.
 
@@ -83,6 +88,7 @@ server function, which holds the team's key (see "Server functions" in
 |:--|:--|
 | `getSchedule()` | The event's matches: who's red and blue, and the scores once played |
 | `getRankings()` | The event's rankings, best first |
+| `getEventTeams()` | Every team registered for the event, by number, before the schedule is out |
 | `getTeamMatches(team)` | One team's matches at the event, with their videos |
 | `getTeam(team)` | A team's nickname and home |
 

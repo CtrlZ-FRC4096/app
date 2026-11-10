@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import { setDemoRole } from '../../core/demo'
-import { getRatings, picklistParts, picklistTable, ratingsStore, resetRatings, setWeight, weightsStore } from './data'
+import { POSITIONS, getRatings, picklistParts, picklistTable, ratingsStore, resetRatings, setWeight, weightsStore } from './data'
 import Picklist from './Picklist'
 import ScoutingPage from './ScoutingPage'
 import Schedule from './Schedule'
@@ -191,6 +191,12 @@ describe('the match form', () => {
     } finally {
       ROLES.pop()
     }
+  })
+
+  it('has a button for each position, none chosen until the scout picks one', () => {
+    const html = renderToString(<ScoutingPage />)
+    for (const position of POSITIONS) expect(html).toContain(`aria-pressed="false">${position}</button>`)
+    expect(html).toContain('Pick your position, and the team fills in from the match number.')
   })
 
   it('starts with no driver skill chosen', () => {

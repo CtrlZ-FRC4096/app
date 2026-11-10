@@ -12,7 +12,8 @@ import { DEMO_PEOPLE } from '../../core/demo'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 import { currentUser, isMentor } from '../../core/session'
-import { createTable, fail, type Result, type Row } from '../../core/table'
+import { createTable, fail, newestFirst, type Result, type Row } from '../../core/table'
+import { getSchedule, type TbaMatch } from '../scouting/data'
 
 /**
  * The statuses, in the order a battery goes through them. The page shows
@@ -33,6 +34,21 @@ export const STATUSES = [
 
 /** Where a battery with a status that's no longer in STATUSES goes next. */
 const AFTER_UNKNOWN = 'Needs charging'
+
+/**
+ * A battery is tired when its latest internal resistance reading is above
+ * this, in ohms. A new battery reads around 0.011 to 0.015.
+ *
+ * 0.020 is a common starting point, not the team's decision yet: ask the
+ * electrical lead what limit to use, and change it here.
+ */
+export const TIRED_RESISTANCE_OHMS = 0.02
+
+/** Our team, to find our next match in the event schedule. */
+export const OUR_TEAM = 4096
+
+/** The status where the page asks which match the battery is for. */
+export const IN_THE_ROBOT = 'In the robot'
 
 /** One row of the batteries table. The fields match its columns. */
 export interface Battery extends Row {
@@ -125,11 +141,22 @@ export function ago(iso: string, now: Date = new Date()): string {
   return `${plural(Math.floor(hours / 24), 'day', 'days')} ago`
 }
 
-/** Move a battery to its next status. Anyone on the team can. */
-export async function moveToNext(battery: Battery): Promise<Result<Battery>> {
+/**
+ * Move a battery to its next status, and add it to the battery's history.
+ * Anyone on the team can. `match` is which match it's for, when it's going
+ * In the robot, like "Qual 12"; it's ignored for other statuses.
+ */
+export async function moveToNext(battery: Battery, match = ''): Promise<Result<Battery>> {
   if (!currentUser()) return fail('Sign in to change a battery.')
+  const status = nextStatus(battery.status)
+  const forMatch = status === IN_THE_ROBOT ? match.trim() : ''
+  if (forMatch.length > MATCH_LIMIT) return fail(`Keep the match under ${MATCH_LIMIT} characters, like "Qual 12".`)
   // The database sets status_changed_at to its own time; this is for demo mode.
-  return batteriesTable.update(battery.id, { status: nextStatus(battery.status), status_changed_at: new Date().toISOString() })
+  const moved = await batteriesTable.update(battery.id, { status, status_changed_at: new Date().toISOString() })
+  if (!moved.ok) return moved
+  // Two steps, like Inventory's changeStock(): the status first, then the history line.
+  const logged = await logTable.insert({ battery_id: battery.id, kind: 'status', status, match: forMatch || null, voltage: null, resistance_ohms: null })
+  return logged.ok ? moved : fail(`${battery.name} is ${status} now, but its history didn't save: ${logged.error}`)
 }
 
 /** The home page tile's status: "4 charged · 2 charging". */
@@ -188,9 +215,156 @@ export async function changeBattery(battery: Battery, changes: BatteryFields & {
   return batteriesTable.update(battery.id, { name: changes.name.trim(), notes: changes.notes.trim(), retired: changes.retired })
 }
 
-/** Delete a battery. Retiring keeps it on record; delete one added by mistake. */
+/** Delete a battery, and its history with it. Retiring keeps both on record; delete one added by mistake. */
 export async function removeBattery(battery: Battery): Promise<Result> {
   const problem = mentorProblem()
   if (problem) return fail(problem)
   return batteriesTable.remove(battery.id)
+}
+
+// ---------------------------------------------------------------------------
+// History: status changes and tester readings, in the batteries_log table
+// (supabase/migrations/..._batteries_log.sql). Anyone adds to it and reads
+// it; nobody edits or deletes it.
+
+/** One row of the batteries_log table. The fields match its columns. */
+export interface LogEntry extends Row {
+  battery_id: string
+  kind: 'status' | 'reading'
+  /** For a status change: the status it moved to. */
+  status: string | null
+  /** For a move to In the robot: which match, like "Qual 12". */
+  match: string | null
+  /** For a reading: volts. */
+  voltage: number | null
+  /** For a reading: internal resistance, in ohms. */
+  resistance_ohms: number | null
+  /** Who did it. Show their name with useMemberNames(). */
+  created_by: string
+}
+
+export const MATCH_LIMIT = 40
+
+const logExample = (id: string, batteryName: string, minutes: number, fields: Partial<LogEntry>): LogEntry => ({
+  id,
+  battery_id: EXAMPLE_BATTERIES.find((b) => b.name === batteryName)!.id,
+  kind: 'status',
+  status: null,
+  match: null,
+  voltage: null,
+  resistance_ohms: null,
+  created_at: minutesAgo(minutes),
+  created_by: DEMO_PEOPLE.jordan,
+  ...fields,
+})
+
+// Made-up history. 2026-8 reads tired, so Next up skips it.
+const EXAMPLE_LOG: LogEntry[] = [
+  logExample('00000000-0000-4000-8000-0000000ba801', '2026-1', 60 * 26, { kind: 'reading', voltage: 12.95, resistance_ohms: 0.013 }),
+  logExample('00000000-0000-4000-8000-0000000ba802', '2026-1', 60 * 25, { status: IN_THE_ROBOT, match: 'Practice 4' }),
+  logExample('00000000-0000-4000-8000-0000000ba803', '2026-8', 60 * 48, { kind: 'reading', voltage: 12.8, resistance_ohms: 0.024 }),
+  logExample('00000000-0000-4000-8000-0000000ba804', '2026-4', 70, { status: IN_THE_ROBOT, match: 'Qual 1' }),
+  logExample('00000000-0000-4000-8000-0000000ba805', '2026-4', 12, { status: 'Needs charging' }),
+  logExample('00000000-0000-4000-8000-0000000ba806', '2026-3', 6, { status: IN_THE_ROBOT, match: 'Qual 2' }),
+]
+
+export const logTable = createTable<LogEntry>('batteries_log', { demo: EXAMPLE_LOG, sort: newestFirst })
+
+/** Every battery's history, newest first. */
+export function useLog(): LogEntry[] {
+  return logTable.useRows()
+}
+
+/** One battery's history, newest first. */
+export function historyFor(batteryId: string, log: LogEntry[]): LogEntry[] {
+  return log.filter((entry) => entry.battery_id === batteryId).sort(newestFirst)
+}
+
+/** A battery's latest tester reading, or null if it has none. */
+export function latestReading(batteryId: string, log: LogEntry[]): LogEntry | null {
+  return historyFor(batteryId, log).find((entry) => entry.kind === 'reading') ?? null
+}
+
+/** Whether a battery's latest internal resistance reading is above TIRED_RESISTANCE_OHMS. */
+export function isTired(batteryId: string, log: LogEntry[]): boolean {
+  const reading = historyFor(batteryId, log).find((entry) => entry.kind === 'reading' && entry.resistance_ohms !== null)
+  return reading !== undefined && Number(reading.resistance_ohms) > TIRED_RESISTANCE_OHMS
+}
+
+/** The matches a battery was put in the robot for, newest first. If the robot browned out, this says which battery it was. */
+export function matchesFor(batteryId: string, log: LogEntry[]): { match: string; at: string }[] {
+  return historyFor(batteryId, log)
+    .filter((entry) => entry.kind === 'status' && entry.match)
+    .map((entry) => ({ match: entry.match!, at: entry.created_at }))
+}
+
+/** A history line in words: "In the robot for Qual 12", or "Reading: 12.9 V, 0.014 Ω". */
+export function describeEntry(entry: LogEntry): string {
+  if (entry.kind === 'status') return entry.match ? `${entry.status} for ${entry.match}` : `${entry.status}`
+  return `Reading: ${readingText(entry)}`
+}
+
+/** A reading's numbers: "12.9 V, 0.014 Ω". */
+export function readingText(entry: LogEntry): string {
+  const parts = []
+  if (entry.voltage !== null) parts.push(`${Number(entry.voltage)} V`)
+  if (entry.resistance_ohms !== null) parts.push(`${Number(entry.resistance_ohms)} Ω`)
+  return parts.join(', ')
+}
+
+/**
+ * The charged battery to use next: the one that's been Charged longest,
+ * leaving out tired ones. Null if there isn't one.
+ */
+export function nextUp(batteries: Battery[], log: LogEntry[]): Battery | null {
+  return groupByStatus(batteries)[0].batteries.find((b) => !isTired(b.id, log)) ?? null
+}
+
+/** Why a reading can't be saved, or null if it can. Empty boxes are null. */
+export function checkReading(voltage: number | null, resistanceOhms: number | null): string | null {
+  if (voltage === null && resistanceOhms === null) return 'Enter the voltage, the internal resistance, or both.'
+  if (voltage !== null && !(voltage > 0 && voltage < 20)) return 'Check the voltage: a robot battery reads about 12 to 13.5 V.'
+  if (resistanceOhms !== null && !(resistanceOhms > 0 && resistanceOhms < 1)) {
+    return 'Check the internal resistance: it should be in ohms, like 0.015. If your tester shows milliohms (mΩ), divide by 1000.'
+  }
+  return null
+}
+
+/** Record a tester reading on a battery. Anyone on the team can. */
+export async function recordReading(battery: Battery, voltage: number | null, resistanceOhms: number | null): Promise<Result<LogEntry>> {
+  if (!currentUser()) return fail('Sign in to record a reading.')
+  const problem = checkReading(voltage, resistanceOhms)
+  if (problem) return fail(problem)
+  return logTable.insert({ battery_id: battery.id, kind: 'reading', status: null, match: null, voltage, resistance_ohms: resistanceOhms })
+}
+
+// ---------------------------------------------------------------------------
+// Which match: when a battery goes In the robot, the page suggests our next
+// match from the event schedule (getSchedule() in the Scouting module).
+
+/** A match's name the way the team says it: "Qual 12", or "SF 2-1" for a playoff. */
+export function matchLabel(match: TbaMatch): string {
+  if (match.comp_level === 'qm') return `Qual ${match.match_number}`
+  return `${match.comp_level.toUpperCase()} ${match.set_number}-${match.match_number}`
+}
+
+/** Our next match that hasn't been played, as "Qual 12", or null. */
+export function nextMatch(schedule: TbaMatch[], team = OUR_TEAM): string | null {
+  const ours = schedule.find((m) => m.alliances.red.score < 0 && [...m.alliances.red.team_keys, ...m.alliances.blue.team_keys].includes(`frc${team}`))
+  return ours ? matchLabel(ours) : null
+}
+
+/** Our next match from the event schedule, or '' if it can't be found (no schedule yet, or no connection). */
+export async function suggestMatch(): Promise<string> {
+  const schedule = await getSchedule()
+  return schedule.ok ? (nextMatch(schedule.value) ?? '') : ''
+}
+
+// ---------------------------------------------------------------------------
+// Labels: find a battery by the number written on it.
+
+/** The batteries whose number contains `query`, ignoring case and spaces. */
+export function findBatteries(batteries: Battery[], query: string): Battery[] {
+  const wanted = query.replace(/\s/g, '').toLowerCase()
+  return wanted ? batteries.filter((b) => b.name.replace(/\s/g, '').toLowerCase().includes(wanted)) : batteries
 }

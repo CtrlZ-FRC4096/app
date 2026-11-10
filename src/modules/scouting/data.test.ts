@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetAllStores } from '../../core/store'
 import { DEMO_PEOPLE } from '../../core/demo'
 import {
-  MAX_NOTES_LENGTH, blankOrNumber, checkEntry, checkPitEntry, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
+  MAX_NOTES_LENGTH, blankOrNumber, checkEntry, checkPitEntry, getEventTeams, tbaTeamUrl, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
   MAX_PIT_NUMBER, numberOnly, pitAnswers, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, scoutedTeams, syncEntries, syncStatus, teamNumber,
   teamSummary, toRow, type EntryFields, type MatchRow, type PitFields, type PitRow, type TeamSummary,
   loadRatings, needsLoading, ratingsStore, resetRatings, savedRatings, savedWhen, signed, STALE_MS, teamRating, teamRecord, type Match13Rating,
@@ -18,6 +18,7 @@ import {
 } from './data'
 import { addMissingTeams, byPosition, moveTeam, picklist, picklistTable, positionBetween, setPickStatus, startPicklist, type PicklistRow } from './data'
 import { COUNTERS, DRIVETRAINS, EVENT_KEY } from './season'
+import { loadSchedule, positionStore, setPosition, teamFor, type SavedSchedule } from './data'
 
 // A filled-in pit form. Each test changes only the part it's about.
 const PIT: PitFields = {
@@ -707,6 +708,112 @@ describe("the picklist page: each team's numbers and the weights", () => {
   })
 })
 
+/** A match shaped like TBA's, not played yet: Red 1, 2, 3, then Blue 1, 2, 3. */
+function tbaMatch(n: number, red: number[], blue: number[], comp_level: TbaMatch['comp_level'] = 'qm'): TbaMatch {
+  return {
+    key: `${EVENT_KEY}_${comp_level}${n}`, comp_level, set_number: 1, match_number: n, winning_alliance: '', predicted_time: null,
+    alliances: { red: { score: -1, team_keys: red.map((t) => `frc${t}`) }, blue: { score: -1, team_keys: blue.map((t) => `frc${t}`) } },
+  }
+}
+
+describe('filling in the team from the schedule', () => {
+  // An example schedule, as it's saved on the device.
+  const SCHEDULE: SavedSchedule = {
+    event: EVENT_KEY,
+    matches: [tbaMatch(1, [4096, 9991, 9992], [9993, 9994, 9995]), tbaMatch(2, [9993, 9995, 4096], [9991, 9992, 9994])],
+    predictions: [],
+    savedAt: '2026-03-13T14:00:00Z',
+  }
+
+  beforeEach(() => {
+    scheduleStore.reset()
+    positionStore.reset()
+  })
+
+  it('finds the team for each position in a match', () => {
+    expect(teamFor(SCHEDULE, 1, 'Red 1')).toBe(4096)
+    expect(teamFor(SCHEDULE, 1, 'Red 3')).toBe(9992)
+    expect(teamFor(SCHEDULE, 1, 'Blue 2')).toBe(9994)
+    expect(teamFor(SCHEDULE, 2, 'Red 3')).toBe(4096)
+    expect(teamFor(SCHEDULE, 2, 'Blue 1')).toBe(9991)
+  })
+
+  it("finds nothing for a match that isn't in the schedule, with no position, or with no schedule", () => {
+    expect(teamFor(SCHEDULE, 3, 'Red 1')).toBeNull()
+    expect(teamFor(SCHEDULE, 0, 'Red 1')).toBeNull()
+    expect(teamFor(SCHEDULE, 1, '')).toBeNull()
+    expect(teamFor(null, 1, 'Red 1')).toBeNull()
+  })
+
+  it('remembers the position on this device, even when the example data is reset', () => {
+    setPosition('Blue 2')
+    resetAllStores()
+    expect(positionStore.get()).toBe('Blue 2')
+  })
+
+  it('gets the schedule and saves it on this device', async () => {
+    const result = await loadSchedule()
+    if (!result.ok) throw new Error(result.error)
+    expect(scheduleStore.get()).toEqual(result.value)
+    expect(result.value.event).toBe(EVENT_KEY)
+    expect(teamFor(result.value, 1, 'Red 1')).toBe(4096)
+    expect(teamFor(result.value, 1, 'Blue 3')).toBe(9995)
+  })
+})
+
+describe('the saved schedule when The Blue Alliance has none to give', () => {
+  const SAVED: SavedSchedule = { event: EVENT_KEY, matches: [tbaMatch(1, [4096, 9991, 9992], [9993, 9994, 9995])], predictions: [], savedAt: '2026-03-13T14:00:00Z' }
+  const NO_CONNECTION = { ok: false as const, error: "Couldn't reach the server. Check your connection and try again." }
+
+  // data.ts again, with callFunction answering `answer`, like "Match 13 answers" above.
+  async function withAnswer(answer: { ok: true; value: unknown } | { ok: false; error: string }) {
+    vi.resetModules()
+    vi.doMock('../../core/functions', () => ({ callFunction: vi.fn(async () => answer) }))
+    return import('./data')
+  }
+  afterEach(() => {
+    vi.doUnmock('../../core/functions')
+    vi.resetModules()
+  })
+
+  it('saves every match, but fills in the team only from qualification matches', async () => {
+    const final = tbaMatch(1, [7, 8, 9], [10, 11, 12], 'f')
+    const data = await withAnswer({ ok: true, value: [final, tbaMatch(1, [1, 2, 3], [4, 5, 6]), tbaMatch(2, [1, 2, 3], [4, 5, 6])] })
+    const result = await data.loadSchedule()
+    if (!result.ok) throw new Error(result.error)
+    expect(result.value.matches).toHaveLength(3)
+    expect(data.teamFor(result.value, 1, 'Red 1')).toBe(1)
+    expect(data.teamFor(result.value, 1, 'Blue 3')).toBe(6)
+  })
+
+  it('uses the saved copy with no connection', async () => {
+    const data = await withAnswer(NO_CONNECTION)
+    data.scheduleStore.set(SAVED)
+    expect(await data.loadSchedule()).toEqual({ ok: true, value: SAVED })
+  })
+
+  it('says what went wrong with no connection and nothing saved, so the scout can type the team in', async () => {
+    const data = await withAnswer(NO_CONNECTION)
+    data.scheduleStore.reset()
+    expect(await data.loadSchedule()).toEqual({ ok: false, error: `Couldn't get the match schedule. ${NO_CONNECTION.error}` })
+  })
+
+  it("doesn't use a schedule saved for another event", async () => {
+    const data = await withAnswer(NO_CONNECTION)
+    data.scheduleStore.set({ ...SAVED, event: '2025old' })
+    expect((await data.loadSchedule()).ok).toBe(false)
+  })
+
+  it("keeps the saved copy when TBA's schedule is empty", async () => {
+    const data = await withAnswer({ ok: true, value: [] })
+    data.scheduleStore.set(SAVED)
+    expect(await data.loadSchedule()).toEqual({ ok: true, value: SAVED })
+    expect(data.scheduleStore.get()).toEqual(SAVED)
+    data.scheduleStore.reset()
+    expect(await data.loadSchedule()).toEqual({ ok: false, error: "The Blue Alliance doesn't have the match schedule yet." })
+  })
+})
+
 describe('the match schedule with Match 13 predictions', () => {
   // A TBA match, shaped like the real ones. Scores are -1 until played.
   const tbaMatch = (comp_level: TbaMatch['comp_level'], set_number: number, match_number: number, red: number[], blue: number[], scores: [number, number] = [-1, -1]): TbaMatch => ({
@@ -901,6 +1008,39 @@ describe('when The Blue Alliance or Match 13 has a problem', () => {
   })
 })
 
+describe("The Blue Alliance: an event's teams", () => {
+  const team = (team_number: number) => ({ key: `frc${team_number}`, team_number, nickname: `Team ${team_number}`, city: null, state_prov: null, country: null })
+
+  async function withAnswers(answers: Record<string, { ok: true; value: unknown } | { ok: false; error: string }>) {
+    vi.resetModules()
+    const callFunction = vi.fn(async (name: string) => answers[name])
+    vi.doMock('../../core/functions', () => ({ callFunction }))
+    return { data: await import('./data'), callFunction }
+  }
+  afterEach(() => {
+    vi.doUnmock('../../core/functions')
+    vi.resetModules()
+  })
+
+  it("lists the example event's teams by number in demo mode", async () => {
+    const result = await getEventTeams()
+    expect(result.ok && result.value.map((t) => t.team_number)).toEqual([4096, 9991, 9992, 9993, 9994, 9995])
+  })
+
+  it("links to a team's page on The Blue Alliance for the event's season", () => {
+    expect(tbaTeamUrl(4096, '2026ilch')).toBe('https://www.thebluealliance.com/team/4096/2026')
+    expect(tbaTeamUrl(9991, '2027cmptx')).toBe('https://www.thebluealliance.com/team/9991/2027')
+    expect(tbaTeamUrl(4096)).toBe(`https://www.thebluealliance.com/team/4096/${EVENT_KEY.slice(0, 4)}`)
+  })
+
+  it("asks the tba function for the event's teams, and sorts them by number", async () => {
+    const { data, callFunction } = await withAnswers({ tba: { ok: true, value: [team(9993), team(254), team(9991)] } })
+    const result = await data.getEventTeams('2026arc')
+    expect(callFunction).toHaveBeenCalledWith('tba', { kind: 'teams', event: '2026arc' }, expect.any(Function))
+    expect(result.ok && result.value.map((t) => t.team_number)).toEqual([254, 9991, 9993])
+  })
+})
+
 describe('teamSummary', () => {
   // A match entry as the team database has it. Each test changes only the part it's about.
   let next = 0
@@ -1051,7 +1191,7 @@ describe('teamRating', () => {
   })
 
   it('gives a negative change for a team that went down', async () => {
-    expect(teamRating(await exampleRatings(), 9994)?.change).toBe(-1.4)
+    expect(teamRating(await exampleRatings(), 9992)?.change).toBe(-1.4)
   })
 
   it('gives tied teams the same rank, and skips the next one', () => {
