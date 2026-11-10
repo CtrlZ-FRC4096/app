@@ -13,6 +13,13 @@ describe('season settings', () => {
     }
   })
 
+  it('marks fuel missed as lower is better, and fuel scored as higher', () => {
+    const lowerIsBetter = (key: string) => COUNTERS.find((c) => c.key === key)?.lowerIsBetter ?? false
+    expect(lowerIsBetter('fuelMissed')).toBe(true)
+    expect(lowerIsBetter('autoFuel')).toBe(false)
+    expect(lowerIsBetter('teleopFuel')).toBe(false)
+  })
+
   it('has endgame choices with no repeats', () => {
     expect(ENDGAME.length).toBeGreaterThan(0)
     expect(new Set(ENDGAME).size).toBe(ENDGAME.length)
