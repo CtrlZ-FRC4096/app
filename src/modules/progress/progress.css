@@ -1,0 +1,35 @@
+.progress-panel {
+  min-width: 0;
+}
+
+.progress-scroll {
+  max-width: 100%;
+}
+
+.progress-grid {
+  min-width: 860px;
+}
+
+.progress-grid tbody th {
+  font-family: var(--body);
+  font-size: 14px;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--ink);
+}
+
+.progress-cell {
+  width: 100%;
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.progress-cell[data-state='In progress'] {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.progress-cell[data-state='Done'] {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
