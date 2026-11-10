@@ -7,8 +7,11 @@
  * one because notifications are off on their phone.
  *
  * Who can do what is in supabase/migrations/..._notifications.sql: people
- * see, read and delete only their own. For now the only notification is
- * "Send me a test"; ones like "your request was ordered" come next.
+ * see, read and delete only their own, and can only add ones for
+ * themselves ("Send me a test"). Notifications for someone else are added
+ * by the database itself: "Your request was ordered" and "Your request
+ * arrived" come from supabase/migrations/..._purchase_notifications.sql.
+ * Those are only in the app for now, not on phones.
  */
 import { DEMO_PEOPLE } from './demo'
 import { currentUser, useSession } from './session'
