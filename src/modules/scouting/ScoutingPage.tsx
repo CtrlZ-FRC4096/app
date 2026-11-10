@@ -6,6 +6,7 @@ import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
 import FormSection from './FormSection'
 import PitForm from './PitForm'
 import SavedOnDevice from './SavedOnDevice'
+import TeamPage, { TeamLink } from './TeamPage'
 import { COUNTERS, ENDGAME, ROLES } from './season'
 
 /** Width and height of the − and + buttons, in pixels. Big enough to tap without looking. */
@@ -42,8 +43,14 @@ const FORMS = ['Match', 'Pit']
 // #/scouting/pit opens the pit form straight away: a menu or a bookmark can
 // link to either form. Both forms stay on the page, and the one not chosen
 // is hidden, so switching doesn't lose what's typed.
+//
+// #/scouting/team/9991 is the team page for team 9991 (TeamPage.tsx), with
+// both forms hidden. It's only drawn while open: it waits for the team
+// database, and the forms must work with no connection.
 export default function ScoutingPage() {
-  const form = useRoute().rest[0] === 'pit' ? 'Pit' : 'Match'
+  const [page, teamText] = useRoute().rest
+  const form = page === 'team' ? 'Team' : page === 'pit' ? 'Pit' : 'Match'
+  const team = Number(teamText)
   return (
     <>
       <div style={{ marginBottom: 12 }}>
@@ -51,6 +58,7 @@ export default function ScoutingPage() {
       </div>
       <div hidden={form !== 'Match'}><MatchForm /></div>
       <div hidden={form !== 'Pit'}><PitForm /></div>
+      {form === 'Team' && <TeamPage team={Number.isInteger(team) && team > 0 ? team : null} />}
     </>
   )
 }
@@ -171,7 +179,7 @@ function MatchForm() {
         </Panel>
       </form>
       <SavedOnDevice
-        rows={entries.map((e) => ({ id: e.id, label: `Match ${e.match} · Team ${e.team}`, created_at: e.created_at, synced: e.synced }))}
+        rows={entries.map((e) => ({ id: e.id, label: <>Match {e.match} · <TeamLink team={e.team} /></>, created_at: e.created_at, synced: e.synced }))}
         emptyText="No entries yet. Fill in the form and press Save Entry."
       />
     </>

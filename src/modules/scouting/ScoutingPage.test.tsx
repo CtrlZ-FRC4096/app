@@ -3,7 +3,33 @@
 import { describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import ScoutingPage from './ScoutingPage'
-import { AUTO_SIDES, DRIVETRAINS, ROLES } from './season'
+import TeamPage from './TeamPage'
+import { AUTO_SIDES, COUNTERS, DRIVETRAINS, ROLES } from './season'
+
+describe('the team page', () => {
+  // Team 9991 is in the example entries (EXAMPLE_ENTRIES in data.ts), in match 1.
+  it("shows a team's numbers, answers and notes", () => {
+    const html = renderToString(<TeamPage team={9991} />)
+    expect(html).toContain('Team 9991')
+    for (const counter of COUNTERS) expect(html).toContain(counter.label)
+    expect(html).toContain('Match 1: 12')
+    expect(html).toContain('aria-label="Endgame: Level 2" aria-valuenow="100"')
+    expect(html).toContain('Fast intake')
+    // And its pit entry (EXAMPLE_PIT_ENTRIES).
+    expect(html).toContain('aria-label="Drivetrain (pit): Swerve" aria-valuenow="100"')
+    expect(html).toContain('Feed us fuel')
+  })
+
+  it('says when nothing is scouted for a team', () => {
+    const html = renderToString(<TeamPage team={1234} />)
+    expect(html).toContain('Nothing scouted for team 1234 yet.')
+    expect(html).not.toContain('Numbers')
+  })
+
+  it('links to every scouted team', () => {
+    expect(renderToString(<TeamPage team={null} />)).toContain('href="#/scouting/team/9992"')
+  })
+})
 
 describe('the Match / Pit switch', () => {
   it('starts on the match form, with the pit form hidden', () => {
