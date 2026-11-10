@@ -6,8 +6,13 @@
  * also sets who can read and change parts: anyone on the team can read and
  * add them, and mentors change and delete them. Other modules (the BOM) read
  * parts from here, so keep these functions simple and tested.
+ *
+ * Taking and adding stock: anyone on the team can change how many of a part
+ * there are, with changeStock(), and each change is recorded in the
+ * inventory_changes table (supabase/migrations/..._inventory_changes.sql).
+ * Nobody can edit or delete that history.
  */
-import { createTable, fail, type Result, type Row } from '../../core/table'
+import { createTable, fail, newestFirst, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
@@ -168,7 +173,110 @@ export async function changeItem(item: Item, changes: ItemChanges): Promise<Resu
   if (!me || !isMentor(me.role)) return fail(MENTORS_ONLY)
   const problem = checkChanges(changes)
   if (problem) return fail(problem)
-  return itemsTable.update(item.id, { quantity: changes.quantity, location: changes.location.trim() })
+  const before = latest(item).quantity
+  const updated = await itemsTable.update(item.id, { quantity: changes.quantity, location: changes.location.trim() })
+  if (!updated.ok || changes.quantity === before) return updated
+  // A new count goes in the history too, so the history always adds up.
+  return record(updated.value, changes.quantity - before, CORRECTED)
+}
+
+// ---------------------------------------------------------------------------
+// Taking and adding stock, and its history.
+
+/** One row of the inventory_changes table: one take or add. The fields match its columns. */
+export interface StockChange extends Row {
+  item_id: string
+  /** How many were added (+10) or taken (-2). Never 0. */
+  change: number
+  /** Optional, like "for the intake rebuild". Empty if there isn't one. */
+  note: string
+  /** Who did it. Show their name with useMemberNames(). */
+  created_by: string | null
+}
+
+/** The database allows the same: see the check on the note column. */
+export const MAX_STOCK_NOTE_LENGTH = 200
+
+/** The note on a history line when a mentor's Edit changes the count. */
+export const CORRECTED = 'Count corrected'
+
+// Made up, for the example parts above.
+const EXAMPLE_CHANGES: StockChange[] = [
+  {
+    id: '00000000-0000-4000-8000-00000001c001',
+    item_id: '00000000-0000-4000-8000-00000001a005',
+    change: -2,
+    note: 'For the practice robot',
+    created_at: '2026-10-22T23:10:00Z',
+    created_by: DEMO_PEOPLE.alex,
+  },
+  {
+    id: '00000000-0000-4000-8000-00000001c002',
+    item_id: '00000000-0000-4000-8000-00000001a005',
+    change: 4,
+    note: 'New order arrived',
+    created_at: '2026-10-24T00:30:00Z',
+    created_by: DEMO_PEOPLE.pat,
+  },
+  {
+    id: '00000000-0000-4000-8000-00000001c003',
+    item_id: '00000000-0000-4000-8000-00000001a007',
+    change: -1,
+    note: '',
+    created_at: '2026-10-25T22:00:00Z',
+    created_by: DEMO_PEOPLE.jordan,
+  },
+]
+
+export const changesTable = createTable<StockChange>('inventory_changes', { demo: EXAMPLE_CHANGES, sort: newestFirst })
+
+/** One part's history, newest first. */
+export function useStockHistory(item: Item): StockChange[] {
+  return changesTable.useRows().filter((c) => c.item_id === item.id)
+}
+
+/** The part as it is now: someone else may have taken some since the page drew it. */
+function latest(item: Item): Item {
+  return itemsTable.rows().find((i) => i.id === item.id) ?? item
+}
+
+/**
+ * Why a stock change can't be made, or null if it can. `change` is how many
+ * to add, or minus how many to take.
+ */
+export function checkStockChange(item: Item, change: number, note: string): string | null {
+  if (!Number.isInteger(change) || change === 0) return 'Enter how many, 1 or more.'
+  if (item.quantity + change < 0) {
+    return item.quantity === 0 ? `There are no ${item.name} on the shelf.` : `Only ${item.quantity} on the shelf, so you can't take ${-change}.`
+  }
+  const length = note.trim().length
+  if (length > MAX_STOCK_NOTE_LENGTH) return `Keep the note under ${MAX_STOCK_NOTE_LENGTH} characters. This one is ${length}.`
+  return null
+}
+
+/**
+ * Take parts from the shelf (a negative change) or add them (a positive
+ * one), and record it in the history. Anyone on the team can.
+ *
+ * The quantity changes first, then the history line is added. The database
+ * refuses a quantity below 0, so if the count can't change, nothing is
+ * recorded. If two people take the same part at the same moment, one can
+ * overwrite the other; a database function can fix that later.
+ */
+export async function changeStock(item: Item, change: number, note: string): Promise<Result<Item>> {
+  const current = latest(item)
+  const problem = checkStockChange(current, change, note)
+  if (problem) return fail(problem)
+  const updated = await itemsTable.update(item.id, { quantity: current.quantity + change })
+  if (!updated.ok) return updated
+  return record(updated.value, change, note.trim())
+}
+
+/** Add a history line for a change already made to `item`. */
+async function record(item: Item, change: number, note: string): Promise<Result<Item>> {
+  const line = await changesTable.insert({ item_id: item.id, change, note })
+  if (!line.ok) return fail(`There are now ${item.quantity}, but the history didn't save. ${line.error}`)
+  return { ok: true, value: item }
 }
 
 /** Delete a part from the list. Mentors and admins only. */

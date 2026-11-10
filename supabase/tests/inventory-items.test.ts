@@ -60,10 +60,13 @@ describe('inventory items', () => {
     expect(await db.as(student, 'select name from public.inventory_items')).toEqual([{ name: 'Power Distribution Hub' }])
   })
 
-  it('can be changed by a mentor but not by a student', async () => {
+  // Since issue #2, students can change the quantity too (take and add
+  // stock), but nothing else: see inventory-changes.test.ts.
+  it('can be changed by a mentor, and by a student only in quantity', async () => {
     const [part] = await add(mentor)
-    expect(await db.as(student, 'update public.inventory_items set quantity = 9 where id = $1 returning id', [part.id])).toEqual([])
-    expect(await db.as(mentor, 'update public.inventory_items set quantity = 9 where id = $1 returning quantity', [part.id])).toEqual([{ quantity: 9 }])
+    expect(await db.as(student, 'update public.inventory_items set quantity = 9 where id = $1 returning quantity', [part.id])).toEqual([{ quantity: 9 }])
+    await expect(db.as(student, "update public.inventory_items set location = 'Bin Z9' where id = $1", [part.id])).rejects.toThrow('Only mentors and admins')
+    expect(await db.as(mentor, "update public.inventory_items set location = 'Bin Z9' where id = $1 returning location", [part.id])).toEqual([{ location: 'Bin Z9' }])
   })
 
   it('can be removed by a mentor but not by a student', async () => {

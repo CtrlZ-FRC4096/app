@@ -1,9 +1,21 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { plural } from '../../core/format'
+import { plural, shortDate } from '../../core/format'
+import { useMemberNames } from '../../core/members'
 import { isMentor, useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pill, Stepper } from '../../core/ui'
-import { addItem, changeItem, isLow, removeItem, useItems, useLowItems, type Item } from './data'
+import {
+  MAX_STOCK_NOTE_LENGTH,
+  addItem,
+  changeItem,
+  changeStock,
+  isLow,
+  removeItem,
+  useItems,
+  useLowItems,
+  useStockHistory,
+  type Item,
+} from './data'
 
 // The page reads parts with a hook (useItems) and changes them with
 // functions from data.ts. It never saves anything itself.
@@ -14,17 +26,30 @@ export default function InventoryPage() {
   const mentor = isMentor(role)
   const [adding, setAdding] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [stockId, setStockId] = useState<string | null>(null)
   const [lowOnly, setLowOnly] = useState(false)
   const shown = lowOnly ? lowItems : items
   const editing = items.find((item) => item.id === editingId)
+  const stocking = items.find((item) => item.id === stockId)
+
+  // One panel at a time, so the page doesn't fill with forms.
+  function openStock(id: string) {
+    setEditingId(null)
+    setStockId(id)
+  }
+  function openEdit(id: string) {
+    setStockId(null)
+    setEditingId(id)
+  }
 
   return (
     <>
       <PageHead title="Parts">
         Parts, where they live, and how many are left.
       </PageHead>
-      {/* Anyone on the team can add parts. Changing and deleting them is for mentors. */}
+      {/* Anyone on the team can add parts, and take or add stock. Changing and deleting parts is for mentors. */}
       {adding && <AddItemForm onDone={() => setAdding(false)} />}
+      {stocking && <StockForm key={stocking.id} item={stocking} onDone={() => setStockId(null)} />}
       {editing && mentor && <EditItemForm key={editing.id} item={editing} onDone={() => setEditingId(null)} />}
       <Panel
         title="All parts"
@@ -50,7 +75,7 @@ export default function InventoryPage() {
                   <th>Part number</th>
                   <th>Location</th>
                   <th className="num">Qty</th>
-                  {mentor && <th aria-label="Change" />}
+                  <th aria-label="Change" />
                 </tr>
               </thead>
               <tbody>
@@ -60,11 +85,14 @@ export default function InventoryPage() {
                     <td><span className="note">{item.vendor}</span><br />{item.vendor_part_number}</td>
                     <td>{item.location}</td>
                     <td className="num">{item.quantity}</td>
-                    {mentor && (
-                      <td className="num">
-                        <button type="button" className="btn btn-sm" aria-label={`Edit ${item.name}`} onClick={() => setEditingId(item.id)}>Edit</button>
-                      </td>
-                    )}
+                    <td className="num">
+                      <span style={{ display: 'inline-flex', gap: 6 }}>
+                        <button type="button" className="btn btn-sm" aria-label={`Take or add ${item.name}`} onClick={() => openStock(item.id)}>Take / add</button>
+                        {mentor && (
+                          <button type="button" className="btn btn-sm" aria-label={`Edit ${item.name}`} onClick={() => openEdit(item.id)}>Edit</button>
+                        )}
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -138,6 +166,74 @@ function AddItemForm(props: { onDone: () => void }) {
         </div>
       </form>
     </Panel>
+  )
+}
+
+/** Take parts from the shelf or add them, and see who did before. Anyone on the team. */
+function StockForm(props: { item: Item; onDone: () => void }) {
+  const { item } = props
+  const history = useStockHistory(item)
+  const nameOf = useMemberNames()
+  const [howMany, setHowMany] = useState(1)
+  const [note, setNote] = useState('')
+  const [saving, setSaving] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  // Opened from a row further down the list: bring the form into view, clear of the top bar.
+  useEffect(() => {
+    ref.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }, [])
+
+  async function change(by: number) {
+    setSaving(true)
+    const result = await changeStock(item, by, note)
+    setSaving(false)
+    if (!result.ok) {
+      toast(result.error)
+      return
+    }
+    toast(`${by < 0 ? 'Took' : 'Added'} ${Math.abs(by)} × ${item.name}. ${result.value.quantity} on the shelf.`)
+    setHowMany(1)
+    setNote('')
+  }
+
+  const big = { minHeight: 52, minWidth: 96, fontSize: 18 }
+
+  return (
+    <div ref={ref} style={{ scrollMarginTop: 160 }}>
+      <Panel title={item.name} aside={<span className="note">{item.quantity} on the shelf · {item.location}</span>}>
+        <div className="panel-body">
+          <div className="field">
+            How many
+            <Stepper id="stock-how-many" label="How many" value={howMany} min={1} onChange={setHowMany} />
+          </div>
+          <label className="field" htmlFor="stock-note">
+            Note (optional)
+            <input id="stock-note" className="input" maxLength={MAX_STOCK_NOTE_LENGTH} value={note} onChange={(e) => setNote(e.target.value)} placeholder="For the intake rebuild" />
+          </label>
+          <div className="toolbar">
+            <button type="button" className="btn btn-lg btn-primary" style={big} disabled={saving} onClick={() => void change(-howMany)}>Take</button>
+            <button type="button" className="btn btn-lg" style={big} disabled={saving} onClick={() => void change(howMany)}>Add</button>
+            <button type="button" className="btn" style={{ marginLeft: 'auto' }} onClick={props.onDone}>Done</button>
+          </div>
+        </div>
+        {history.length === 0 ? (
+          <p className="panel-body muted">No one has taken or added any yet.</p>
+        ) : (
+          <div className="row-list" aria-label={`History for ${item.name}`}>
+            {history.map((c) => (
+              <div key={c.id}>
+                <span>
+                  {nameOf(c.created_by)} {c.change < 0 ? 'took' : 'added'} {Math.abs(c.change)}
+                  <br />
+                  <span className="note">{shortDate(c.created_at)}{c.note && ` · ${c.note}`}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+    </div>
   )
 }
 

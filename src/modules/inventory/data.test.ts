@@ -4,8 +4,26 @@
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { setDemoRole } from '../../core/demo'
-import { addItem, changeItem, checkChanges, checkItem, removeItem, isLow, itemsTable, useLowItems, useLowStockAttention, useLowStockSummary, type NewItem } from './data'
+import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
+import {
+  CORRECTED,
+  MAX_STOCK_NOTE_LENGTH,
+  addItem,
+  changeItem,
+  changeStock,
+  changesTable,
+  checkChanges,
+  checkItem,
+  checkStockChange,
+  removeItem,
+  isLow,
+  itemsTable,
+  useLowItems,
+  useLowStockAttention,
+  useLowStockSummary,
+  useStockHistory,
+  type NewItem,
+} from './data'
 
 /** Runs a hook the way a page would, and gives back what it returned. */
 function runHook<T>(hook: () => T): T {
@@ -28,6 +46,7 @@ async function stockEverything() {
 
 beforeEach(() => {
   itemsTable.reset()
+  changesTable.reset()
 })
 
 describe('example parts', () => {
@@ -192,6 +211,19 @@ describe('changing and deleting a part', () => {
     expect(pdh()).toMatchObject({ quantity: 7, location: 'Shelf E3' })
   })
 
+  it("records a mentor's new count in the history, so the history adds up", async () => {
+    setDemoRole('mentor')
+    await changeItem(pdh(), { quantity: 7, location: 'Shelf E1' })
+    expect(changesTable.rows()[0]).toMatchObject({ item_id: pdh().id, change: 5, note: CORRECTED, created_by: DEMO_PEOPLE.pat })
+  })
+
+  it("adds no history when a mentor's Edit leaves the count alone", async () => {
+    setDemoRole('mentor')
+    const before = changesTable.rows().length
+    await changeItem(pdh(), { quantity: 2, location: 'Shelf E3' })
+    expect(changesTable.rows()).toHaveLength(before)
+  })
+
   it("doesn't let a student change a part, and says who can", async () => {
     expect(await changeItem(pdh(), { quantity: 7, location: 'Shelf E3' })).toEqual({ ok: false, error: expect.stringMatching(/Only mentors and admins/) })
     expect(pdh().quantity).toBe(2)
@@ -203,5 +235,61 @@ describe('changing and deleting a part', () => {
     setDemoRole('mentor')
     expect((await removeItem(pdh())).ok).toBe(true)
     expect(itemsTable.rows()).toHaveLength(count - 1)
+  })
+})
+
+describe('taking and adding stock', () => {
+  // The demo student, Alex, has 2 of these.
+  const pdh = () => itemsTable.rows().find((i) => i.vendor_part_number === 'REV-11-1850')!
+  const historyOf = (id: string) => changesTable.rows().filter((c) => c.item_id === id)
+
+  it('takes parts and records who took them, with the note', async () => {
+    expect(await changeStock(pdh(), -2, ' For the intake ')).toMatchObject({ ok: true, value: { quantity: 0 } })
+    expect(pdh().quantity).toBe(0)
+    expect(historyOf(pdh().id)).toEqual([expect.objectContaining({ change: -2, note: 'For the intake', created_by: DEMO_PEOPLE.alex })])
+  })
+
+  it('adds parts and records it', async () => {
+    expect((await changeStock(pdh(), 10, '')).ok).toBe(true)
+    expect(pdh().quantity).toBe(12)
+    expect(historyOf(pdh().id)).toEqual([expect.objectContaining({ change: 10, note: '' })])
+  })
+
+  it('refuses to take more than are on the shelf, says how many there are, and changes nothing', async () => {
+    expect(await changeStock(pdh(), -3, '')).toEqual({ ok: false, error: "Only 2 on the shelf, so you can't take 3." })
+    expect(pdh().quantity).toBe(2)
+    expect(historyOf(pdh().id)).toEqual([])
+  })
+
+  it('says so when there are none left', async () => {
+    await changeStock(pdh(), -2, '')
+    expect(await changeStock(pdh(), -1, '')).toEqual({ ok: false, error: 'There are no Power Distribution Hub (PDH) on the shelf.' })
+  })
+
+  it('counts from the latest quantity, not the one the page drew', async () => {
+    const stale = pdh()
+    await changeStock(stale, -1, '')
+    expect(await changeStock(stale, -2, '')).toEqual({ ok: false, error: "Only 1 on the shelf, so you can't take 2." })
+    expect((await changeStock(stale, -1, '')).ok).toBe(true)
+    expect(pdh().quantity).toBe(0)
+  })
+
+  it('refuses 0, fractions and long notes', () => {
+    expect(checkStockChange(pdh(), 0, '')).toBe('Enter how many, 1 or more.')
+    expect(checkStockChange(pdh(), 1.5, '')).toBe('Enter how many, 1 or more.')
+    expect(checkStockChange(pdh(), 1, 'x'.repeat(MAX_STOCK_NOTE_LENGTH))).toBeNull()
+    expect(checkStockChange(pdh(), 1, 'x'.repeat(MAX_STOCK_NOTE_LENGTH + 1))).toMatch(/^Keep the note under/)
+  })
+
+  it('lets a student take and add, not just mentors', async () => {
+    setDemoRole('student')
+    expect((await changeStock(pdh(), -1, '')).ok).toBe(true)
+  })
+
+  it("shows one part's history, newest first", async () => {
+    await changeStock(pdh(), -1, 'first')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    await changeStock(pdh(), 3, 'second')
+    expect(runHook(() => useStockHistory(pdh())).map((c) => c.note)).toEqual(['second', 'first'])
   })
 })
