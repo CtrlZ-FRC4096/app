@@ -1,7 +1,9 @@
 # Robot status
 
-Robot status shows the subsystem progress grid, with the pit checklist under it
-(`PitChecklist.tsx`).
+Robot status shows the pit checklist (`PitChecklist.tsx`).
+
+The subsystem progress grid used to be here too. It moved to its own module,
+[Build progress](../progress/README.md), under the Build menu (#65).
 
 The pit checklist is available as a **local preview**. Open Robot status to check
 and uncheck items, add new items, and see how many are complete. Items and checks
@@ -31,6 +33,11 @@ can edit them under Person assignment > Edit subgroup members. Changing a tag or
 removing a subgroup member removes incompatible assignments and clears completion
 if an assigned person was removed. Membership edits apply to every matching item
 in this browser and persist across reloads.
+Every list of people (adding an item, Person assignment, and Edit subgroup
+members) has a **Find someone** box that narrows the list by name, ignoring
+capitals. Searching only hides names: people already chosen always stay in the
+list, and "No one matches" shows when no name fits. The matching is
+`matchMembers()` in `data.ts`; the box and list are `MemberPicker.tsx`.
 Choose one or more active team members when
 adding an item. Only assigned people can check or uncheck it; mentors and admins
 can reassign existing items, which marks them incomplete. Older saved items are
@@ -44,7 +51,6 @@ tests in `supabase/`. The summary tiles and TV view are not built yet.
 
 ## What it needs to do
 
-- A grid of subsystems by stage: design, built, wired, programmed, tested
 - A pit checklist for event day
 - Tiles showing each other module's summary (low stock, short BOM lines, and so on)
 - A big-screen view for the pit TV
@@ -55,9 +61,7 @@ tests in `supabase/`. The summary tiles and TV view are not built yet.
 
 ## Where to start
 
-1. Create `data.ts` with example subsystems and stages, and a function to move a stage along, with tests.
-2. Show the grid; tapping a cell moves it to the next stage.
-3. Add the pit checklist.
+The pit checklist is in place. Next: the summary tiles, then the pit TV view.
 
 Copy the pattern from the [Example module](../example/README.md): a table
 and rules in `data.ts`, tests in `data.test.ts`, and the page calling

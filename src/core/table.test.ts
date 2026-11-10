@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { applyChange, createTable, explain, newestFirst, RELOAD_AFTER_HIDDEN_MS, reloadOnReturn, type Row } from './table'
+import { applyChange, createTable, explain, newestFirst, RELOAD_AFTER_HIDDEN_MS, reloadOnReturn, shouldUseCopy, type Row } from './table'
 import { DEMO_PEOPLE, setDemoRole } from './demo'
 
 interface Thing extends Row {
@@ -68,6 +68,17 @@ describe('insertOnce', () => {
     expect(things.rows().filter((t) => t.id === 'from-a-phone').map((t) => t.name)).toEqual(['First'])
     expect(things.rows().find((t) => t.id === 'a')!.name).toBe('Older')
     expect(things.rows()).toHaveLength(4)
+  })
+})
+
+describe('shouldUseCopy', () => {
+  it("uses the copy kept on the device when there's no connection", () => {
+    expect(shouldUseCopy(new Error("Couldn't load members. Couldn't reach the team database. Check your connection and try again."), true)).toBe(true)
+    expect(shouldUseCopy(new Error('Anything at all'), false)).toBe(true)
+  })
+
+  it('shows the real problem when the database answered with one', () => {
+    expect(shouldUseCopy(new Error("Couldn't load members. You don't have permission to do that."), true)).toBe(false)
   })
 })
 

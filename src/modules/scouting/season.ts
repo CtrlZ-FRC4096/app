@@ -12,12 +12,14 @@ export interface Counter {
   key: string
   /** What the scout sees. */
   label: string
+  /** True if fewer is better, like fuel missed. The picklist ranks these the other way round. */
+  lowerIsBetter?: boolean
 }
 
 export const COUNTERS: Counter[] = [
   { key: 'autoFuel', label: 'Auto fuel scored' },
   { key: 'teleopFuel', label: 'Teleop fuel scored' },
-  { key: 'fuelMissed', label: 'Fuel missed' },
+  { key: 'fuelMissed', label: 'Fuel missed', lowerIsBetter: true },
 ]
 
 /** How the robot finished the match. The first is the starting choice. */

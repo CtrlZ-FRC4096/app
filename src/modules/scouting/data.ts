@@ -27,14 +27,20 @@
  * example data in demo mode. See https://match13.com/docs/api for
  * everything Match 13 sends.
  */
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { TEAM_TIME_ZONE } from '../../core/calendar'
 import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
-import { currentUser } from '../../core/session'
+import { currentUser, onSignedIn } from '../../core/session'
 import { DEMO_PEOPLE } from '../../core/demo'
-import { createStore, useStore } from '../../core/store'
-import { createTable, fail, newestFirst, ok, type Result, type Row } from '../../core/table'
-import { EVENT_KEY } from './season'
+import { createStore, useStore, type Store } from '../../core/store'
+import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row, type Table } from '../../core/table'
+import { toCsv } from '../attendance/data'
+import { COUNTERS, DRIVETRAINS, ENDGAME, EVENT_KEY, ROLES, type Counter } from './season'
+
+/** The event we're at, from season.ts, for other modules. */
+export { EVENT_KEY }
 
 // ---------------------------------------------------------------------------
 // Entries, saved on this device.
@@ -240,40 +246,49 @@ export function syncEntries(): Promise<Result<number>> {
   return inFlight
 }
 
+/** Whether any match or pit entry on this device is Waiting. */
+function hasWaiting(): boolean {
+  return entryStore.get().some((e) => !e.synced) || pitStore.get().some((e) => !e.synced)
+}
+
+/** Stop sending, and show why on the page. */
+function stopSending(problem: string): Result<number> {
+  syncStatus.set({ sending: false, problem })
+  return fail(problem)
+}
+
+// Sends match entries, then pit entries.
 async function send(): Promise<Result<number>> {
-  const waiting = entryStore.get().filter((e) => !e.synced)
-  const pitWaiting = pitStore.get().filter((e) => !e.synced)
-  if (waiting.length + pitWaiting.length === 0) return ok(0)
-  if (globalThis.navigator?.onLine === false) {
-    syncStatus.set({ sending: false, problem: NO_CONNECTION })
-    return fail(NO_CONNECTION)
-  }
+  if (!hasWaiting()) return ok(0)
+  if (globalThis.navigator?.onLine === false) return stopSending(NO_CONNECTION)
   if (!currentUser()) return fail('Sign in to send your entries.')
 
   syncStatus.set({ sending: true, problem: syncStatus.get().problem })
-  // Mark only the ones just sent: entries saved while sending stay Waiting.
-  const markSent = <T extends { id: string; synced: boolean }>(sent: T[]) => {
-    const ids = new Set(sent.map((e) => e.id))
-    return (entries: T[]) => entries.map((e) => (ids.has(e.id) ? { ...e, synced: true } : e))
-  }
-  if (waiting.length > 0) {
-    const result = await entriesTable.insertOnce(waiting.map(toRow))
-    if (!result.ok) {
-      syncStatus.set({ sending: false, problem: result.error })
-      return result
-    }
-    entryStore.set(markSent(waiting))
-  }
-  if (pitWaiting.length > 0) {
-    const result = await pitTable.insertOnce(pitWaiting.map(pitToRow))
-    if (!result.ok) {
-      syncStatus.set({ sending: false, problem: result.error })
-      return result
-    }
-    pitStore.set(markSent(pitWaiting))
-  }
+  const matches = await sendWaiting(entryStore, entriesTable, toRow)
+  if (!matches.ok) return stopSending(matches.error)
+  const pits = await sendWaiting(pitStore, pitTable, pitToRow)
+  if (!pits.ok) return stopSending(pits.error)
   syncStatus.set({ sending: false, problem: null })
-  return ok(waiting.length + pitWaiting.length)
+  return ok(matches.value + pits.value)
+}
+
+/**
+ * Send one kind of entry: the Waiting ones in a store go to its table, then
+ * are marked Synced. Gives back how many were sent.
+ */
+async function sendWaiting<E extends { id: string; synced: boolean }, T extends Row>(
+  store: Store<E[]>,
+  table: Table<T>,
+  asRow: (entry: E) => Fields<T> & { id: string },
+): Promise<Result<number>> {
+  const waiting = store.get().filter((e) => !e.synced)
+  if (waiting.length === 0) return ok(0)
+  const result = await table.insertOnce(waiting.map(asRow))
+  if (!result.ok) return result
+  // Mark only the ones just sent: entries saved while sending stay Waiting.
+  const sent = new Set(waiting.map((e) => e.id))
+  store.set((entries) => entries.map((e) => (sent.has(e.id) ? { ...e, synced: true } : e)))
+  return ok(waiting.length)
 }
 
 /** How often to try again while entries are waiting. */
@@ -287,9 +302,11 @@ export const RETRY_MS = 60 * 1000
  */
 function keepSyncing() {
   const tryNow = () => {
-    if ([...entryStore.get(), ...pitStore.get()].some((e) => !e.synced)) void syncEntries()
+    if (hasWaiting()) void syncEntries()
   }
   globalThis.addEventListener('online', tryNow)
+  // The sign-in is checked again once the connection is back: send then too.
+  onSignedIn(tryNow)
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') tryNow()
   })
@@ -470,6 +487,177 @@ export function numberOnly(text: string): string {
 if (typeof window !== 'undefined' && typeof document !== 'undefined') keepSyncing()
 
 // ---------------------------------------------------------------------------
+// Team summary: everything we scouted about one team at this event, added
+// up for the team page (#36). teamSummary() is a plain function, with no
+// hooks, so the picklist can use the same numbers. pitAnswers() and
+// pitDrivetrain() are the only code here that reads a pit entry's answers.
+
+/** A match entry, from the team database or still Waiting on this phone (see toRow()). */
+export type MatchRow = ReturnType<typeof toRow>
+
+/** A pit entry, from the team database or still Waiting on this phone (see pitToRow()). */
+export type PitRow = ReturnType<typeof pitToRow>
+
+/** One counter from season.ts, for one team. */
+export interface CounterSummary {
+  key: string
+  label: string
+  /** The average per match, or null if no entry has this counter. */
+  average: number | null
+  /** Each entry's count, in match order. */
+  perMatch: { match: number; count: number }[]
+}
+
+/** How often one answer came up. */
+export interface Tally {
+  option: string
+  count: number
+  /** count out of the entries it could have come up in, from 0 to 1. For <Bar>. */
+  share: number
+}
+
+/** A note from a match, or an answer from the pit form. */
+export interface WrittenAnswer {
+  kind: 'match' | 'pit'
+  question: string
+  text: string
+  /** The match number, or null if there wasn't one (pit scouting before any match). */
+  match: number | null
+  /** Who wrote it. Show their name with useMemberNames(). */
+  by: string | null
+  /** ISO date and time it was scouted. */
+  at: string
+}
+
+export interface TeamSummary {
+  team: number
+  /** Match entries. Two scouts watching the same robot count as two. */
+  matchCount: number
+  pitCount: number
+  counters: CounterSummary[]
+  endgame: Tally[]
+  /** Scouts can choose several roles, so these can add up to more than matchCount. */
+  roles: Tally[]
+  driverSkill: Tally[]
+  drivetrain: Tally[]
+  stops: Tally[]
+  /** How many entries say the robot broke down. */
+  brokeDown: number
+  /** Newest first. */
+  written: WrittenAnswer[]
+}
+
+/** A pit entry's written answers, leaving out the blank ones. The drivetrain is counted in pitDrivetrain() instead. */
+export function pitAnswers(pit: PitRow): WrittenAnswer[] {
+  const size = [pit.length, pit.width, pit.height].every((n) => n === null) ? '' : `${pit.length ?? '?'} × ${pit.width ?? '?'} × ${pit.height ?? '?'} inches (length × width × height)`
+  const answers: [question: string, text: string | null][] = [
+    ['Weight', pit.weight === null ? '' : `${pit.weight} pounds`],
+    ['Size', size],
+    ['Motors', pit.motors],
+    ['Auto starting side', pit.auto_side],
+    ['Auto path', pit.auto_path],
+    ['What they want partners to do', pit.partners_do],
+    ['What they will do', pit.they_do],
+  ]
+  return answers.flatMap(([question, text]) =>
+    text?.trim() ? [{ kind: 'pit' as const, question, text: text.trim(), match: pit.match_number, by: pit.scouted_by, at: pit.scouted_at }] : [],
+  )
+}
+
+/** A pit entry's drivetrain, or null if the scout didn't choose one. */
+export function pitDrivetrain(pit: PitRow): string | null {
+  return pit.drivetrain?.trim() || null
+}
+
+/** This event's entries, each once: an entry that's both Waiting here and in the team database is the same entry. */
+function thisEvent<T extends { id: string; event_key: string }>(entries: T[]): T[] {
+  const seen = new Set<string>()
+  return entries.filter((e) => {
+    if (e.event_key !== EVENT_KEY || seen.has(e.id)) return false
+    seen.add(e.id)
+    return true
+  })
+}
+
+/**
+ * How often each answer came up, out of `outOf`. Every option is listed, in
+ * order, even ones that never came up; an answer that isn't an option any
+ * more (renamed in season.ts) is added at the end.
+ */
+function tally(options: string[], answers: string[], outOf: number): Tally[] {
+  const all = [...options, ...new Set(answers.filter((a) => !options.includes(a)))]
+  return all.map((option) => {
+    const count = answers.filter((a) => a === option).length
+    return { option, count, share: outOf === 0 ? 0 : count / outOf }
+  })
+}
+
+/** Everything scouted about one team at this event (EVENT_KEY), added up. */
+export function teamSummary(team: number, entries: MatchRow[], pitEntries: PitRow[], counters: Counter[] = COUNTERS): TeamSummary {
+  const mine = thisEvent(entries)
+    .filter((e) => e.team_number === team)
+    .sort((a, b) => a.match_number - b.match_number || a.scouted_at.localeCompare(b.scouted_at))
+  const pits = thisEvent(pitEntries).filter((p) => p.team_number === team)
+  const skills = mine.flatMap((e) => (e.driver_skill === null ? [] : [String(e.driver_skill)]))
+  const drivetrains = pits.flatMap((p) => pitDrivetrain(p) ?? [])
+
+  const notes: WrittenAnswer[] = mine.flatMap((e) =>
+    e.notes?.trim() ? [{ kind: 'match' as const, question: 'Notes', text: e.notes.trim(), match: e.match_number, by: e.scouted_by, at: e.scouted_at }] : [],
+  )
+
+  return {
+    team,
+    matchCount: mine.length,
+    pitCount: pits.length,
+    counters: counters.map(({ key, label }) => {
+      const perMatch = mine.flatMap((e) => (typeof e.counts[key] === 'number' ? [{ match: e.match_number, count: e.counts[key] }] : []))
+      const total = perMatch.reduce((sum, m) => sum + m.count, 0)
+      return { key, label, average: perMatch.length === 0 ? null : total / perMatch.length, perMatch }
+    }),
+    endgame: tally(ENDGAME, mine.map((e) => e.endgame), mine.length),
+    roles: tally(ROLES, mine.flatMap((e) => e.roles), mine.length),
+    driverSkill: tally(DRIVER_SKILLS.map(String), skills, skills.length),
+    drivetrain: tally(DRIVETRAINS, drivetrains, drivetrains.length),
+    stops: tally([...STOPS], mine.map((e) => e.stop), mine.length),
+    brokeDown: mine.filter((e) => e.broke_down).length,
+    written: [...notes, ...pits.flatMap(pitAnswers)].sort((a, b) => b.at.localeCompare(a.at)),
+  }
+}
+
+/** Every team with a match or pit entry at this event, lowest number first. */
+export function scoutedTeams(entries: MatchRow[], pitEntries: PitRow[]): number[] {
+  const teams = new Set([...thisEvent(entries), ...thisEvent(pitEntries)].map((e) => e.team_number))
+  return [...teams].sort((a, b) => a - b)
+}
+
+/**
+ * What the team page adds up: match and pit entries from the team database,
+ * plus this phone's Waiting ones, so a scout sees their own entries straight
+ * away. In live mode the page waits for the team database to load.
+ */
+function useScoutingRows(): { entries: MatchRow[]; pitEntries: PitRow[] } {
+  const synced = entriesTable.useRows()
+  const saved = useEntries()
+  const syncedPit = pitTable.useRows()
+  const savedPit = usePitEntries()
+  const entries = useMemo(() => [...synced, ...saved.filter((e) => !e.synced).map(toRow)], [synced, saved])
+  const pitEntries = useMemo(() => [...syncedPit, ...savedPit.filter((e) => !e.synced).map(pitToRow)], [syncedPit, savedPit])
+  return { entries, pitEntries }
+}
+
+/** One team's summary, for the team page. */
+export function useTeamSummary(team: number): TeamSummary {
+  const { entries, pitEntries } = useScoutingRows()
+  return useMemo(() => teamSummary(team, entries, pitEntries), [team, entries, pitEntries])
+}
+
+/** Every team scouted at this event, for the team page's list. */
+export function useScoutedTeams(): number[] {
+  const { entries, pitEntries } = useScoutingRows()
+  return useMemo(() => scoutedTeams(entries, pitEntries), [entries, pitEntries])
+}
+
+// ---------------------------------------------------------------------------
 // The Blue Alliance.
 
 export interface TbaAlliance {
@@ -509,6 +697,8 @@ export interface TbaRanking {
   team_key: string
   record: { wins: number; losses: number; ties: number } | null
   matches_played: number
+  /** Numbers TBA works out. The first is the team's total ranking points. */
+  extra_stats: number[]
 }
 
 export interface TbaTeam {
@@ -548,6 +738,261 @@ export async function getTeamMatches(team: number, event = EVENT_KEY): Promise<R
 /** A team's name and home. */
 export function getTeam(team: number): Promise<Result<TbaTeam>> {
   return callFunction<TbaTeam>('tba', { kind: 'team', team }, () => demoTeam(team))
+}
+
+/** Every team registered for an event, by number. TBA lists them before the schedule is out. */
+export async function getEventTeams(event = EVENT_KEY): Promise<Result<TbaTeam[]>> {
+  const result = await callFunction<TbaTeam[] | null>('tba', { kind: 'teams', event }, () => DEMO_TEAMS.map(([team]) => demoTeam(team)))
+  return result.ok ? ok([...(result.value ?? [])].sort((a, b) => a.team_number - b.team_number)) : result
+}
+
+/** A team's page on The Blue Alliance, for the season of `event` (like 2026ilch → 2026). */
+export function tbaTeamUrl(team: number, event = EVENT_KEY): string {
+  return `https://www.thebluealliance.com/team/${team}/${event.slice(0, 4)}`
+}
+
+// ---------------------------------------------------------------------------
+// Filling in the team from the schedule (#40). A scout picks their position
+// once, and the match form fills in the team for that position from the
+// schedule. The schedule is saved on this device, so it still works with no
+// Wi-Fi once it's been loaded.
+
+/** Where a scout sits: which robot they watch in every match. */
+export const POSITIONS = ['Red 1', 'Red 2', 'Red 3', 'Blue 1', 'Blue 2', 'Blue 3'] as const
+export type Position = (typeof POSITIONS)[number]
+
+// '' until the scout picks one. keepOnReset: it belongs to this device, not the example data.
+export const positionStore = createStore<Position | ''>('scouting-position', 1, () => '', { keepOnReset: true })
+
+/** This device's position, or '' if the scout hasn't picked one. */
+export function usePosition(): Position | '' {
+  return useStore(positionStore)
+}
+
+/** Remember this device's position. */
+export function setPosition(position: Position) {
+  positionStore.set(position)
+}
+
+/**
+ * Get the latest schedule for the match form. It uses the schedule page's
+ * saved copy (savedSchedule() and refreshSchedule() below), so there's one
+ * schedule on the phone. If the latest can't be fetched (no Wi-Fi, say) but
+ * a copy for this event is saved, that copy is used, so the form keeps
+ * working.
+ */
+export async function loadSchedule(): Promise<Result<SavedSchedule>> {
+  const result = await refreshSchedule()
+  const saved = savedSchedule()
+  if (saved && saved.matches.length > 0) return ok(saved)
+  if (!result.ok) return fail(`Couldn't get the match schedule. ${result.error}`)
+  // TBA has no schedule until shortly before the event.
+  return fail("The Blue Alliance doesn't have the match schedule yet.")
+}
+
+/** The team in `position` in qualification match `match`, or null if the schedule doesn't say. */
+export function teamFor(schedule: SavedSchedule | null, match: number, position: Position | ''): number | null {
+  if (!schedule || !position) return null
+  // Only qualification matches: the form's match number is one of those.
+  const found = schedule.matches.find((m) => m.comp_level === 'qm' && m.match_number === match)
+  if (!found) return null
+  const [color, spot] = position.split(' ')
+  const team = (color === 'Red' ? found.alliances.red : found.alliances.blue).team_keys[Number(spot) - 1]
+  return team ? teamNumber(team) : null
+}
+
+// ---------------------------------------------------------------------------
+// Event rankings that update live (#39). TBA updates the rankings after each
+// match. While the rankings page is open it checks for new ones every
+// minute, and right away when the app comes back on screen or the phone
+// comes back online. The last ones it got are kept on this device, so with
+// no Wi-Fi the page still shows them, with when they're from.
+
+/** The last rankings this device got from TBA, and when. */
+export interface SavedRankings {
+  /** The event they're for. Rankings saved for another event aren't shown. */
+  event: string
+  /** Best first. */
+  rankings: TbaRanking[]
+  /** ISO date and time they came from TBA. */
+  checked_at: string
+}
+
+export const rankingsStore = createStore<SavedRankings | null>('scouting-rankings', 1, () => null)
+
+/** Whether the rankings are being checked right now, and why the last check didn't work, if it didn't. */
+export interface RankingsStatus {
+  checking: boolean
+  problem: string | null
+}
+
+// Only for this page visit: not saved.
+export const rankingsStatus = createStore<RankingsStatus>('scouting-rankings-status', 1, () => ({ checking: false, problem: null }), { persist: false, keepOnReset: true })
+
+/** How often to check for new rankings while the page is open. */
+export const RANKINGS_EVERY_MS = 60 * 1000
+
+const RANKINGS_OFFLINE = "No connection. They'll update by themselves when this phone is back online."
+
+/**
+ * Get the event's rankings from TBA and keep them on this device. If it
+ * can't (no connection, or TBA has a problem), the last ones stay, and the
+ * status says why.
+ */
+export async function refreshRankings(event = EVENT_KEY): Promise<Result<SavedRankings>> {
+  if (globalThis.navigator?.onLine === false) {
+    rankingsStatus.set({ checking: false, problem: RANKINGS_OFFLINE })
+    return fail(RANKINGS_OFFLINE)
+  }
+  rankingsStatus.set({ checking: true, problem: rankingsStatus.get().problem })
+  const result = await getRankings(event)
+  if (!result.ok) {
+    rankingsStatus.set({ checking: false, problem: result.error })
+    return result
+  }
+  const saved: SavedRankings = { event, rankings: result.value, checked_at: new Date().toISOString() }
+  rankingsStore.set(saved)
+  rankingsStatus.set({ checking: false, problem: null })
+  return ok(saved)
+}
+
+/**
+ * Keep the rankings up to date: check now, every minute while the app is
+ * on screen, when it comes back on screen, and when the phone comes back
+ * online. Gives back a function that stops it, for when the page closes.
+ */
+export function watchRankings(event = EVENT_KEY): () => void {
+  const check = () => void refreshRankings(event)
+  const onScreen = () => {
+    if (document.visibilityState === 'visible') check()
+  }
+  globalThis.addEventListener('online', check)
+  document.addEventListener('visibilitychange', onScreen)
+  const timer = setInterval(onScreen, RANKINGS_EVERY_MS)
+  check()
+  return () => {
+    globalThis.removeEventListener('online', check)
+    document.removeEventListener('visibilitychange', onScreen)
+    clearInterval(timer)
+  }
+}
+
+/** The saved rankings for this event, or null if there are none yet. They update by themselves while the page is open. */
+export function useRankings(): { saved: SavedRankings | null; status: RankingsStatus } {
+  useEffect(() => watchRankings(), [])
+  const saved = useStore(rankingsStore)
+  const status = useStore(rankingsStatus)
+  return { saved: saved?.event === EVENT_KEY ? saved : null, status }
+}
+
+/** One team's ranking, or null if they aren't ranked. For the team page. */
+export function rankOf(rankings: TbaRanking[], team: number): TbaRanking | null {
+  return rankings.find((r) => r.team_key === `frc${team}`) ?? null
+}
+
+// ---------------------------------------------------------------------------
+// Match videos (#41): a team's qualification matches, each with links to its
+// videos on The Blue Alliance. TBA adds videos as the event goes on, so a
+// played match can have none yet. For the team page.
+
+/**
+ * A link to watch a video, or null if it isn't a YouTube video with a
+ * normal-looking key. Some keys start partway in, like "abc123?t=30". Odd
+ * keys are dropped, so whatever TBA sends can't become a strange link.
+ */
+export function videoLink(video: TbaVideo): string | null {
+  if (video.type !== 'youtube' || !/^[\w-]+(\?t=\d+)?$/.test(video.key)) return null
+  return `https://youtu.be/${video.key}`
+}
+
+/** One of a team's qualification matches, for the match videos list. */
+export interface QualVideoRow {
+  /** Like 2026ilch_qm12. */
+  key: string
+  /** The qualification match number. */
+  number: number
+  /** The alliance the team was on. */
+  alliance: 'red' | 'blue'
+  /** How it went for the team, or null if it hasn't been played yet. */
+  result: 'Won' | 'Lost' | 'Tied' | null
+  /** The team's alliance's score and the other one's. -1 until played. */
+  ourScore: number
+  theirScore: number
+  /** A link for each video, or none if TBA has no video yet. */
+  links: string[]
+}
+
+/** A team's qualification matches from getTeamMatches(), in order, with their video links. Playoffs are left out. */
+export function qualVideoRows(matches: TbaMatchWithVideos[], team: number): QualVideoRow[] {
+  const rows: QualVideoRow[] = []
+  for (const match of matches) {
+    if (match.comp_level !== 'qm') continue
+    const alliance = match.alliances.red.team_keys.includes(`frc${team}`) ? 'red' : match.alliances.blue.team_keys.includes(`frc${team}`) ? 'blue' : null
+    if (!alliance) continue
+    const ourScore = match.alliances[alliance].score
+    const theirScore = match.alliances[alliance === 'red' ? 'blue' : 'red'].score
+    const played = ourScore >= 0 && theirScore >= 0
+    rows.push({
+      key: match.key,
+      number: match.match_number,
+      alliance,
+      result: !played ? null : ourScore > theirScore ? 'Won' : ourScore < theirScore ? 'Lost' : 'Tied',
+      ourScore,
+      theirScore,
+      links: match.videos.map(videoLink).filter((link) => link !== null),
+    })
+  }
+  return rows.sort((a, b) => a.number - b.number)
+}
+
+export interface TeamQualVideos {
+  rows: QualVideoRow[]
+  loading: boolean
+  /** Why the last load didn't work, or null. */
+  error: string | null
+  /** Load again, for a "Check again" button: TBA may have new videos. */
+  reload: () => void
+}
+
+/** What the last load gave, and which team and try it was for. */
+interface LoadedVideos {
+  team: number
+  tries: number
+  rows: QualVideoRow[]
+  error: string | null
+}
+
+/**
+ * A team's qualification matches with their video links, loaded when the
+ * page opens and again with reload(). Not kept on this device: videos
+ * change during the event, so it always asks TBA.
+ */
+export function useTeamQualVideos(team: number): TeamQualVideos {
+  const [tries, setTries] = useState(0)
+  const [loaded, setLoaded] = useState<LoadedVideos | null>(null)
+  useEffect(() => {
+    // If the team changes before TBA answers, this answer is for the old team: ignore it.
+    let current = true
+    void getTeamMatches(team).then((result) => {
+      if (!current) return
+      setLoaded((prev) => {
+        // If it didn't work, keep showing this team's matches from last time.
+        const rows = result.ok ? qualVideoRows(result.value, team) : prev?.team === team ? prev.rows : []
+        return { team, tries, rows, error: result.ok ? null : result.error }
+      })
+    })
+    return () => {
+      current = false
+    }
+  }, [team, tries])
+  const reload = useCallback(() => setTries((n) => n + 1), [])
+  const loading = loaded?.team !== team || loaded.tries !== tries
+  return {
+    rows: loaded?.team === team ? loaded.rows : [],
+    loading,
+    error: loading ? null : loaded.error,
+    reload,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -605,6 +1050,561 @@ export async function getPredictions(event = EVENT_KEY): Promise<Result<MatchPre
   )
 }
 
+// Picklist score (#42): every team ranked by a mix of its Match 13 xP and our
+// scouting averages, with a weight for how much each part counts. These are
+// plain functions that take the numbers in. Working out each team's numbers
+// waits on the team page (#36) and saved Match 13 ratings (#37).
+
+/** One thing a team is scored on, like Match 13 auto or fuel missed. */
+export interface PicklistPart {
+  /** The key in TeamNumbers' values and in Weights. */
+  key: string
+  label: string
+  /** True if fewer is better, like fuel missed. */
+  lowerIsBetter: boolean
+}
+
+/**
+ * Everything a team is scored on: Match 13's auto, teleop and endgame xP,
+ * then each counter in season.ts. Not Match 13's total as well: it's the
+ * three parts added up, so weighting it too would count xP twice. A new
+ * counter in season.ts shows up here by itself.
+ */
+export function picklistParts(): PicklistPart[] {
+  return [
+    { key: 'xAuto', label: 'Match 13 auto', lowerIsBetter: false },
+    { key: 'xTele', label: 'Match 13 teleop', lowerIsBetter: false },
+    { key: 'xEnd', label: 'Match 13 endgame', lowerIsBetter: false },
+    ...COUNTERS.map((c) => ({ key: c.key, label: c.label, lowerIsBetter: c.lowerIsBetter ?? false })),
+  ]
+}
+
+/** How much each part counts, from 0 (not at all) to 5, by the part's key. */
+export type Weights = Record<string, number>
+
+/** A part with no weight saved, like a counter added after the weights were set, counts this much. */
+export const DEFAULT_WEIGHT = 1
+export const MAX_WEIGHT = 5
+
+export const DEFAULT_WEIGHTS: Weights = Object.fromEntries(picklistParts().map((part) => [part.key, DEFAULT_WEIGHT]))
+
+// Saved on this phone only, so each scout can try their own weights.
+// keepOnReset: "Reset example data" shouldn't undo them at an event.
+export const weightsStore = createStore<Weights>('scouting-picklist-weights', 1, () => ({ ...DEFAULT_WEIGHTS }), { keepOnReset: true })
+
+/** One team's numbers for the picklist, by part key. Null if we don't have that number yet. */
+export interface TeamNumbers {
+  team: number
+  values: Record<string, number | null>
+  /** How many matches we scouted them in. 0 if none yet. */
+  matches: number
+  /** False if Match 13 hasn't rated them yet. */
+  rated: boolean
+}
+
+/** One line of the picklist. */
+export interface RankedTeam {
+  /** 1 is the best. */
+  rank: number
+  team: number
+  /** 0 to 100, or null if the team has none of the weighted numbers. */
+  score: number | null
+  /** The numbers behind the score, by part key, as they came in. Null if missing. */
+  parts: Record<string, number | null>
+}
+
+/**
+ * Every team ranked best first. For each part, the best team gets 1 and the
+ * worst 0, and the rest in between by how close they are (if every team has
+ * the same number, they all get 0.5). For lower-is-better parts it's the
+ * other way round. A team's score is the average of these, weighted, out of
+ * 100.
+ *
+ * A team missing a number (no scouting yet, or not rated by Match 13 yet) is
+ * scored on the numbers it has, so it isn't pushed down for what we don't
+ * know. A team with none of the weighted numbers has no score and goes at
+ * the bottom. Equal scores go in team number order, so every phone shows the
+ * same list.
+ */
+export function rankTeams(teams: TeamNumbers[], weights: Weights): RankedTeam[] {
+  const parts = picklistParts()
+  const value = (team: TeamNumbers, key: string) => team.values[key] ?? null
+
+  // Each part's lowest and highest number, over the teams that have one.
+  const ranges = new Map(
+    parts.map((part) => {
+      const values = teams.map((t) => value(t, part.key)).filter((v): v is number => v !== null)
+      return [part.key, { min: Math.min(...values), max: Math.max(...values) }]
+    }),
+  )
+
+  const scored = teams.map((team) => {
+    let total = 0
+    let weightTotal = 0
+    for (const part of parts) {
+      const v = value(team, part.key)
+      const weight = weights[part.key] ?? DEFAULT_WEIGHT
+      if (v === null || weight <= 0) continue
+      const { min, max } = ranges.get(part.key)!
+      const n = max === min ? 0.5 : (v - min) / (max - min)
+      total += weight * (part.lowerIsBetter ? 1 - n : n)
+      weightTotal += weight
+    }
+    return {
+      team: team.team,
+      score: weightTotal > 0 ? (total / weightTotal) * 100 : null,
+      parts: Object.fromEntries(parts.map((part) => [part.key, value(team, part.key)])),
+    }
+  })
+
+  return scored
+    .sort((a, b) => {
+      if (a.score === b.score) return a.team - b.team
+      if (a.score === null) return 1
+      if (b.score === null) return -1
+      return b.score - a.score
+    })
+    .map((line, i) => ({ rank: i + 1, ...line }))
+}
+
+/** The picklist as CSV text, to paste into a spreadsheet. A missing number is an empty cell. */
+export function picklistCsv(ranked: RankedTeam[], parts: PicklistPart[]): string {
+  const number = (n: number | null) => (n === null ? '' : String(Math.round(n * 10) / 10))
+  return toCsv([
+    ['Rank', 'Team', 'Score', ...parts.map((part) => part.label)],
+    ...ranked.map((line) => [String(line.rank), String(line.team), number(line.score), ...parts.map((part) => number(line.parts[part.key] ?? null))]),
+  ])
+}
+
+// The picklist page (#42). Each team's numbers come from teamSummary(), the
+// same sums as the team page, so the two never disagree, and from the saved
+// Match 13 ratings (useRatings()), so the list still works with no Wi-Fi.
+
+/**
+ * Every team in Match 13's ratings or our entries at this event, with its
+ * numbers for rankTeams(): Match 13's auto, teleop and endgame xP, and our
+ * average for each counter. Lowest team number first.
+ */
+export function picklistTeams(ratings: Match13Rating[], entries: MatchRow[], pitEntries: PitRow[]): TeamNumbers[] {
+  const teams = [...new Set([...ratings.map((r) => r.teamNumber), ...scoutedTeams(entries, pitEntries)])].sort((a, b) => a - b)
+  return teams.map((team) => {
+    const rating = ratings.find((r) => r.teamNumber === team)
+    const summary = teamSummary(team, entries, pitEntries)
+    // Two scouts watching the same robot in the same match is still one match.
+    const matches = new Set(entries.filter((e) => e.event_key === EVENT_KEY && e.team_number === team).map((e) => e.match_number))
+    return {
+      team,
+      values: {
+        xAuto: rating?.xAuto ?? null,
+        xTele: rating?.xTele ?? null,
+        xEnd: rating?.xEnd ?? null,
+        ...Object.fromEntries(summary.counters.map((c) => [c.key, c.average])),
+      },
+      matches: matches.size,
+      rated: rating !== undefined,
+    }
+  })
+}
+
+/** How much one part counts. A part with no saved weight counts DEFAULT_WEIGHT. */
+export function weightOf(weights: Weights, key: string): number {
+  return weights[key] ?? DEFAULT_WEIGHT
+}
+
+/** True when every part's weight is 0, so no team can be scored. */
+export function allWeightsZero(weights: Weights): boolean {
+  return picklistParts().every((part) => weightOf(weights, part.key) <= 0)
+}
+
+/** Set how much one part counts: a whole number from 0 to MAX_WEIGHT. Saved on this phone. */
+export function setWeight(key: string, weight: number) {
+  const clamped = Math.min(MAX_WEIGHT, Math.max(0, Math.round(weight)))
+  weightsStore.set((prev) => ({ ...prev, [key]: clamped }))
+}
+
+/** Put every weight back to DEFAULT_WEIGHT. */
+export function resetWeights() {
+  weightsStore.set({ ...DEFAULT_WEIGHTS })
+}
+
+/** One line of the picklist page: a RankedTeam, and what we know about the team. */
+export interface PicklistLine extends RankedTeam {
+  /** How many matches we scouted them in. 0 if none yet. */
+  matches: number
+  /** False if Match 13 hasn't rated them yet. */
+  rated: boolean
+}
+
+/**
+ * The picklist page's list: every team ranked with this phone's weights,
+ * re-sorted as soon as a weight changes. `ratings` is useRatings(), for
+ * when the Match 13 numbers are from and whether they could be loaded.
+ */
+export function useRankedPicklist() {
+  const ratings = useRatings()
+  const { entries, pitEntries } = useScoutingRows()
+  const weights = useStore(weightsStore)
+  const teams = useMemo(() => picklistTeams(ratings.ratings, entries, pitEntries), [ratings.ratings, entries, pitEntries])
+  const ranked = useMemo(() => {
+    const known = new Map(teams.map((t) => [t.team, t]))
+    return rankTeams(teams, weights).map((line): PicklistLine => ({ ...line, matches: known.get(line.team)?.matches ?? 0, rated: known.get(line.team)?.rated ?? false }))
+  }, [teams, weights])
+  return { ranked, weights, ratings }
+}
+
+// ---------------------------------------------------------------------------
+// The match schedule page: The Blue Alliance's schedule with Match 13's
+// prediction for each match. The last ones fetched are saved on this
+// device, so the schedule still shows with no connection.
+
+/** Our team, so the schedule can pick out our matches. */
+export const OUR_TEAM = 4096
+
+/** One match on the schedule page. */
+export interface ScheduleRow {
+  key: string
+  /** Like "Qual 12" or "Semifinal 3". */
+  label: string
+  /** When it's expected to start, in seconds since 1970, or null. */
+  time: number | null
+  /** Team numbers on each side. */
+  red: number[]
+  blue: number[]
+  /** The real score once the match is played, or null before. */
+  score: { red: number; blue: number } | null
+  /** Match 13's prediction, or null if it hasn't predicted this match yet. */
+  prediction: MatchPrediction | null
+  /** True when our team plays in it. */
+  ours: boolean
+}
+
+const LEVELS: TbaMatch['comp_level'][] = ['qm', 'ef', 'qf', 'sf', 'f']
+const LEVEL_NAMES: Record<TbaMatch['comp_level'], string> = { qm: 'Qual', ef: 'Eighthfinal', qf: 'Quarterfinal', sf: 'Semifinal', f: 'Final' }
+
+/** "Qual 12", "Semifinal 3", "Final 2", or "Quarterfinal 1 match 2" when a set has more than one match. */
+export function matchLabel(match: Pick<TbaMatch, 'comp_level' | 'set_number' | 'match_number'>): string {
+  const name = LEVEL_NAMES[match.comp_level] ?? match.comp_level
+  if (match.comp_level === 'qm' || match.comp_level === 'f') return `${name} ${match.match_number}`
+  return match.match_number > 1 ? `${name} ${match.set_number} match ${match.match_number}` : `${name} ${match.set_number}`
+}
+
+/**
+ * Put each match with its prediction, matched by the match key, in the
+ * order they're played: qualifications, then playoffs. A match Match 13
+ * hasn't predicted yet still shows, with no prediction. Played matches have
+ * their real score.
+ */
+export function matchesWithPredictions(schedule: TbaMatch[], predictions: MatchPrediction[], team = OUR_TEAM): ScheduleRow[] {
+  const predicted = new Map(predictions.map((p) => [p.key, p]))
+  const order = (m: TbaMatch) => LEVELS.indexOf(m.comp_level)
+  return [...schedule]
+    .sort((a, b) => order(a) - order(b) || a.set_number - b.set_number || a.match_number - b.match_number)
+    .map((m) => {
+      const red = m.alliances.red.team_keys.map(teamNumber)
+      const blue = m.alliances.blue.team_keys.map(teamNumber)
+      // TBA sends -1 (or sometimes null) until the match is played.
+      const scored = (score: number | null) => typeof score === 'number' && score >= 0
+      const played = scored(m.alliances.red.score) && scored(m.alliances.blue.score)
+      return {
+        key: m.key,
+        label: matchLabel(m),
+        time: m.predicted_time ?? null,
+        red,
+        blue,
+        score: played ? { red: m.alliances.red.score, blue: m.alliances.blue.score } : null,
+        prediction: predicted.get(m.key) ?? null,
+        ours: red.includes(team) || blue.includes(team),
+      }
+    })
+}
+
+/** Who's likely to win and their chance, like "Red 72%", or "Toss-up" when it's even. */
+export function likelyWinner(prediction: MatchPrediction): string {
+  const red = Math.round(prediction.redWinChance * 100)
+  if (red === 50) return 'Toss-up'
+  return red > 50 ? `Red ${red}%` : `Blue ${100 - red}%`
+}
+
+/** "just now", "1 minute ago", "3 hours ago", "2 days ago". */
+export function updatedAgo(at: string, now: Date = new Date()): string {
+  const minutes = Math.max(0, Math.floor((now.getTime() - Date.parse(at)) / 60_000))
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${plural(minutes, 'minute', 'minutes')} ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) return `${plural(hours, 'hour', 'hours')} ago`
+  return `${Math.floor(hours / 24)} days ago`
+}
+
+/** The schedule and predictions as last fetched, kept on this device. */
+export interface SavedSchedule {
+  event: string
+  matches: TbaMatch[]
+  predictions: MatchPrediction[]
+  /** ISO date and time they were fetched. */
+  savedAt: string
+}
+
+// Kept through "Reset example data", like entries: at an event it may be the
+// only copy of the schedule on a phone with no connection.
+export const scheduleStore = createStore<SavedSchedule | null>('scouting-schedule', 1, () => null, { keepOnReset: true })
+
+/**
+ * The schedule saved on this device for the event, or null if there isn't
+ * one yet. Anything that needs the schedule with no connection (such as
+ * filling in the team from the match number, #40) can use this.
+ */
+export function savedSchedule(event = EVENT_KEY): SavedSchedule | null {
+  const saved = scheduleStore.get()
+  return saved?.event === event ? saved : null
+}
+
+export function useSavedSchedule(event = EVENT_KEY): SavedSchedule | null {
+  const saved = useStore(scheduleStore)
+  return saved?.event === event ? saved : null
+}
+
+export interface ScheduleStatus {
+  loading: boolean
+  /** Why the last try didn't work, written for the person, or null. */
+  problem: string | null
+}
+
+// Only for this page visit: not saved.
+export const scheduleStatus = createStore<ScheduleStatus>('scouting-schedule-status', 1, () => ({ loading: false, problem: null }), { persist: false, keepOnReset: true })
+
+export function useScheduleStatus(): ScheduleStatus {
+  return useStore(scheduleStatus)
+}
+
+// The fetch under way, if there is one, so two tries at once share it.
+let scheduleInFlight: Promise<Result<SavedSchedule>> | null = null
+
+/**
+ * Get the latest schedule and predictions, and save them on this device.
+ * If the schedule can't be fetched, the saved one stays. If only the
+ * predictions can't, the schedule is saved with the last predictions.
+ */
+export function refreshSchedule(event = EVENT_KEY): Promise<Result<SavedSchedule>> {
+  scheduleInFlight ??= fetchSchedule(event).finally(() => {
+    scheduleInFlight = null
+  })
+  return scheduleInFlight
+}
+
+async function fetchSchedule(event: string): Promise<Result<SavedSchedule>> {
+  if (globalThis.navigator?.onLine === false) {
+    scheduleStatus.set({ loading: false, problem: 'No connection.' })
+    return fail('No connection.')
+  }
+  scheduleStatus.set((now) => ({ ...now, loading: true }))
+  const [schedule, predictions] = await Promise.all([getSchedule(event), getPredictions(event)])
+  if (!schedule.ok) {
+    scheduleStatus.set({ loading: false, problem: schedule.error })
+    return schedule
+  }
+  // TBA has no schedule until shortly before the event. Don't swap a saved one for an empty one.
+  const previous = savedSchedule(event)
+  if (schedule.value.length === 0 && previous && previous.matches.length > 0) {
+    scheduleStatus.set({ loading: false, problem: null })
+    return ok(previous)
+  }
+  const saved: SavedSchedule = {
+    event,
+    matches: schedule.value,
+    predictions: predictions.ok ? predictions.value : (savedSchedule(event)?.predictions ?? []),
+    savedAt: new Date().toISOString(),
+  }
+  scheduleStore.set(saved)
+  scheduleStatus.set({
+    loading: false,
+    problem: predictions.ok ? null : `Couldn't get new predictions from Match 13, so these may be old. ${predictions.error}`,
+  })
+  return ok(saved)
+}
+
+/** How often the schedule page asks again. The match13 function reuses its answer for 2 minutes, so sooner doesn't help. */
+export const SCHEDULE_REFRESH_MS = 2 * 60 * 1000
+
+/**
+ * While the schedule page is open, keep it up to date: ask now, every 2
+ * minutes, when the app comes back on screen, and when the phone comes back
+ * online. Gives back a function that stops it, for when the page closes.
+ */
+export function keepScheduleFresh(event = EVENT_KEY): () => void {
+  const refresh = () => void refreshSchedule(event)
+  const onScreen = () => {
+    if (globalThis.document?.visibilityState === 'visible') refresh()
+  }
+  globalThis.addEventListener?.('online', refresh)
+  globalThis.document?.addEventListener('visibilitychange', onScreen)
+  const timer = setInterval(refresh, SCHEDULE_REFRESH_MS)
+  refresh()
+  return () => {
+    globalThis.removeEventListener?.('online', refresh)
+    globalThis.document?.removeEventListener('visibilitychange', onScreen)
+    clearInterval(timer)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// One team's Match 13 numbers (#37), and a saved copy of every team's.
+//
+// getRatings() gets every team at the event in one request, so pages don't
+// ask for one team at a time: they read the saved copy with useRatings(),
+// then find a team in it with teamRating(). The win-loss record comes from
+// The Blue Alliance's getRankings(), since Match 13 doesn't have records.
+//
+// The copy is kept on this device, because Match 13 is sometimes down and
+// venue Wi-Fi is worse: with no connection, pages show the saved numbers
+// and when they're from (savedWhen()). The team page and the picklist (#42)
+// both use this copy, so neither makes its own requests.
+
+/** A team's Match 13 rating, and where it puts them at the event. */
+export interface TeamRating {
+  rating: Match13Rating
+  /** Their xP rank at the event: 1 is best. Teams with the same xpEnd share a rank. */
+  rank: number
+  /** How many teams Match 13 rated at the event. */
+  teams: number
+  /** xpEnd minus xpStart, to one decimal place: how much they've gone up (or down) at the event. */
+  change: number
+}
+
+const oneDecimal = (n: number) => Math.round(n * 10) / 10
+
+/**
+ * One team's rating and rank, from every team's ratings (getRatings() or
+ * useRatings()). Null when Match 13 hasn't rated them at this event: show
+ * "No Match 13 rating yet", not an error.
+ */
+export function teamRating(ratings: Match13Rating[], team: number): TeamRating | null {
+  const rating = ratings.find((r) => r.teamNumber === team)
+  if (!rating) return null
+  // Tied teams share a rank: two teams at the top are both 1, and the next is 3.
+  const rank = 1 + ratings.filter((r) => r.xpEnd > rating.xpEnd).length
+  return { rating, rank, teams: ratings.length, change: oneDecimal(rating.xpEnd - rating.xpStart) }
+}
+
+/** A team's wins, losses and ties at the event, from getRankings(). Null if they aren't in the rankings yet. */
+export function teamRecord(rankings: TbaRanking[], team: number): { wins: number; losses: number; ties: number } | null {
+  return rankings.find((r) => teamNumber(r.team_key) === team)?.record ?? null
+}
+
+/** A change with its sign, to one decimal place: "+4.6", "−1.4" or "0.0". */
+export function signed(n: number): string {
+  const rounded = oneDecimal(n)
+  if (rounded > 0) return `+${rounded.toFixed(1)}`
+  if (rounded < 0) return `−${Math.abs(rounded).toFixed(1)}`
+  return '0.0'
+}
+
+/** When the saved numbers are from, in Chicago time: "Today at 3:40 PM" or "Nov 8 at 3:40 PM". */
+export function savedWhen(iso: string, now: Date = new Date()): string {
+  const at = new Date(iso)
+  const day = (date: Date) => new Intl.DateTimeFormat('en-US', { timeZone: TEAM_TIME_ZONE, month: 'short', day: 'numeric' }).format(date)
+  const time = new Intl.DateTimeFormat('en-US', { timeZone: TEAM_TIME_ZONE, hour: 'numeric', minute: '2-digit' }).format(at)
+  return `${day(at) === day(now) ? 'Today' : day(at)} at ${time}`
+}
+
+/** Load again when the saved copy is older than this. */
+export const STALE_MS = 5 * 60 * 1000
+
+/** The saved copy of the event's Match 13 ratings and TBA rankings. */
+export interface RatingsState {
+  /** The event they're for, or null if nothing's saved. A copy for another event counts as nothing saved. */
+  event: string | null
+  /** Every team's rating, best first. Empty if none are saved, or Match 13 hasn't rated anyone yet. */
+  ratings: Match13Rating[]
+  /** The Blue Alliance's rankings, for each team's record. */
+  rankings: TbaRanking[]
+  /** When the ratings were last loaded, as ISO, or null if never. */
+  loadedAt: string | null
+  /** Why the last load didn't work, or null. The saved copy stays when it doesn't. */
+  error: string | null
+}
+
+const noRatings = (): RatingsState => ({ event: null, ratings: [], rankings: [], loadedAt: null, error: null })
+
+// Saved on this device, so the numbers still show with no connection. Not
+// keepOnReset: it's only a copy, so "Reset example data" may clear it.
+export const ratingsStore = createStore<RatingsState>('scouting-ratings', 1, noRatings)
+// Only for this page visit: not saved.
+const ratingsLoading = createStore('scouting-ratings-loading', 1, () => false, { persist: false, keepOnReset: true })
+
+/** The saved copy for this event (EVENT_KEY), for code outside a page. A copy for another event gives nothing saved. */
+export function savedRatings(): RatingsState {
+  const saved = ratingsStore.get()
+  return saved.event === EVENT_KEY ? saved : noRatings()
+}
+
+/** Whether to load again: nothing saved for this event, or the copy is older than STALE_MS. */
+export function needsLoading(saved: RatingsState, now: Date = new Date()): boolean {
+  return saved.event !== EVENT_KEY || !saved.loadedAt || now.getTime() - Date.parse(saved.loadedAt) > STALE_MS
+}
+
+// What the match13 function says when Match 13 has no ratings for the
+// event yet (see supabase/functions/match13/match13.ts). That just means
+// nobody's rated yet, so it isn't shown as a problem.
+const NOT_RATED_YET = /nothing for that event/i
+
+// The load under way, if there is one, so two pages loading at once share it.
+let loading: Promise<void> | null = null
+
+/**
+ * Load every team's Match 13 rating and TBA ranking at the event, and save
+ * them on this device. Each part is saved only if its own request worked;
+ * if one didn't, the last saved copy of it stays and `error` says why.
+ */
+export function loadRatings(now: Date = new Date()): Promise<void> {
+  if (!loading) {
+    ratingsLoading.set(true)
+    loading = load(now).finally(() => {
+      loading = null
+      ratingsLoading.set(false)
+    })
+  }
+  return loading
+}
+
+async function load(now: Date): Promise<void> {
+  const [ratings, rankings] = await Promise.all([getRatings(EVENT_KEY), getRankings(EVENT_KEY)])
+  const notRatedYet = !ratings.ok && NOT_RATED_YET.test(ratings.error)
+  const rated: Result<Match13Rating[]> = notRatedYet ? ok([]) : ratings
+  // Start from this event's copy, so another event's numbers never mix in.
+  const prev = savedRatings()
+  ratingsStore.set({
+    event: EVENT_KEY,
+    ratings: rated.ok ? rated.value : prev.ratings,
+    rankings: rankings.ok ? rankings.value : prev.rankings,
+    loadedAt: rated.ok ? now.toISOString() : prev.loadedAt,
+    error: !rated.ok ? rated.error : !rankings.ok ? rankings.error : null,
+  })
+}
+
+/** For tests: forget the saved copy. */
+export function resetRatings() {
+  ratingsStore.reset()
+  ratingsLoading.reset()
+}
+
+/**
+ * The saved Match 13 ratings and TBA rankings for this event, loading them
+ * when nothing's saved, when the copy is older than STALE_MS, and when the
+ * phone comes back online. `refresh` is for a Refresh button.
+ */
+export function useRatings(): RatingsState & { loading: boolean; refresh: () => void } {
+  const saved = useStore(ratingsStore)
+  const state = saved.event === EVENT_KEY ? saved : noRatings()
+  const isLoading = useStore(ratingsLoading)
+  useEffect(() => {
+    if (needsLoading(ratingsStore.get())) void loadRatings()
+    const reload = () => void loadRatings()
+    globalThis.addEventListener('online', reload)
+    return () => globalThis.removeEventListener('online', reload)
+  }, [])
+  return { ...state, loading: isLoading, refresh: () => void loadRatings() }
+}
+
 // ---------------------------------------------------------------------------
 // Example data for demo mode. Made up: the other teams and the video don't exist.
 
@@ -648,13 +1648,14 @@ function demoMatches(event: string): TbaMatchWithVideos[] {
 }
 
 // Made-up Match 13 ratings, in no order like the real ones: [team, xpStart, xpEnd].
+// Best to worst isn't the same as by team number, so sorting by EPA shows a change.
 const DEMO_RATINGS: [team: number, start: number, end: number][] = [
   [9993, 31.2, 30.4],
   [4096, 44.0, 48.6],
   [9995, 20.1, 22.8],
   [9991, 40.3, 41.7],
-  [9994, 27.5, 26.1],
-  [9992, 33.9, 35.2],
+  [9994, 38.0, 44.9],
+  [9992, 27.5, 26.1],
 ]
 
 function demoRatings(): Match13Rating[] {
@@ -698,5 +1699,154 @@ function demoRankings(): TbaRanking[] {
   }
   return [...record]
     .sort(([a, ra], [b, rb]) => rb.wins - ra.wins || ra.losses - rb.losses || teamNumber(a) - teamNumber(b))
-    .map(([team_key, r], i) => ({ rank: i + 1, team_key, record: r, matches_played: r.wins + r.losses + r.ties }))
+    // Made-up ranking points: 3 for a win and 1 for a tie, with no bonus points.
+    .map(([team_key, r], i) => ({ rank: i + 1, team_key, record: r, matches_played: r.wins + r.losses + r.ties, extra_stats: [r.wins * 3 + r.ties] }))
+}
+
+// ---------------------------------------------------------------------------
+// Shared picklist (#43): the order the strategy team wants to pick teams in
+// on alliance selection day. It's a table, so every phone shows the same
+// order and changes show up by themselves. Everyone signed in can read it;
+// only mentors and admins can change it (the rules in
+// supabase/migrations/..._scouting_picklist.sql).
+//
+// Each team has a position, and the list is in position order, smallest
+// first. Positions start 1000 apart. Moving a team changes only its own
+// position, to halfway between its new neighbours, so one move is one small
+// change, and two people moving different teams at once don't undo each
+// other. After many moves in one spot the halves get too close to tell
+// apart; then moveTeam() numbers the list 1000, 2000, … again.
+
+export const PICK_STATUSES = ['Open', 'Picked', 'Do not pick'] as const
+/** Picked: already on another alliance. Teams keep their place when marked. */
+export type PickStatus = (typeof PICK_STATUSES)[number]
+
+/** One row of the scouting_picklist table: one team on one event's list. */
+export interface PicklistRow extends Row {
+  /** The event, like 2026ilch. Each event has its own list. */
+  event_key: string
+  team_number: number
+  /** Smaller is higher on the list. */
+  position: number
+  status: PickStatus
+  /** Who added it. Show their name with useMemberNames(). */
+  created_by: string | null
+}
+
+/** How far apart positions are when teams are added. */
+export const POSITION_GAP = 1000
+
+/** Top of the list first. Two teams with the same position go by team number. */
+export const byPosition = (a: PicklistRow, b: PicklistRow) => a.position - b.position || a.team_number - b.team_number
+
+// Made up, for demo mode: the example teams above, not real ones.
+const EXAMPLE_PICKLIST: PicklistRow[] = [
+  { id: '00000000-0000-4000-8000-0000000d0101', event_key: EVENT_KEY, team_number: 9991, position: 1000, status: 'Open', created_at: '2026-11-07T20:00:00Z', created_by: DEMO_PEOPLE.pat },
+  { id: '00000000-0000-4000-8000-0000000d0102', event_key: EVENT_KEY, team_number: 9993, position: 2000, status: 'Picked', created_at: '2026-11-07T20:00:00Z', created_by: DEMO_PEOPLE.pat },
+  { id: '00000000-0000-4000-8000-0000000d0103', event_key: EVENT_KEY, team_number: 9992, position: 3000, status: 'Open', created_at: '2026-11-07T20:00:00Z', created_by: DEMO_PEOPLE.pat },
+  { id: '00000000-0000-4000-8000-0000000d0104', event_key: EVENT_KEY, team_number: 9995, position: 4000, status: 'Do not pick', created_at: '2026-11-07T20:00:00Z', created_by: DEMO_PEOPLE.pat },
+  { id: '00000000-0000-4000-8000-0000000d0105', event_key: EVENT_KEY, team_number: 9994, position: 5000, status: 'Open', created_at: '2026-11-07T20:00:00Z', created_by: DEMO_PEOPLE.pat },
+]
+
+export const picklistTable = createTable<PicklistRow>('scouting_picklist', { demo: EXAMPLE_PICKLIST, sort: byPosition })
+
+/** One event's picklist, top first. */
+export function picklist(event = EVENT_KEY): PicklistRow[] {
+  return picklistTable.rows().filter((row) => row.event_key === event)
+}
+
+/** One event's picklist, top first, for a page. */
+export function usePicklist(event = EVENT_KEY): PicklistRow[] {
+  return picklistTable.useRows().filter((row) => row.event_key === event)
+}
+
+/**
+ * A position between two teams' positions: halfway between them, or
+ * POSITION_GAP above the top or below the bottom of the list. Leave out
+ * `before` for the top, `after` for the bottom, and both for an empty list.
+ */
+export function positionBetween(before?: number, after?: number): number {
+  if (before === undefined) return after === undefined ? POSITION_GAP : after - POSITION_GAP
+  if (after === undefined) return before + POSITION_GAP
+  return (before + after) / 2
+}
+
+/** Why these team numbers can't go on the list, or null if they can. */
+function checkTeams(teams: number[]): string | null {
+  const bad = teams.find((team) => !isCount(team) || team > MAX_TEAM)
+  return bad === undefined ? null : `Check the team number: ${bad} isn't one.`
+}
+
+/** New rows for these teams, in the order given, each once, below the position `last`. */
+function rowsBelow(teams: number[], last: number | undefined, event: string) {
+  let position = last
+  return [...new Set(teams)].map((team) => {
+    position = positionBetween(position)
+    return { event_key: event, team_number: team, position, status: 'Open' as const }
+  })
+}
+
+/**
+ * Start the event's picklist with these teams, best first (like the ranked
+ * list). Only for an empty list: once it's started, the order is the
+ * strategy team's, so this never replaces it.
+ */
+export async function startPicklist(teams: number[], event = EVENT_KEY): Promise<Result<PicklistRow[]>> {
+  if (teams.length === 0) return fail('There are no teams to start the picklist with.')
+  const problem = checkTeams(teams)
+  if (problem) return fail(problem)
+  if (picklist(event).length > 0) return fail('The picklist is already started. Move teams on it, or add the teams that are missing.')
+  return picklistTable.insertMany(rowsBelow(teams, undefined, event))
+}
+
+/**
+ * Add the teams that aren't on the event's picklist yet to the bottom, in
+ * the order given. Teams already on it stay where they are.
+ */
+export async function addMissingTeams(teams: number[], event = EVENT_KEY): Promise<Result<PicklistRow[]>> {
+  const problem = checkTeams(teams)
+  if (problem) return fail(problem)
+  const list = picklist(event)
+  const onList = new Set(list.map((row) => row.team_number))
+  const missing = teams.filter((team) => !onList.has(team))
+  if (missing.length === 0) return ok([])
+  return picklistTable.insertMany(rowsBelow(missing, list.at(-1)?.position, event))
+}
+
+/**
+ * Move a team one place up (-1) or down (1) its event's list. Up from the
+ * top or down from the bottom does nothing.
+ */
+export async function moveTeam(id: string, direction: -1 | 1): Promise<Result> {
+  const row = picklistTable.rows().find((r) => r.id === id)
+  if (!row) return fail("That team isn't on the picklist any more.")
+  const list = picklist(row.event_key)
+  const to = list.indexOf(row) + direction
+  if (to < 0 || to >= list.length) return ok(null)
+
+  // Its new neighbours: the teams it ends up between (none past either end).
+  const [before, after] = direction === -1 ? [list[to - 1], list[to]] : [list[to], list[to + 1]]
+  const position = positionBetween(before?.position, after?.position)
+  if (position !== before?.position && position !== after?.position) {
+    const result = await picklistTable.update(id, { position })
+    return result.ok ? ok(null) : result
+  }
+
+  // Too close to tell apart: number the whole list again, with this move in it.
+  const order = list.filter((r) => r.id !== id)
+  order.splice(to, 0, row)
+  for (const [i, r] of order.entries()) {
+    const renumbered = (i + 1) * POSITION_GAP
+    if (r.position === renumbered) continue
+    const result = await picklistTable.update(r.id, { position: renumbered })
+    if (!result.ok) return result
+  }
+  return ok(null)
+}
+
+/** Mark a team Open, Picked (on another alliance) or Do not pick. It keeps its place. */
+export async function setPickStatus(id: string, status: PickStatus): Promise<Result> {
+  if (!PICK_STATUSES.includes(status)) return fail('Choose Open, Picked or Do not pick.')
+  const result = await picklistTable.update(id, { status })
+  return result.ok ? ok(null) : result
 }

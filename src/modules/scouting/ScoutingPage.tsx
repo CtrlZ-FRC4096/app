@@ -4,8 +4,14 @@ import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
 import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
 import FormSection from './FormSection'
+import MatchTeamFields from './MatchTeamFields'
+import Picklist from './Picklist'
 import PitForm from './PitForm'
+import RankingsPage from './RankingsPage'
+import Schedule from './Schedule'
 import SavedOnDevice from './SavedOnDevice'
+import SharedPicklist from './SharedPicklist'
+import TeamPage, { TeamLink } from './TeamPage'
 import { COUNTERS, ENDGAME, ROLES } from './season'
 
 /** Width and height of the − and + buttons, in pixels. Big enough to tap without looking. */
@@ -36,21 +42,36 @@ function PickMany(props: { label: string; options: string[]; value: string[]; on
   )
 }
 
-const FORMS = ['Match', 'Pit']
+const VIEWS = ['Match', 'Pit', 'Schedule', 'Rankings', 'Picklist', 'Final picklist']
+/** Each view's address after #/scouting/. */
+const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule', Rankings: 'rankings', Picklist: 'picklist', 'Final picklist': 'shared-picklist' }
 
-// A Match / Pit switch at the top. The choice is in the address, so
-// #/scouting/pit opens the pit form straight away: a menu or a bookmark can
-// link to either form. Both forms stay on the page, and the one not chosen
-// is hidden, so switching doesn't lose what's typed.
+// A Match / Pit / Schedule / Rankings / Picklist / Final picklist switch at
+// the top. The choice is in the address, so #/scouting/pit opens the pit form
+// straight away: a menu or a bookmark can link to any of them. Both forms
+// stay on the page, and the one not chosen is hidden, so switching doesn't
+// lose what's typed. The other pages are only on the page while they're
+// chosen, so they only load and update while someone's looking at them.
+//
+// #/scouting/team/9991 is the team page for team 9991 (TeamPage.tsx), with
+// both forms hidden. It's only drawn while open: it waits for the team
+// database, and the forms must work with no connection.
 export default function ScoutingPage() {
-  const form = useRoute().rest[0] === 'pit' ? 'Pit' : 'Match'
+  const [rest = '', teamText] = useRoute().rest
+  const view = rest === 'team' ? 'Team' : VIEWS.find((v) => PATHS[v] === rest) ?? 'Match'
+  const team = Number(teamText)
   return (
     <>
       <div style={{ marginBottom: 12 }}>
-        <Pick label="Which form" options={FORMS} value={form} onChange={(f) => navigate('scouting', f === 'Pit' ? 'pit' : '')} />
+        <Pick label="Which page" options={VIEWS} value={view} onChange={(v) => navigate('scouting', PATHS[v])} />
       </div>
-      <div hidden={form !== 'Match'}><MatchForm /></div>
-      <div hidden={form !== 'Pit'}><PitForm /></div>
+      <div hidden={view !== 'Match'}><MatchForm /></div>
+      <div hidden={view !== 'Pit'}><PitForm /></div>
+      {view === 'Schedule' && <Schedule />}
+      {view === 'Rankings' && <RankingsPage />}
+      {view === 'Picklist' && <Picklist />}
+      {view === 'Final picklist' && <SharedPicklist />}
+      {view === 'Team' && <TeamPage team={Number.isInteger(team) && team > 0 ? team : null} />}
     </>
   )
 }
@@ -116,16 +137,8 @@ function MatchForm() {
       <form onSubmit={save}>
         <Panel>
           <FormSection title="Match" first>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-              <label className="field" htmlFor="scout-match">
-                Match number
-                <input id="scout-match" className="input" style={{ width: '9ch', minHeight: 46, fontSize: 16 }} inputMode="numeric" value={match} onChange={(e) => setMatch(e.target.value)} placeholder="12" />
-              </label>
-              <label className="field" htmlFor="scout-team">
-                Team number
-                <input id="scout-team" className="input" style={{ width: '9ch', minHeight: 46, fontSize: 16 }} inputMode="numeric" value={team} onChange={(e) => setTeam(e.target.value)} placeholder="4096" />
-              </label>
-            </div>
+            {/* Position, match and team. The team fills in from the schedule: see MatchTeamFields.tsx. */}
+            <MatchTeamFields match={match} team={team} onMatch={setMatch} onTeam={setTeam} />
           </FormSection>
           <FormSection title="Scoring">
             {COUNTERS.map((c) => (
@@ -171,7 +184,7 @@ function MatchForm() {
         </Panel>
       </form>
       <SavedOnDevice
-        rows={entries.map((e) => ({ id: e.id, label: `Match ${e.match} · Team ${e.team}`, created_at: e.created_at, synced: e.synced }))}
+        rows={entries.map((e) => ({ id: e.id, label: <>Match {e.match} · <TeamLink team={e.team} /></>, created_at: e.created_at, synced: e.synced }))}
         emptyText="No entries yet. Fill in the form and press Save Entry."
       />
     </>

@@ -1,56 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { advanceStage, STAGES, SUBSYSTEMS, type StageState, MAX_ITEM_LENGTH, addPitItem, assignPitItem, movePitItem, reorderPitItem, renamePitItem, setPitItemSubgroup, checklistStore, setPitItemCompleted, subgroupMembersStore, setSubgroupMembers, belongsToSubgroup, pitChecklistSummary } from './data'
+import { MAX_ITEM_LENGTH, addPitItem, assignPitItem, movePitItem, reorderPitItem, renamePitItem, setPitItemSubgroup, checklistStore, setPitItemCompleted, subgroupMembersStore, setSubgroupMembers, belongsToSubgroup, pitChecklistSummary, matchMembers, nameMatches } from './data'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import { membersTable } from '../../core/members'
-
-describe('starting grid', () => {
-  it('has the six subsystems and five stages, all Not started', () => {
-    expect(SUBSYSTEMS.map((subsystem) => subsystem.name)).toEqual([
-      'Swerve drivetrain', 'Intake', 'Indexer', 'Shooter', 'Climber', 'Vision',
-    ])
-    expect(new Set(SUBSYSTEMS.map((subsystem) => subsystem.id)).size).toBe(6)
-    expect(STAGES).toEqual(['Design', 'Built', 'Wired', 'Programmed', 'Tested'])
-    for (const subsystem of SUBSYSTEMS) {
-      expect(subsystem.stages).toEqual({
-        Design: 'Not started', Built: 'Not started', Wired: 'Not started',
-        Programmed: 'Not started', Tested: 'Not started',
-      })
-    }
-  })
-})
-
-describe.each(STAGES)('advanceStage for %s', (stage) => {
-  const transitions: [StageState, StageState][] = [
-    ['Not started', 'In progress'],
-    ['In progress', 'Done'],
-    ['Done', 'Not started'],
-  ]
-
-  it.each(transitions)('advances %s to %s without changing other cells or the input', (current, next) => {
-    const subsystems = structuredClone(SUBSYSTEMS)
-    const subsystem = subsystems[0]
-    subsystem.stages[stage] = current
-    const before = structuredClone(subsystems)
-
-    const updated = advanceStage(subsystem, stage)
-
-    expect(updated).toEqual({
-      ...before[0], stages: { ...before[0].stages, [stage]: next },
-    })
-    expect(updated).not.toBe(subsystem)
-    expect(updated.stages).not.toBe(subsystem.stages)
-    expect(subsystems).toEqual(before)
-  })
-
-  it('can cycle repeatedly without changing the starting data', () => {
-    const original = structuredClone(SUBSYSTEMS[0])
-    let updated = original
-    for (let click = 0; click < 6; click += 1) {
-      updated = advanceStage(updated, stage)
-    }
-    expect(updated).toEqual(original)
-  })
-})
 
 beforeEach(() => {
   setDemoRole('student')
@@ -59,6 +10,42 @@ beforeEach(() => {
   checklistStore.reset()
 })
 afterEach(() => vi.unstubAllGlobals())
+
+describe('finding someone to assign', () => {
+  const people = [
+    { id: 'a', name: 'Alex Rivera' },
+    { id: 'b', name: 'Jordan Lee' },
+    { id: 'c', name: 'Pat Morgan' },
+  ]
+
+  it('shows everyone when the search is empty or only spaces', () => {
+    expect(matchMembers(people, '')).toEqual(people)
+    expect(matchMembers(people, '   ')).toEqual(people)
+  })
+
+  it('narrows by any part of a name, ignoring capitals and spaces at the ends', () => {
+    expect(matchMembers(people, 'lee').map((p) => p.id)).toEqual(['b'])
+    expect(matchMembers(people, ' MORG ').map((p) => p.id)).toEqual(['c'])
+    expect(matchMembers(people, 'r').map((p) => p.id)).toEqual(['a', 'b', 'c'])
+    expect(nameMatches('Alex Rivera', 'x r')).toBe(true)
+  })
+
+  it('returns no one when nobody matches', () => {
+    expect(matchMembers(people, 'zzz')).toEqual([])
+    expect(nameMatches('Alex Rivera', 'zzz')).toBe(false)
+  })
+
+  it('always keeps chosen people, in their usual order, so searching never hides an assignment', () => {
+    expect(matchMembers(people, 'lee', ['c']).map((p) => p.id)).toEqual(['b', 'c'])
+    expect(matchMembers(people, 'zzz', ['a', 'c']).map((p) => p.id)).toEqual(['a', 'c'])
+  })
+
+  it('does not change the list it was given', () => {
+    const before = structuredClone(people)
+    matchMembers(people, 'lee', ['a'])
+    expect(people).toEqual(before)
+  })
+})
 
 describe('pit checklist', () => {
   it('adds a trimmed, unchecked item after the existing items', () => {
