@@ -9,6 +9,7 @@ import {
   numberOnly, pitStore, saveEntry, savePitEntry, syncEntries, syncStatus, teamNumber, toRow, type EntryFields, type PitFields,
 } from './data'
 import { EVENT_KEY } from './season'
+import { rankOf, updatedAgo } from './data'
 
 // A filled-in pit form. Each test changes only the part it's about.
 const PIT: PitFields = {
@@ -339,5 +340,101 @@ describe('Match 13 answers', () => {
     const { data } = await withAnswer({ ok: false, error: 'Match 13 turned down the key. A mentor should check the MATCH13_KEY secret.' })
     expect(await data.getRatings()).toEqual({ ok: false, error: expect.stringMatching(/MATCH13_KEY/) })
     expect(await data.getPredictions()).toEqual({ ok: false, error: expect.stringMatching(/MATCH13_KEY/) })
+  })
+})
+
+describe('event rankings that update live', () => {
+  // A fresh copy of data.ts, with The Blue Alliance's answers made up by each
+  // test. Once they run out, it answers with the demo rankings.
+  async function withAnswers(...answers: ({ ok: true; value: unknown } | { ok: false; error: string })[]) {
+    vi.resetModules()
+    const callFunction = vi.fn(async (_name: string, _body: unknown, demo: () => unknown) => answers.shift() ?? { ok: true, value: demo() })
+    vi.doMock('../../core/functions', () => ({ callFunction }))
+    return { data: await import('./data'), callFunction }
+  }
+  afterEach(() => {
+    vi.doUnmock('../../core/functions')
+    vi.resetModules()
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('keeps the rankings on this device, with when they came', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-07T15:00:00Z') })
+    const { data } = await withAnswers()
+    const result = await data.refreshRankings()
+    if (!result.ok) throw new Error(result.error)
+    expect(data.rankingsStore.get()).toEqual({ event: EVENT_KEY, rankings: result.value.rankings, checked_at: '2026-11-07T15:00:00.000Z' })
+    expect(result.value.rankings[0]).toMatchObject({ rank: 1, extra_stats: [expect.any(Number)] })
+    expect(data.rankingsStatus.get()).toEqual({ checking: false, problem: null })
+  })
+
+  it('keeps showing the last rankings with no connection, and says why they are old', async () => {
+    const { data, callFunction } = await withAnswers()
+    await data.refreshRankings()
+    const before = data.rankingsStore.get()
+    vi.stubGlobal('navigator', { onLine: false })
+    expect(await data.refreshRankings()).toEqual({ ok: false, error: expect.stringMatching(/No connection/) })
+    expect(callFunction).toHaveBeenCalledTimes(1)
+    expect(data.rankingsStore.get()).toBe(before)
+    expect(data.rankingsStatus.get().problem).toMatch(/No connection/)
+  })
+
+  it('keeps the last rankings when The Blue Alliance has a problem', async () => {
+    const { data } = await withAnswers({ ok: true, value: { rankings: [] } }, { ok: false, error: 'The Blue Alliance had a problem (500). Try again in a minute.' })
+    await data.refreshRankings()
+    const before = data.rankingsStore.get()
+    expect(await data.refreshRankings()).toMatchObject({ ok: false })
+    expect(data.rankingsStore.get()).toBe(before)
+    expect(data.rankingsStatus.get().problem).toMatch(/Try again in a minute/)
+  })
+
+  it('checks now, every minute, when the app comes back on screen and when the phone comes back online, until stopped', async () => {
+    vi.useFakeTimers()
+    // Stand-ins for the browser's window and document, which the tests don't have.
+    const window = new EventTarget()
+    const document = Object.assign(new EventTarget(), { visibilityState: 'visible' })
+    vi.stubGlobal('addEventListener', window.addEventListener.bind(window))
+    vi.stubGlobal('removeEventListener', window.removeEventListener.bind(window))
+    vi.stubGlobal('document', document)
+    const { data, callFunction } = await withAnswers()
+
+    const stop = data.watchRankings()
+    expect(callFunction).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(data.RANKINGS_EVERY_MS)
+    expect(callFunction).toHaveBeenCalledTimes(2)
+    document.dispatchEvent(new Event('visibilitychange'))
+    window.dispatchEvent(new Event('online'))
+    expect(callFunction).toHaveBeenCalledTimes(4)
+
+    // Not every minute while the app is off screen: it checks when it comes back.
+    document.visibilityState = 'hidden'
+    await vi.advanceTimersByTimeAsync(data.RANKINGS_EVERY_MS)
+    expect(callFunction).toHaveBeenCalledTimes(4)
+
+    stop()
+    document.visibilityState = 'visible'
+    document.dispatchEvent(new Event('visibilitychange'))
+    window.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(data.RANKINGS_EVERY_MS)
+    expect(callFunction).toHaveBeenCalledTimes(4)
+  })
+
+  it('finds one team in the rankings', async () => {
+    const result = await getRankings()
+    if (!result.ok) throw new Error(result.error)
+    expect(rankOf(result.value, 4096)).toMatchObject({ team_key: 'frc4096', rank: expect.any(Number) })
+    expect(rankOf(result.value, 1234)).toBeNull()
+  })
+
+  it('says how long ago they were updated', () => {
+    // Midday in London, so it's Nov 7 in every time zone the tests might run in.
+    const at = '2026-11-07T12:00:00Z'
+    const later = (minutes: number) => new Date(at).getTime() + minutes * 60_000
+    expect(updatedAgo(at, later(0.5))).toBe('Updated just now')
+    expect(updatedAgo(at, later(1))).toBe('Updated 1 minute ago')
+    expect(updatedAgo(at, later(2))).toBe('Updated 2 minutes ago')
+    expect(updatedAgo(at, later(150))).toBe('Updated 2 hours ago')
+    expect(updatedAgo(at, later(3 * 24 * 60))).toBe('Updated Nov 7')
   })
 })

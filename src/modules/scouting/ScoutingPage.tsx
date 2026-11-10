@@ -6,6 +6,7 @@ import { PageHead, Panel, Pick, Pill } from '../../core/ui'
 import { DRIVER_SKILLS, STOPS, saveEntry, syncEntries, useEntries, useSyncStatus, type Stop } from './data'
 import FormSection from './FormSection'
 import PitForm from './PitForm'
+import RankingsPage from './RankingsPage'
 import { COUNTERS, ENDGAME, ROLES } from './season'
 
 /** Width and height of the − and + buttons, in pixels. Big enough to tap without looking. */
@@ -43,14 +44,21 @@ const FORMS = ['Match', 'Pit']
 // link to either form. Both forms stay on the page, and the one not chosen
 // is hidden, so switching doesn't lose what's typed.
 export default function ScoutingPage() {
-  const form = useRoute().rest[0] === 'pit' ? 'Pit' : 'Match'
+  const view = useRoute().rest[0]
+  // #/scouting/rankings shows the event's rankings instead of a form. The
+  // forms stay hidden on the page, so a trip to the rankings doesn't lose
+  // what's typed. The rankings are only on the page while they're shown,
+  // so they don't keep checking for new ones behind a form.
+  const rankings = view === 'rankings'
+  const form = view === 'pit' ? 'Pit' : 'Match'
   return (
     <>
-      <div style={{ marginBottom: 12 }}>
+      <div style={{ marginBottom: 12 }} hidden={rankings}>
         <Pick label="Which form" options={FORMS} value={form} onChange={(f) => navigate('scouting', f === 'Pit' ? 'pit' : '')} />
       </div>
-      <div hidden={form !== 'Match'}><MatchForm /></div>
-      <div hidden={form !== 'Pit'}><PitForm /></div>
+      <div hidden={rankings || form !== 'Match'}><MatchForm /></div>
+      <div hidden={rankings || form !== 'Pit'}><PitForm /></div>
+      {rankings && <RankingsPage />}
     </>
   )
 }
