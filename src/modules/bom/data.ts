@@ -217,6 +217,56 @@ export function nextPartNumber(system: BomSystem, parts: Part[]): string {
 }
 
 // ---------------------------------------------------------------------------
+// Recognizing bought parts by their vendor's part number (#20).
+
+/** A vendor's part number found on a part. */
+export interface CotsMatch {
+  /** Named the way Purchasing names vendors, where it has them. */
+  vendor: string
+  /** Written the way the vendor writes it, like WCP-0123 or am-1234. */
+  vendor_part_number: string
+}
+
+// How each vendor writes its part numbers. To add a vendor, add a line here
+// and a test in data.test.ts, and check it against real parts in the team's CAD.
+const COTS_PATTERNS: { vendor: string; pattern: RegExp; tidy: (found: string) => string }[] = [
+  // WCP-0123
+  { vendor: 'West Coast Products', pattern: /WCP-\d{4}/i, tidy: (found) => found.toUpperCase() },
+  // am-1234, sometimes with a letter after: am-2161a
+  { vendor: 'Andy Mark', pattern: /am-\d{4}[a-z]?/i, tidy: (found) => found.toLowerCase() },
+  // REV-21-1650
+  { vendor: 'REV Robotics', pattern: /REV-\d{2}-\d{4}/i, tidy: (found) => found.toUpperCase() },
+  // 217-1234 (VEXpro) and 276-1234 (VEX)
+  { vendor: 'VEX', pattern: /(?:217|276)-\d{4}/, tidy: (found) => found },
+]
+
+/** The vendor's number in `text`, standing on its own: not inside a longer word or number like "team-1234" or "REV-21-16501". */
+function findCots(text: string): CotsMatch | null {
+  for (const { vendor, pattern, tidy } of COTS_PATTERNS) {
+    const found = new RegExp(`(?<![A-Za-z0-9-])${pattern.source}(?![A-Za-z0-9]|-\\d)`, pattern.flags).exec(text)
+    if (found) return { vendor, vendor_part_number: tidy(found[0]) }
+  }
+  return null
+}
+
+/**
+ * Is this a bought part? Looks for a vendor's part number in the part
+ * number, then in the name ("WCP-0123 Hex bearing"), and gives the vendor
+ * and the number, or null for a part we make. A part with one of our own
+ * numbers, like 4096-26-INT-001, is never bought, whatever its name says.
+ *
+ * It's a guess from how the number is written: it doesn't know if the
+ * vendor really sells that number. A custom part named after the bought
+ * part it fits ("Spacer for am-1234") would be taken for bought, so the
+ * import shows what it found before anything is saved.
+ */
+export function identifyCots(line: { part_number: string | null; name: string }): CotsMatch | null {
+  const number = line.part_number?.trim() ?? ''
+  if (number.startsWith('4096-')) return null
+  return findCots(number) ?? findCots(line.name)
+}
+
+// ---------------------------------------------------------------------------
 // Stock on the shelf, from Inventory.
 
 /** How a part number is compared: without capitals or spaces, so "rev-11-1850" and "REV-11-1850" match. */
@@ -796,6 +846,67 @@ export function stationQueue(parts: Part[], steps: Step[], station: Station): { 
       return { part, steps: waiting }
     })
     .filter((q) => station.kind === 'all' || q.steps.length > 0)
+}
+
+// ---------------------------------------------------------------------------
+// Files for the machines (#23): which kind of file each machine needs, and
+// what to call it. Getting the file itself from Onshape isn't built yet: it
+// goes through the onshape server function, which a mentor sets up.
+
+export type FileFormat = 'step' | 'stl' | '3mf' | 'dxf'
+export const FILE_FORMAT_NAMES: Record<FileFormat, string> = { step: 'STEP', stl: 'STL', '3mf': '3MF', dxf: 'DXF' }
+
+/**
+ * The kinds of file a machine can use, the usual one first. STEP is the
+ * solid shape, for CAM; STL and 3MF are for the 3D printer's slicer; DXF is
+ * a flat face's outline, for cutting from sheet. Hand tools need no file.
+ */
+export const MACHINE_FILE_FORMATS: Record<Machine, FileFormat[]> = {
+  cnc_router: ['dxf', 'step'],
+  lathe: ['step'],
+  mill: ['step'],
+  '3d_printer': ['stl', '3mf'],
+  laser: ['dxf'],
+  hand_tools: [],
+}
+
+/**
+ * What a part's file is called: its part number and revision, like
+ * 4096-26-INT-014_revB.step. Anything a file name can't have, such as a
+ * slash or a space, becomes a dash.
+ */
+export function partFileName(part: Pick<Part, 'part_number' | 'revision'>, format: FileFormat): string {
+  const safe = (text: string) => text.trim().replace(/[^A-Za-z0-9._-]+/g, '-')
+  const revision = part.revision?.trim() ? `_rev${safe(part.revision)}` : ''
+  return `${safe(part.part_number)}${revision}.${format}`
+}
+
+/** One file a part's machines need. */
+export interface PartFile {
+  format: FileFormat
+  /** Like 4096-26-INT-014_revB.step. */
+  name: string
+  /** The machines it's for, in the order of the part's stages. */
+  machines: Machine[]
+}
+
+/**
+ * The files a part needs for the machines in its stages, each kind once.
+ * `steps` are the part's stages. With `machine`, only that machine's files,
+ * for its queue. A machine's usual kind of file is used, so a 3D printed
+ * part gets an STL. Empty for parts with no machine stages.
+ */
+export function partFiles(part: Part, steps: Step[], machine?: Machine): PartFile[] {
+  const files: PartFile[] = []
+  for (const step of steps) {
+    if (!step.machine || (machine && step.machine !== machine)) continue
+    const format = MACHINE_FILE_FORMATS[step.machine][0]
+    if (!format) continue
+    const file = files.find((f) => f.format === format)
+    if (!file) files.push({ format, name: partFileName(part, format), machines: [step.machine] })
+    else if (!file.machines.includes(step.machine)) file.machines.push(step.machine)
+  }
+  return files
 }
 
 // ---------------------------------------------------------------------------

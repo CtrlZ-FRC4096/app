@@ -6,7 +6,7 @@ import { resetAllStores } from '../../core/store'
 import { DEMO_PEOPLE } from '../../core/demo'
 import {
   MAX_NOTES_LENGTH, blankOrNumber, checkEntry, checkPitEntry, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
-  numberOnly, pitStore, saveEntry, savePitEntry, syncEntries, syncStatus, teamNumber, toRow, type EntryFields, type PitFields,
+  MAX_PIT_NUMBER, numberOnly, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, syncEntries, syncStatus, teamNumber, toRow, type EntryFields, type PitFields,
 } from './data'
 import { loadSchedule, positionStore, scheduleStore, setPosition, teamFor, type SavedSchedule, type TbaMatch } from './data'
 import { EVENT_KEY } from './season'
@@ -167,6 +167,8 @@ describe('syncing to the team database', () => {
     await syncEntries()
     entryStore.reset()
     entriesTable.reset()
+    pitStore.reset()
+    pitTable.reset()
     syncStatus.reset()
   })
 
@@ -245,6 +247,96 @@ describe('syncing to the team database', () => {
     if (!saved.ok) throw new Error(saved.error)
     const { event_key: _old, ...older } = saved.value
     expect(toRow(older).event_key).toBe(EVENT_KEY)
+  })
+})
+
+describe('checkPitEntry and the team database', () => {
+  it("refuses what the team database would refuse, so a pit entry can't get stuck Waiting", () => {
+    expect(checkPitEntry({ ...PIT, team: 100000 })).toMatch(/team number/)
+    expect(checkPitEntry({ ...PIT, match: 1001 })).toMatch(/match number/)
+    expect(checkPitEntry({ ...PIT, weight: MAX_PIT_NUMBER })).toMatch(/weight/)
+    expect(checkPitEntry({ ...PIT, they_do: 'x'.repeat(MAX_NOTES_LENGTH + 1) })).toMatch(/under 1000/)
+    expect(checkPitEntry({ ...PIT, motors: 'x'.repeat(MAX_NOTES_LENGTH) })).toBeNull()
+  })
+})
+
+describe('syncing pit entries', () => {
+  beforeEach(async () => {
+    await syncEntries()
+    entryStore.reset()
+    entriesTable.reset()
+    pitStore.reset()
+    pitTable.reset()
+    syncStatus.reset()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const sent = (id: string) => pitTable.rows().filter((row) => row.id === id)
+
+  it('sends Waiting pit entries, then marks them Synced', async () => {
+    const saved = savePitEntry(PIT)
+    if (!saved.ok) throw new Error(saved.error)
+    await syncEntries()
+    expect(pitStore.get()[0].synced).toBe(true)
+    expect(sent(saved.value.id)).toEqual([
+      expect.objectContaining({
+        event_key: EVENT_KEY,
+        team_number: 9992,
+        match_number: null,
+        drivetrain: 'Swerve',
+        weight: 115.5,
+        height: 36,
+        motors: '4 drive motors, 2 on the shooter',
+        auto_side: 'Left',
+        partners_do: 'Play defense',
+        scouted_by: DEMO_PEOPLE.alex,
+        scouted_at: saved.value.created_at,
+      }),
+    ])
+  })
+
+  it('sends match and pit entries together', async () => {
+    saveEntry(FORM)
+    savePitEntry(PIT)
+    await syncEntries()
+    expect([...entryStore.get(), ...pitStore.get()].every((e) => e.synced)).toBe(true)
+  })
+
+  it('never sends a pit entry twice, even if the phone sends it again', async () => {
+    const saved = savePitEntry(PIT)
+    if (!saved.ok) throw new Error(saved.error)
+    await syncEntries()
+    pitStore.set((entries) => entries.map((e) => ({ ...e, synced: false })))
+    await syncEntries()
+    expect(sent(saved.value.id)).toHaveLength(1)
+  })
+
+  it('keeps every visit to a team', async () => {
+    const first = savePitEntry({ ...PIT, drivetrain: 'Tank' })
+    const second = savePitEntry(PIT)
+    if (!first.ok || !second.ok) throw new Error('not saved')
+    await syncEntries()
+    expect([...sent(first.value.id), ...sent(second.value.id)].map((row) => [row.team_number, row.drivetrain])).toEqual([[9992, 'Tank'], [9992, 'Swerve']])
+  })
+
+  it('keeps pit entries Waiting with no connection, then sends them once it is back', async () => {
+    vi.stubGlobal('navigator', { onLine: false })
+    savePitEntry(PIT)
+    expect((await syncEntries()).ok).toBe(false)
+    expect(pitStore.get()[0].synced).toBe(false)
+    vi.stubGlobal('navigator', { onLine: true })
+    expect(await syncEntries()).toEqual({ ok: true, value: 1 })
+    expect(pitStore.get()[0].synced).toBe(true)
+  })
+
+  it('sends blank choices and boxes as empty, and an entry saved before events were recorded with the current event', () => {
+    const saved = savePitEntry({ ...PIT, drivetrain: '', auto_side: '', motors: '  ', weight: null })
+    if (!saved.ok) throw new Error(saved.error)
+    const { event_key: _old, ...older } = saved.value
+    expect(pitToRow(older)).toMatchObject({ event_key: EVENT_KEY, drivetrain: null, auto_side: null, motors: null, weight: null })
   })
 })
 
