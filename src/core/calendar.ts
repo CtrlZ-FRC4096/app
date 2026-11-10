@@ -6,16 +6,22 @@
  * (supabase/functions/calendar/), which holds the Google key:
  *
  *   - getCalendarEvents(): events between two times. Anyone on the team.
- *   - addCalendarEvent(), changeCalendarEvent(), removeCalendarEvent():
- *     mentors only. The app only changes and removes events it added
- *     itself (event.fromApp), never ones people made in Google Calendar.
+ *   - addCalendarEvent(): anyone on the team.
+ *   - changeCalendarEvent(), removeCalendarEvent(): the person who added
+ *     the event, or a mentor (canChangeEvent()). The app only changes and
+ *     removes events it added itself (event.fromApp), never ones people
+ *     made in Google Calendar.
+ *
+ * The server function checks all of this too: these checks are so the
+ * page can say what's wrong without asking it.
  *
  * In demo mode it uses made-up events instead, and adding, changing and
  * removing only change the demo, until the page reloads.
  */
+import { DEMO_PEOPLE } from './demo'
 import { callFunction } from './functions'
 import { isMentor } from './roles'
-import { currentUser } from './session'
+import { currentUser, type User } from './session'
 import { fail, ok, type Result } from './table'
 
 /** The team's time zone: event times are shown in it. */
@@ -37,6 +43,10 @@ export interface CalendarEvent {
   url: string | null
   /** Added by the app, so the app can change or remove it. */
   fromApp: boolean
+  /** The member id of who added it from the app, or null. */
+  addedBy: string | null
+  /** People sign up for it in the app. */
+  signUps: boolean
 }
 
 /** A new or changed event. */
@@ -49,6 +59,8 @@ export interface EventInput {
   allDay: boolean
   location?: string | null
   description?: string | null
+  /** People sign up for it in the app. */
+  signUps?: boolean
 }
 
 /** The longest each part of an event can be. The server function allows the same. */
@@ -85,6 +97,7 @@ function cleaned(event: EventInput): EventInput {
     allDay: event.allDay,
     location: event.location?.trim() || null,
     description: event.description?.trim() || null,
+    signUps: event.signUps === true,
   }
 }
 
@@ -96,43 +109,50 @@ export async function getCalendarEvents(from: Date = new Date(), to: Date = new 
   return answer.ok ? ok(answer.value.events) : answer
 }
 
-function mentorsOnly(): string | null {
-  const me = currentUser()
-  return me && isMentor(me.role) ? null : 'Only mentors can change the team calendar.'
+/** Whether `user` can change or remove this event: one the app added, and theirs unless they're a mentor. */
+export function canChangeEvent(event: CalendarEvent, user: Pick<User, 'id' | 'role'>): boolean {
+  return event.fromApp && (isMentor(user.role) || event.addedBy === user.id)
 }
 
-const ONLY_APP_EVENTS = 'The app only changes events it added. Change this one in Google Calendar.'
+/** Why the signed-in person can't change or remove this event, or null if they can. The server function says the same. */
+function whyNotChange(event: CalendarEvent): string | null {
+  const me = currentUser()
+  if (!me) return 'Sign in first.'
+  if (!event.fromApp) return 'The app only changes events it added. Change this one in Google Calendar.'
+  return canChangeEvent(event, me) ? null : 'Only the person who added this event, or a mentor, can change or remove it.'
+}
 
-/** Add an event to the team calendar. Mentors only. */
+/** Add an event to the team calendar. Anyone on the team. */
 export async function addCalendarEvent(event: EventInput): Promise<Result<CalendarEvent>> {
-  const problem = mentorsOnly() ?? checkEvent(event)
+  const me = currentUser()
+  const problem = (me ? null : 'Sign in first.') ?? checkEvent(event)
   if (problem) return fail(problem)
   const answer = await callFunction<{ event: CalendarEvent }>('calendar', { kind: 'add', event: cleaned(event) }, () => {
-    const added = { ...cleaned(event), id: `demo-added-${demoAdded.length + 1}`, url: null, fromApp: true } as CalendarEvent
+    const added = { ...cleaned(event), id: `demo-added-${demoAdded.length + 1}`, url: null, fromApp: true, addedBy: me?.id ?? null } as CalendarEvent
     demoAdded.push(added)
     return { event: added }
   })
   return answer.ok ? ok(answer.value.event) : answer
 }
 
-/** Change an event the app added. Mentors only. */
+/** Change an event the app added. The person who added it, or a mentor. */
 export async function changeCalendarEvent(event: CalendarEvent, changes: EventInput): Promise<Result<CalendarEvent>> {
-  const problem = mentorsOnly() ?? (event.fromApp ? null : ONLY_APP_EVENTS) ?? checkEvent(changes)
+  const problem = whyNotChange(event) ?? checkEvent(changes)
   if (problem) return fail(problem)
   const answer = await callFunction<{ event: CalendarEvent }>('calendar', { kind: 'change', id: event.id, event: cleaned(changes) }, () => {
     const changed = { ...event, ...cleaned(changes) } as CalendarEvent
-    demoAdded = demoAdded.map((e) => (e.id === event.id ? changed : e))
+    demoChanged.set(event.id, changed)
     return { event: changed }
   })
   return answer.ok ? ok(answer.value.event) : answer
 }
 
-/** Remove an event the app added. Mentors only. */
+/** Remove an event the app added. The person who added it, or a mentor. */
 export async function removeCalendarEvent(event: CalendarEvent): Promise<Result> {
-  const problem = mentorsOnly() ?? (event.fromApp ? null : ONLY_APP_EVENTS)
+  const problem = whyNotChange(event)
   if (problem) return fail(problem)
   const answer = await callFunction('calendar', { kind: 'remove', id: event.id }, () => {
-    demoAdded = demoAdded.filter((e) => e.id !== event.id)
+    demoChanged.set(event.id, null)
     return { removed: true }
   })
   return answer.ok ? ok(null) : answer
@@ -151,13 +171,17 @@ export function eventTime(event: CalendarEvent): string {
 
 // ---------------------------------------------------------------------------
 // Demo mode: made-up events, the same every week. Build sessions on Tuesday
-// and Thursday evenings and Saturdays, an outreach night, and a competition.
+// and Thursday evenings and Saturdays, an outreach night that people sign
+// up for in the app, and a competition with a sign-up link.
 
 let demoAdded: CalendarEvent[] = []
+/** Demo events changed in demo mode, or null for removed ones. */
+let demoChanged = new Map<string, CalendarEvent | null>()
 
-/** For tests: forget events added in demo mode. */
+/** For tests: forget events added, changed and removed in demo mode. */
 export function resetDemoCalendar() {
   demoAdded = []
+  demoChanged = new Map()
 }
 
 /** A time in Chicago on `day`, like 2026-11-03T18:00:00-06:00. */
@@ -173,7 +197,7 @@ const addDays = (day: string, days: number) => new Date(Date.parse(`${day}T00:00
 
 function demoEvents(from: Date, to: Date): CalendarEvent[] {
   const made = (id: string, more: Partial<CalendarEvent>): CalendarEvent => ({
-    id, title: '', start: '', end: '', allDay: false, location: null, description: null, url: null, fromApp: false, ...more,
+    id, title: '', start: '', end: '', allDay: false, location: null, description: null, url: null, fromApp: false, addedBy: null, signUps: false, ...more,
   })
   const events: CalendarEvent[] = []
   const firstDay = new Intl.DateTimeFormat('en-CA', { timeZone: TEAM_TIME_ZONE }).format(from)
@@ -191,16 +215,26 @@ function demoEvents(from: Date, to: Date): CalendarEvent[] {
     }
     if (weekday === 5 && i >= 7 && !outreach) {
       outreach = true
-      events.push(made(`demo-${day}-outreach`, { title: 'Outreach: robot demo at the library', start: chicagoTime(day, 18), end: chicagoTime(day, 20), location: 'Example Public Library' }))
+      // Added from the app by Pat, a made-up mentor, so it can take sign-ups in the app.
+      // Its id doesn't have the day in it, so the example sign-ups in src/modules/calendar/data.ts find it.
+      events.push(made('demo-outreach', {
+        title: 'Outreach: robot demo at the library', start: chicagoTime(day, 18), end: chicagoTime(day, 20), location: 'Example Public Library',
+        fromApp: true, addedBy: DEMO_PEOPLE.pat, signUps: true,
+      }))
     }
     if (weekday === 5 && i >= 21 && !competition) {
       competition = true
-      events.push(made(`demo-${day}-competition`, { title: 'Example Regional (made up)', start: day, end: addDays(day, 2), allDay: true, description: 'Leave from school at 6 AM.' }))
+      events.push(made(`demo-${day}-competition`, {
+        title: 'Example Regional (made up)', start: day, end: addDays(day, 2), allDay: true,
+        description: 'Leave from school at 6 AM.\nSign up: https://example.com/regional-sign-up',
+      }))
     }
   }
   const startOf = (e: CalendarEvent) => Date.parse(e.allDay ? `${e.start}T00:00:00-06:00` : e.start)
   const endOf = (e: CalendarEvent) => (e.allDay ? Date.parse(`${addDays(e.end, 1)}T00:00:00-06:00`) : Date.parse(e.end))
   return [...events, ...demoAdded]
+    .map((e) => (demoChanged.has(e.id) ? demoChanged.get(e.id) : e))
+    .filter((e): e is CalendarEvent => !!e)
     .filter((e) => startOf(e) < to.getTime() && endOf(e) > from.getTime())
     .sort((a, b) => startOf(a) - startOf(b))
 }

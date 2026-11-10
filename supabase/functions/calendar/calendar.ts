@@ -10,9 +10,11 @@
  *
  *   - check: which calendar it is, and whether the app may add events
  *   - events: the events between two times (anyone on the team)
- *   - add, change, remove: mentors only. The app only changes and removes
- *     events it added itself, so it can't wreck ones people made in
- *     Google Calendar.
+ *   - add: anyone on the team. The app marks the event as its own, with
+ *     who added it, and whether people sign up for it in the app.
+ *   - change, remove: the person who added the event, or a mentor. The app
+ *     only changes and removes events it added itself, so it can't wreck
+ *     ones people made in Google Calendar.
  */
 
 export const CALENDAR_API = 'https://www.googleapis.com/calendar/v3'
@@ -23,6 +25,10 @@ export const TEAM_TIME_ZONE = 'America/Chicago'
 
 /** The mark (a private extended property) on events the app adds, so it knows they're its own. */
 const APP_MARK = 'teamApp'
+/** Who added an event from the app: their member id. Also a private extended property. */
+const ADDED_BY = 'teamAppAddedBy'
+/** On events people sign up for in the app. */
+const SIGN_UPS = 'teamAppSignUps'
 
 /** One event, as the app sees it. The same shape is in src/core/calendar.ts. */
 export interface CalendarEvent {
@@ -39,6 +45,10 @@ export interface CalendarEvent {
   url: string | null
   /** Added by the app, so the app can change or remove it. */
   fromApp: boolean
+  /** The member id of who added it from the app, or null. */
+  addedBy: string | null
+  /** People sign up for it in the app. */
+  signUps: boolean
 }
 
 /** A new or changed event, from the app. */
@@ -51,6 +61,8 @@ export interface EventInput {
   allDay: boolean
   location: string | null
   description: string | null
+  /** People sign up for it in the app. */
+  signUps: boolean
 }
 
 export type CalendarRequest =
@@ -83,6 +95,7 @@ export function eventInput(value: unknown): EventInput | { error: string } {
   const start = text(e.start)
   const end = text(e.end)
   const allDay = e.allDay === true
+  const signUps = e.signUps === true
 
   if (!title) return { error: 'Give the event a title.' }
   if (title.length > LIMITS.title) return { error: `Keep the title under ${LIMITS.title} characters.` }
@@ -99,11 +112,15 @@ export function eventInput(value: unknown): EventInput | { error: string } {
     if (Date.parse(end) <= Date.parse(start)) return { error: 'The event ends before it starts.' }
     if (Date.parse(end) - Date.parse(start) > 31 * DAY_MS) return { error: 'Keep events to a month or less.' }
   }
-  return { title, start, end, allDay, location, description }
+  return { title, start, end, allDay, location, description, signUps }
 }
 
-/** What the app asked for, or why it isn't allowed. */
-export function calendarRequest(body: unknown, role: string, now = Date.now()): CalendarRequest | { error: string; status: number } {
+/**
+ * What the app asked for, or why it isn't allowed. Anyone on the team can
+ * ask for any of these; whether they may change or remove a particular
+ * event is checked with mayChange(), once the event has been looked up.
+ */
+export function calendarRequest(body: unknown, now = Date.now()): CalendarRequest | { error: string; status: number } {
   const r = (body ?? {}) as Record<string, unknown>
   if (r.kind === 'check') return { kind: 'check' }
   if (r.kind === 'events') {
@@ -117,7 +134,6 @@ export function calendarRequest(body: unknown, role: string, now = Date.now()): 
   if (r.kind !== 'add' && r.kind !== 'change' && r.kind !== 'remove') {
     return { error: 'Ask for events, to add, change or remove one, or to check.', status: 400 }
   }
-  if (role !== 'mentor' && role !== 'admin') return { error: 'Only mentors can change the team calendar.', status: 403 }
   if (r.kind !== 'add' && !(typeof r.id === 'string' && EVENT_ID.test(r.id))) return { error: "That isn't an event ID.", status: 400 }
   if (r.kind === 'remove') return { kind: 'remove', id: r.id as string }
   const event = eventInput(r.event)
@@ -138,21 +154,38 @@ export interface GoogleEvent {
   extendedProperties?: { private?: Record<string, string> }
 }
 
-/** The event as Google Calendar wants it, marked as the app's. Google's all-day end is the day after the last. */
-export function toGoogle(event: EventInput): GoogleEvent & Record<string, unknown> {
+/**
+ * The event as Google Calendar wants it, marked as the app's, with who
+ * added it. Google's all-day end is the day after the last.
+ */
+export function toGoogle(event: EventInput, addedBy: string | null): GoogleEvent & Record<string, unknown> {
   return {
     summary: event.title,
     location: event.location ?? '',
     description: event.description ?? '',
     start: event.allDay ? { date: event.start } : { dateTime: event.start, timeZone: TEAM_TIME_ZONE },
     end: event.allDay ? { date: addDays(event.end, 1) } : { dateTime: event.end, timeZone: TEAM_TIME_ZONE },
-    extendedProperties: { private: { [APP_MARK]: 'yes' } },
+    extendedProperties: {
+      private: { [APP_MARK]: 'yes', ...(addedBy ? { [ADDED_BY]: addedBy } : {}), ...(event.signUps ? { [SIGN_UPS]: 'yes' } : {}) },
+    },
   }
 }
 
 /** Did the app add this event? */
 export function isAppEvent(item: GoogleEvent): boolean {
   return item.extendedProperties?.private?.[APP_MARK] === 'yes'
+}
+
+/** The member id of who added this event from the app, or null (events added before the app kept track, or made in Google Calendar). */
+export function addedBy(item: GoogleEvent): string | null {
+  return (isAppEvent(item) && item.extendedProperties?.private?.[ADDED_BY]) || null
+}
+
+/** Why `member` can't change or remove this event, or null if they can: it has to be one the app added, and theirs unless they're a mentor. */
+export function mayChange(item: GoogleEvent, member: { id: string; role: string }): string | null {
+  if (!isAppEvent(item)) return 'The app only changes events it added. Change this one in Google Calendar.'
+  if (member.role === 'mentor' || member.role === 'admin') return null
+  return addedBy(item) === member.id ? null : 'Only the person who added this event, or a mentor, can change or remove it.'
 }
 
 /** An event from Google Calendar, for the app, or null if it was cancelled. */
@@ -171,6 +204,8 @@ export function fromGoogle(item: GoogleEvent): CalendarEvent | null {
     description: item.description?.trim() || null,
     url: item.htmlLink ?? null,
     fromApp: isAppEvent(item),
+    addedBy: addedBy(item),
+    signUps: isAppEvent(item) && item.extendedProperties?.private?.[SIGN_UPS] === 'yes',
   }
 }
 
