@@ -2,8 +2,8 @@ import { useState, type FormEvent } from 'react'
 import { shortDate } from '../../core/format'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick, Pill } from '../../core/ui'
-import { saveEntry, useEntries } from './data'
-import { COUNTERS, ENDGAME } from './season'
+import { DRIVER_SKILLS, STOPS, saveEntry, syncEntries, useEntries, useSyncStatus, type Stop } from './data'
+import { COUNTERS, ENDGAME, ROLES } from './season'
 
 /** Width and height of the − and + buttons, in pixels. Big enough to tap without looking. */
 const TAP_SIZE = 60
@@ -13,16 +13,43 @@ function zeroCounts(): Record<string, number> {
   return Object.fromEntries(COUNTERS.map((c) => [c.key, 0]))
 }
 
+/**
+ * A row of buttons where any number can be chosen, like <Pick> but for
+ * more than one. It uses Pick's look, so the form looks like one thing.
+ */
+function PickMany(props: { label: string; options: string[]; value: string[]; onChange: (value: string[]) => void }) {
+  function toggle(option: string) {
+    const chosen = props.value.includes(option)
+    props.onChange(chosen ? props.value.filter((o) => o !== option) : [...props.value, option])
+  }
+  return (
+    <div className="pick" role="group" aria-label={props.label}>
+      {props.options.map((option) => (
+        <button key={option} type="button" aria-pressed={props.value.includes(option)} onClick={() => toggle(option)}>
+          {option}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // The form for one robot in one match. Every field comes from season.ts,
 // so a new game means new settings, not a new page. Saving goes through
-// saveEntry() in data.ts, which keeps the entry on this device.
+// saveEntry() in data.ts, which keeps the entry on this device and sends it
+// to the team database whenever there's a connection.
 export default function ScoutingPage() {
   const entries = useEntries()
+  const sync = useSyncStatus()
+  const waiting = entries.filter((e) => !e.synced).length
   const [match, setMatch] = useState('')
   const [team, setTeam] = useState('')
   const [counts, setCounts] = useState(zeroCounts)
   const [endgame, setEndgame] = useState(ENDGAME[0])
-  const [defense, setDefense] = useState(false)
+  const [roles, setRoles] = useState<string[]>([])
+  const [brokeDown, setBrokeDown] = useState(false)
+  const [stop, setStop] = useState<Stop>('None')
+  // 0 until the scout chooses, so no button is pressed and Save asks for one.
+  const [driverSkill, setDriverSkill] = useState(0)
   const [notes, setNotes] = useState('')
 
   function change(key: string, by: number) {
@@ -31,7 +58,17 @@ export default function ScoutingPage() {
 
   function save(event: FormEvent) {
     event.preventDefault()
-    const result = saveEntry({ match: Number(match), team: Number(team), counts, endgame, defense, notes })
+    const result = saveEntry({
+      match: Number(match),
+      team: Number(team),
+      counts,
+      endgame,
+      roles,
+      broke_down: brokeDown,
+      stop,
+      driver_skill: driverSkill,
+      notes,
+    })
     if (!result.ok) {
       toast(result.error)
       return
@@ -41,9 +78,18 @@ export default function ScoutingPage() {
     setTeam('')
     setCounts(zeroCounts())
     setEndgame(ENDGAME[0])
-    setDefense(false)
+    setRoles([])
+    setBrokeDown(false)
+    setStop('None')
+    setDriverSkill(0)
     setNotes('')
     toast(`Saved match ${result.value.match}, team ${result.value.team}.`)
+  }
+
+  async function sendNow() {
+    const result = await syncEntries()
+    if (!result.ok) toast(result.error)
+    else toast(result.value === 0 ? 'Everything on this phone is sent.' : `Sent ${result.value === 1 ? '1 entry' : `${result.value} entries`} to the team.`)
   }
 
   const tap = { width: TAP_SIZE, minHeight: TAP_SIZE, padding: 0, fontSize: 24 }
@@ -80,16 +126,33 @@ export default function ScoutingPage() {
             ))}
           </div>
         </Panel>
+        <Panel title="How it went">
+          <div className="panel-body">
+            <div className="field">
+              Role (choose all that fit)
+              <PickMany label="Role" options={ROLES} value={roles} onChange={setRoles} />
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 44 }}>
+              <input type="checkbox" style={{ width: 24, height: 24 }} checked={brokeDown} onChange={(e) => setBrokeDown(e.target.checked)} />
+              Broke down (stopped working or lost a mechanism)
+            </label>
+            <div className="field">
+              E-stop or A-stop
+              <Pick label="E-stop or A-stop" options={[...STOPS]} value={stop} onChange={setStop} />
+            </div>
+            <div className="field">
+              Driver skill
+              <Pick label="Driver skill" options={DRIVER_SKILLS} value={driverSkill} onChange={setDriverSkill} />
+              <span className="note">1: struggles to drive, 5: smooth and quick</span>
+            </div>
+          </div>
+        </Panel>
         <Panel title="Endgame">
           <div className="panel-body">
             <Pick label="Endgame" options={ENDGAME} value={endgame} onChange={setEndgame} />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 44 }}>
-              <input type="checkbox" style={{ width: 24, height: 24 }} checked={defense} onChange={(e) => setDefense(e.target.checked)} />
-              Played defense
-            </label>
             <label className="field" htmlFor="scout-notes">
               Notes
-              <textarea id="scout-notes" className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything the counts don't show: broke down, tipped, fast cycles" />
+              <textarea id="scout-notes" className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything the form doesn't show: tipped, fast cycles, slow intake" />
             </label>
             <div className="toolbar">
               <button type="submit" className="btn btn-lg btn-primary">Save entry</button>
@@ -97,7 +160,25 @@ export default function ScoutingPage() {
           </div>
         </Panel>
       </form>
-      <Panel title="Saved on this device" aside={<span className="note">{entries.length} saved</span>}>
+      <Panel
+        title="Saved on this device"
+        aside={<span className="note">{waiting > 0 ? `${waiting} waiting` : entries.length > 0 ? 'All synced' : '0 saved'}</span>}
+      >
+        {/* Waiting entries send by themselves once there's a connection. The button is only for the impatient. */}
+        {waiting > 0 && (
+          <div className="panel-body">
+            <p className="note" style={{ margin: 0 }} aria-live="polite">
+              {sync.sending
+                ? 'Sending…'
+                : sync.problem
+                  ? `Not sent yet. ${sync.problem}`
+                  : "Waiting entries send to the team by themselves when there's a connection."}
+            </p>
+            <div className="toolbar">
+              <button type="button" className="btn" disabled={sync.sending} onClick={() => void sendNow()}>Send now</button>
+            </div>
+          </div>
+        )}
         {entries.length === 0 ? (
           <p className="panel-body muted">No entries yet. Fill in the form and press Save entry.</p>
         ) : (

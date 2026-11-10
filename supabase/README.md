@@ -23,13 +23,14 @@ repo. Changes here need a mentor's approval (see `.github/CODEOWNERS`).
   signs in, a trigger in the members migration adds them to `members` as a
   student, but only if Slack says they came through the Ctrl-Z workspace.
   Anyone else is turned away before an account is made.
-- **Roles.** `members.role` is student, mentor or admin. Admins change it in
-  the app's Members module. Switching off someone's access (`active = false`)
-  locks them out straight away.
+- **Roles.** `members.role` is student, leader (shown as "Student leader"),
+  mentor or admin. Admins change it in the app's Members module. Switching
+  off someone's access (`active = false`) locks them out straight away.
 - **Permission rules.** Every table has row level security on, and policies
   that say who can read and change what, using `private.is_member()`,
-  `private.is_mentor()` and `private.is_admin()`. People who aren't signed in
-  get nothing. These rules are the real security: the browser can send the
+  `private.is_leader()` (student leaders, mentors and admins),
+  `private.is_mentor()` (mentors and admins) and `private.is_admin()`.
+  People who aren't signed in get nothing. These rules are the real security: the browser can send the
   database anything.
 - **Migrations go out automatically.** When a pull request is merged, the
   Deploy workflow applies any new migrations to the database before it
@@ -199,7 +200,7 @@ the functions can read.
 | `match13` | Match 13 for scouting: each team's rating (xP) at an event, and who's predicted to win each match |
 | `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio. For the CNC module: parts' sizes and outlines, and where parts sit in a sheet's layout assembly |
 | `slack` | Slack messages from the team's bot: to yourself (anyone), or to people and a channel (mentors). Used through `src/core/slack.ts` |
-| `calendar` | The team's Google Calendar: everyone sees its events; mentors add events, and change or remove the ones the app added. Used through `src/core/calendar.ts` |
+| `calendar` | The team's Google Calendar: everyone sees its events; student leaders, mentors and admins add events, and change or remove the ones the app added. Used through `src/core/calendar.ts` |
 | `push` | Phone notifications (Web Push): the public key browsers need to turn them on, and a test to your own devices. Uses the `web-push` package (a mentor approved it). Used through `src/core/push.ts`. The same notifications are kept in the app too, in the `notifications` table behind the bell (`src/core/notifications.ts`) |
 
 Slack reminders that go out by themselves on a schedule don't use a server

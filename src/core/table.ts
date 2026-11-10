@@ -65,6 +65,12 @@ export interface Table<T extends Row> {
    * 1,000; if a batch fails, the batches before it stay added.
    */
   insertMany(rows: Fields<T>[]): Promise<Result<T[]>>
+  /**
+   * Add rows made on this device, each with its own id, such as entries
+   * saved with no connection. A row whose id is already in the table is
+   * skipped, so sending the same rows again never makes doubles.
+   */
+  insertOnce(rows: (Fields<T> & { id: string })[]): Promise<Result>
   /** Change some columns of one row. */
   update(id: string, changes: Partial<Fields<T>>): Promise<Result<T>>
   /** Delete one row. */
@@ -132,6 +138,15 @@ function demoTable<T extends Row>(name: string, options: TableOptions<T>, order:
       const added = list.map((fields) => ({ id: newId(), created_at: now, created_by: demoUserId(), ...fields }) as unknown as T)
       store.set((rows) => order([...rows, ...added]))
       return ok(added)
+    },
+    async insertOnce(list) {
+      const now = new Date().toISOString()
+      store.set((rows) => {
+        const have = new Set(rows.map((row) => row.id))
+        const added = list.filter((fields) => !have.has(fields.id)).map((fields) => ({ created_at: now, created_by: demoUserId(), ...fields }) as unknown as T)
+        return order([...rows, ...added])
+      })
+      return ok(null)
     },
     async update(id, changes) {
       const current = find(id)
@@ -293,6 +308,16 @@ function liveTable<T extends Row>(
         change((rows) => (data as T[]).reduce(replaceRow, rows))
       }
       return ok(added)
+    },
+    async insertOnce(list) {
+      // "On conflict do nothing": a row whose id is already there is skipped.
+      // The rows that go in arrive here through live updates.
+      for (let start = 0; start < list.length; start += PAGE) {
+        const batch = list.slice(start, start + PAGE) as Record<string, unknown>[]
+        const { error } = await client.from(name).upsert(batch, { onConflict: 'id', ignoreDuplicates: true })
+        if (error) return fail(explain(error))
+      }
+      return ok(null)
     },
     async update(id, changes) {
       const { data, error } = await client.from(name).update(changes as Record<string, unknown>).eq('id', id).select().single()

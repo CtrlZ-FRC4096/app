@@ -4,11 +4,22 @@
 
 ## What works so far
 
-- The match form, drawn from `season.ts`
-- Save entry: `saveEntry()` in `data.ts` keeps the entry on this device, marked Waiting. It refuses an entry with no team or match number.
-- A list of the entries saved on this device, newest first
+- The match form, drawn from `season.ts`: counters, role (choose any), broke down, E-stop or A-stop, driver skill, endgame and notes
+- Save entry: `saveEntry()` in `data.ts` keeps the entry on this device, marked Waiting. It refuses an entry with no team or match number, or no driver skill chosen.
+- A list of the entries saved on this device, newest first, each Waiting or Synced
+- Syncing (#31): Waiting entries are sent to the team database by themselves, with nothing to press:
+  - right after saving, if there's a connection
+  - when the phone comes back online
+  - when the app is opened or comes back on screen
+  - every minute while any are waiting
 
-Entries are kept in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. Sending Waiting entries to the team database is the next step.
+  A **Send now** button is there too, but it's never needed. Entries need someone signed in on the phone to send.
+
+Entries are kept on the device in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. `syncEntries()` sends the Waiting ones to the `scouting_entries` table (`supabase/migrations/..._scouting_entries.sql`, rules tested in `supabase/tests/scouting-entries.test.ts`) and marks them Synced.
+
+Each entry keeps the id its phone gave it, and the table skips an id it already has (`insertOnce()` in `src/core/table.ts`), so an entry sent twice is never saved twice. Everyone on the team can read every entry; only mentors change or delete them.
+
+Don't raise `entryStore`'s version while entries are waiting on phones: entries saved under the old version would be ignored.
 
 ## What it needs to do
 

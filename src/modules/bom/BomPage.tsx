@@ -1,11 +1,11 @@
 import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react'
 import { plural, shortDate } from '../../core/format'
-import { isMentor } from '../../core/roles'
+import { useMemberNames, useMembers } from '../../core/members'
 import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
 import {
-  PART_FILTERS, addPart, addRobot, addSystem, applyOnshapeImport, changePart, changeSystem, filterParts, getOnshapeBom, kindLabel,
+  PART_FILTERS, addPart, addRobot, addSystem, applyOnshapeImport, canEditRobotsAndParts, changePart, changeSystem, filterParts, getOnshapeBom, kindLabel,
   nextPartNumber, partCountText, removePart, removeSystem, renameRobot, shelfText, useParts, useRobots, useSystems,
   type BomSystem, type Part, type PartFilter, type PartKind, type Robot,
 } from './data'
@@ -13,6 +13,7 @@ import {
   MACHINES, MACHINE_NAMES, STAGES, STAGE_HINTS, STAGE_NAMES, STATUS_NAMES, addStep, advance, changeDone, isProcess, moveBack, removeStep,
   stationName, stationQueue, stepName, stepsFor, useSteps, type Machine, type Stage, type Station, type Step,
 } from './data'
+import { assignStep, dueText, isOverdue } from './data'
 import { planImport, type OnshapeImportPlan } from './onshape'
 import { href } from '../../core/router'
 import { useItems, type Item } from '../inventory/data'
@@ -29,16 +30,19 @@ type Editing =
   | { form: 'part'; part: Part | null }
   | { form: 'cnc'; part: Part }
   | { form: 'stages'; part: Part }
+  | { form: 'assign'; part: Part; step: Step }
 
 const INTRO = 'The parts in each system of the robot: what we make in the shop, and what we buy (COTS).'
 
 // The page reads rows with hooks from data.ts and saves through its
 // functions (addPart, changeSystem, ...). It never saves anything itself.
-// Anyone on the team can add and change robots, systems and parts, and
-// delete parts, and add, remove and move along stages. Only mentors see
-// Delete system: it deletes every part in it.
+// Anyone on the team can add and change systems, and add, remove, move
+// along and assign stages. Only student leaders, mentors and admins see the
+// buttons to add and rename robots, add, change and delete parts, import
+// from Onshape, and delete a system (canEditRobotsAndParts in data.ts).
 export default function BomPage() {
   const user = useSession()
+  const leader = canEditRobotsAndParts(user.role)
   const robots = useRobots()
   const [robotId, setRobotId] = useState<string>()
   const robot = robots.find((r) => r.id === robotId) ?? robots[0]
@@ -80,7 +84,13 @@ export default function BomPage() {
     return (
       <>
         <PageHead title="Bill of materials">{INTRO}</PageHead>
-        <RobotForm robot={null} intro="Start the BOM by naming the robot. Then add its systems, like Intake, and the parts in each." onDone={(saved) => saved && setRobotId(saved.id)} />
+        {leader ? (
+          <RobotForm robot={null} intro="Start the BOM by naming the robot. Then add its systems, like Intake, and the parts in each." onDone={(saved) => saved && setRobotId(saved.id)} />
+        ) : (
+          <Panel>
+            <p className="panel-body muted">No robot yet. Ask a student leader or mentor to add one, then you can add its systems.</p>
+          </Panel>
+        )}
       </>
     )
   }
@@ -101,8 +111,12 @@ export default function BomPage() {
             }}
           />
         )}
-        <button type="button" className="btn btn-sm" onClick={() => setEditing({ form: 'robot', robot })}>Rename robot</button>
-        <button type="button" className="btn btn-sm" onClick={() => setEditing({ form: 'robot', robot: null })}>Add a robot</button>
+        {leader && (
+          <>
+            <button type="button" className="btn btn-sm" onClick={() => setEditing({ form: 'robot', robot })}>Rename robot</button>
+            <button type="button" className="btn btn-sm" onClick={() => setEditing({ form: 'robot', robot: null })}>Add a robot</button>
+          </>
+        )}
         <button type="button" className="btn btn-sm" onClick={() => setEditing({ form: 'system', system: null })}>Add a system</button>
       </div>
 
@@ -126,7 +140,7 @@ export default function BomPage() {
           system={editing?.form === 'system' ? editing.system : null}
           partCount={editing?.form === 'system' && editing.system ? parts.length : 0}
           canCancel={editing?.form === 'system'}
-          canDelete={isMentor(user.role)}
+          canDelete={leader}
           onDone={(saved) => {
             if (saved) setSystemId(saved.id)
             close()
@@ -138,6 +152,7 @@ export default function BomPage() {
       )}
       {editing?.form === 'cnc' && <CncForm key={editing.part.id} part={editing.part} onDone={close} />}
       {editing?.form === 'stages' && <StagesForm key={editing.part.id} part={editing.part} steps={stepsFor(editing.part, steps)} onDone={close} />}
+      {editing?.form === 'assign' && <AssignForm key={editing.step.id} part={editing.part} step={editing.step} onDone={close} />}
       {importing && importing.system.id === system?.id && (
         <ImportPreview system={importing.system} plan={importing.plan} onDone={() => setImporting(null)} />
       )}
@@ -162,14 +177,14 @@ export default function BomPage() {
               {station.kind === 'all' && <Pick label="Show" options={[...PART_FILTERS]} value={filter} onChange={setFilter} />}
               <StationPicker value={station} onChange={setStation} />
               <button type="button" className="btn btn-sm" onClick={() => setEditing({ form: 'system', system })}>Change system</button>
-              {system.onshape_url && (
+              {leader && system.onshape_url && (
                 <button type="button" className="btn btn-sm" disabled={reading} onClick={() => void readOnshape(system)}>
                   {reading ? 'Reading Onshape…' : 'Import from Onshape'}
                 </button>
               )}
               {/* The database only accepts https:// links here, so it's safe to open. */}
               {system.onshape_url && <a href={system.onshape_url} target="_blank" rel="noopener noreferrer">Open in Onshape</a>}
-              {!(editing?.form === 'part' && !editing.part) && (
+              {leader && !(editing?.form === 'part' && !editing.part) && (
                 <button type="button" className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setEditing({ form: 'part', part: null })}>Add a part</button>
               )}
             </div>
@@ -179,7 +194,7 @@ export default function BomPage() {
                   ? `Last imported from Onshape ${shortDate(system.onshape_imported_at)}. `
                   : 'Not imported from Onshape yet. '
                 : "To import this system's parts from Onshape, add its assembly's link with Change system. "}
-              {shown.length > 0 && "Choose a part's name to change or delete it."}
+              {shown.length > 0 && leader && "Choose a part's name to change or delete it."}
             </p>
           </div>
           {shown.length === 0 ? (
@@ -218,7 +233,9 @@ export default function BomPage() {
                             {p.revision && <span className="note"> Rev {p.revision}</span>}
                           </td>
                           <td style={under}>
-                            <button type="button" className="name-btn" onClick={() => setEditing({ form: 'part', part: p })}>{p.name}</button>
+                            {leader
+                              ? <button type="button" className="name-btn" onClick={() => setEditing({ form: 'part', part: p })}>{p.name}</button>
+                              : <span>{p.name}</span>}
                             {p.removed_in_onshape && <> <Pill tone="warn">Removed in Onshape</Pill></>}
                             <br />
                             <span className="note">
@@ -248,6 +265,7 @@ export default function BomPage() {
                                 steps={stagesShown(p)}
                                 canChange={station.kind === 'all'}
                                 onChange={() => setEditing({ form: 'stages', part: p })}
+                                onAssign={(step) => setEditing({ form: 'assign', part: p, step })}
                               />
                             </td>
                           </tr>
@@ -366,7 +384,7 @@ function RobotForm(props: { robot: Robot | null; intro?: string; onDone: (saved:
   )
 }
 
-/** Add a system to a robot, or change one. Mentors can also delete it, with its parts. */
+/** Add a system to a robot, or change one. Student leaders and mentors can also delete it, with its parts. */
 function SystemForm(props: {
   robot: Robot
   system: BomSystem | null
@@ -612,7 +630,6 @@ function Shelf(props: { part: Part; items: Item[]; request: PurchaseItem | undef
   )
 }
 
-/** A made part's stages: each one's status, how many are through it, and buttons to move it along. */
 /**
  * A COTS part's order, from Purchasing: its status, which opens the request
  * there, or a Purchase button that opens a request filled in from the part.
@@ -636,8 +653,10 @@ function PurchaseStatus(props: { part: Part; request: PurchaseItem | undefined }
   )
 }
 
-function StageList(props: { part: Part; steps: Step[]; canChange: boolean; onChange: () => void }) {
+/** A custom part's stages: each one's status, how many are through it, who has it and when it's due, and buttons to move it along. */
+function StageList(props: { part: Part; steps: Step[]; canChange: boolean; onChange: () => void; onAssign: (step: Step) => void }) {
   const { part } = props
+  const nameOf = useMemberNames()
 
   async function run(action: Promise<{ ok: true } | { ok: false; error: string }>) {
     const result = await action
@@ -653,6 +672,14 @@ function StageList(props: { part: Part; steps: Step[]; canChange: boolean; onCha
             <Pill tone={STATUS_TONES[s.status]}>{stepName(s)}</Pill>
             <br />
             <span className="note">{STATUS_NAMES[s.status]} · {Math.min(s.quantity_done, part.quantity)} of {part.quantity}</span>
+            <br />
+            <span className="note">
+              {s.assigned_to ? nameOf(s.assigned_to) : 'Nobody yet'}
+              {s.due_date && ` · due ${dueText(s.due_date)}`}
+              {isOverdue(s) && <> <Pill tone="warn">Late</Pill></>}
+              {' · '}
+              <button type="button" className="link-btn" onClick={() => props.onAssign(s)}>{s.assigned_to ? 'Change' : 'Assign'}</button>
+            </span>
           </span>
           <span style={{ display: 'flex', gap: 6 }}>
             <button type="button" className="btn" style={{ minWidth: 40 }} aria-label={`${stepName(s)}: one fewer done`} onClick={() => void run(changeDone(s, -1))}>−</button>
@@ -670,6 +697,48 @@ function StageList(props: { part: Part; steps: Step[]; canChange: boolean; onCha
         )}
       </span>
     </div>
+  )
+}
+
+/** Say whose job a stage is and when it's due. Both can be left empty. */
+function AssignForm(props: { part: Part; step: Step; onDone: () => void }) {
+  const { part, step } = props
+  // People whose access is off can't be given work, but stay listed if they already have this stage.
+  const members = useMembers().filter((m) => m.active || m.id === step.assigned_to)
+  const [assignedTo, setAssignedTo] = useState(step.assigned_to ?? '')
+  const [dueDate, setDueDate] = useState(step.due_date ?? '')
+  const [saving, setSaving] = useState(false)
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    setSaving(true)
+    const result = await assignStep(step, { assigned_to: assignedTo || null, due_date: dueDate || null })
+    setSaving(false)
+    if (!result.ok) return toast(result.error)
+    toast(`Saved who has ${part.name}'s ${stepName(step)}.`)
+    props.onDone()
+  }
+
+  return (
+    <Panel title={`${part.name}: ${stepName(step)}`}>
+      <form className="panel-body" onSubmit={save}>
+        <div className="field">
+          <label htmlFor="assign-person">Who's doing it</label>
+          <select id="assign-person" className="input" value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)}>
+            <option value="">Nobody yet</option>
+            {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="assign-due">Due date <span className="note">(leave empty for none)</span></label>
+          <input id="assign-due" className="input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+        </div>
+        <div className="toolbar">
+          <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          <button type="button" className="btn" onClick={props.onDone}>Cancel</button>
+        </div>
+      </form>
+    </Panel>
   )
 }
 

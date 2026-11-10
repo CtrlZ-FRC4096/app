@@ -56,6 +56,21 @@ describe('a demo table', () => {
   })
 })
 
+describe('insertOnce', () => {
+  it('adds rows with the ids they came with', async () => {
+    expect(await things.insertOnce([{ id: 'from-a-phone', name: 'Saved offline' }])).toEqual({ ok: true, value: null })
+    expect(things.rows().find((t) => t.id === 'from-a-phone')).toMatchObject({ name: 'Saved offline', created_by: DEMO_PEOPLE.alex })
+  })
+
+  it('skips a row whose id is already there, so sending twice makes no doubles', async () => {
+    await things.insertOnce([{ id: 'from-a-phone', name: 'First' }])
+    await things.insertOnce([{ id: 'from-a-phone', name: 'Sent again' }, { id: 'a', name: 'Clash' }, { id: 'another', name: 'New' }])
+    expect(things.rows().filter((t) => t.id === 'from-a-phone').map((t) => t.name)).toEqual(['First'])
+    expect(things.rows().find((t) => t.id === 'a')!.name).toBe('Older')
+    expect(things.rows()).toHaveLength(4)
+  })
+})
+
 describe('applyChange', () => {
   const rows: Thing[] = [{ id: 'a', name: 'A', created_at: '', created_by: null }]
 

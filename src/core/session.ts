@@ -19,7 +19,7 @@ import { demoRole, demoUserId, useDemoRole } from './demo'
 import { membersTable, type Member } from './members'
 import type { Role } from './roles'
 
-export { ROLES, canOpen, isAdmin, isMentor, roleName, type Role } from './roles'
+export { ROLES, canOpen, isAdmin, isLeader, isMentor, roleName, type Role } from './roles'
 
 export interface User {
   id: string

@@ -11,7 +11,9 @@ import {
   eventInput,
   fromGoogle,
   GOOGLE_TOKEN_URL,
+  addedBy,
   isAppEvent,
+  mayChange,
   parseServiceAccount,
   paths,
   signedAssertion,
@@ -85,22 +87,51 @@ describe('calendarRequest', () => {
     expect(calendarRequest({ kind: 'events', from: '2026-01-01', to: '2028-01-01' }, 'student')).toMatchObject({ error: expect.stringMatching(/a year/) })
   })
 
-  it('lets mentors add, change and remove', () => {
-    expect(calendarRequest({ kind: 'add', event: meeting }, 'mentor')).toEqual({
-      kind: 'add', event: { title: 'Parent meeting', start: meeting.start, end: meeting.end, allDay: false, location: null, description: null },
+  it('lets student leaders, mentors and admins add, change and remove', () => {
+    expect(calendarRequest({ kind: 'add', event: meeting }, 'leader')).toEqual({
+      kind: 'add', event: { title: 'Parent meeting', start: meeting.start, end: meeting.end, allDay: false, location: null, description: null, signUps: false },
     })
-    expect(calendarRequest({ kind: 'change', id: 'abc123_20261105', event: meeting }, 'admin')).toMatchObject({ kind: 'change', id: 'abc123_20261105' })
-    expect(calendarRequest({ kind: 'remove', id: 'abc123' }, 'mentor')).toEqual({ kind: 'remove', id: 'abc123' })
+    expect(calendarRequest({ kind: 'add', event: { ...meeting, signUps: true } }, 'mentor')).toMatchObject({ event: { signUps: true } })
+    expect(calendarRequest({ kind: 'change', id: 'abc123_20261105', event: meeting }, 'leader')).toMatchObject({ kind: 'change', id: 'abc123_20261105' })
+    expect(calendarRequest({ kind: 'change', id: 'abc123_20261105', event: meeting }, 'admin')).toMatchObject({ kind: 'change' })
+    expect(calendarRequest({ kind: 'remove', id: 'abc123' }, 'leader')).toEqual({ kind: 'remove', id: 'abc123' })
   })
 
-  it("doesn't let students change the calendar", () => {
-    expect(calendarRequest({ kind: 'add', event: meeting }, 'student')).toEqual({ error: 'Only mentors can change the team calendar.', status: 403 })
-    expect(calendarRequest({ kind: 'remove', id: 'abc123' }, 'student')).toMatchObject({ status: 403 })
+  it("doesn't let students add, change or remove events, and says who can", () => {
+    const refused = { error: 'Only student leaders and mentors can add, change or remove events. Ask one of them.', status: 403 }
+    expect(calendarRequest({ kind: 'add', event: meeting }, 'student')).toEqual(refused)
+    expect(calendarRequest({ kind: 'change', id: 'abc123', event: meeting }, 'student')).toEqual(refused)
+    expect(calendarRequest({ kind: 'remove', id: 'abc123' }, 'student')).toEqual(refused)
+    // Or anyone whose role the app doesn't know.
+    expect(calendarRequest({ kind: 'add', event: meeting }, '')).toEqual(refused)
   })
 
   it('refuses anything else', () => {
     expect(calendarRequest({ kind: 'share' }, 'admin')).toMatchObject({ status: 400 })
     expect(calendarRequest({ kind: 'remove', id: '../acl' }, 'admin')).toEqual({ error: "That isn't an event ID.", status: 400 })
+  })
+})
+
+describe('mayChange', () => {
+  const regional = { title: 'Regional', start: '2027-03-12', end: '2027-03-14', allDay: true, location: null, description: null, signUps: false }
+
+  it('lets student leaders, mentors and admins change any event the app added, whoever added it', () => {
+    const casey = toGoogle(regional, 'leader-1')
+    for (const role of ['leader', 'mentor', 'admin']) expect(mayChange(casey, role)).toBeNull()
+    expect(mayChange(toGoogle(regional, null), 'leader')).toBeNull()
+  })
+
+  it("doesn't let students change or remove events, even ones they added", () => {
+    const error = 'Only student leaders and mentors can add, change or remove events. Ask one of them.'
+    expect(mayChange(toGoogle(regional, 'student-1'), 'student')).toBe(error)
+    expect(mayChange(toGoogle(regional, 'leader-1'), 'student')).toBe(error)
+  })
+
+  it('leaves events people made in Google Calendar alone, even for mentors', () => {
+    const made = { id: 'g1', summary: 'Build session', start: { dateTime: '2026-11-03T18:00:00-06:00' } }
+    expect(mayChange(made, 'mentor')).toMatch(/Change this one in Google Calendar/)
+    // A mark that says who added it doesn't count without the app's own mark.
+    expect(mayChange({ ...made, extendedProperties: { private: { teamAppAddedBy: 'leader-1' } } }, 'leader')).toMatch(/Google Calendar/)
   })
 })
 
@@ -118,19 +149,28 @@ describe('eventInput', () => {
 })
 
 describe('toGoogle and fromGoogle', () => {
-  it("marks the app's events, and gives Google the day after an all-day event's last day", () => {
-    const google = toGoogle({ title: 'Regional', start: '2027-03-12', end: '2027-03-14', allDay: true, location: null, description: null })
+  it("marks the app's events with who added them, and gives Google the day after an all-day event's last day", () => {
+    const google = toGoogle({ title: 'Regional', start: '2027-03-12', end: '2027-03-14', allDay: true, location: null, description: null, signUps: false }, 'member-1')
     expect(google).toMatchObject({ summary: 'Regional', start: { date: '2027-03-12' }, end: { date: '2027-03-15' } })
     expect(isAppEvent(google)).toBe(true)
+    expect(addedBy(google)).toBe('member-1')
     expect(fromGoogle({ ...google, id: 'x1', htmlLink: 'https://calendar.google.com/event?eid=x1' })).toEqual({
       id: 'x1', title: 'Regional', start: '2027-03-12', end: '2027-03-14', allDay: true, location: null, description: null,
-      url: 'https://calendar.google.com/event?eid=x1', fromApp: true,
+      url: 'https://calendar.google.com/event?eid=x1', fromApp: true, addedBy: 'member-1', signUps: false,
     })
+  })
+
+  it('marks events people sign up for in the app, and takes the mark off again', () => {
+    const outreach = { title: 'Library demo', start: '2026-11-13T18:00:00-06:00', end: '2026-11-13T20:00:00-06:00', allDay: false, location: null, description: null }
+    const withSignUps = toGoogle({ ...outreach, signUps: true }, 'member-1')
+    expect(fromGoogle({ ...withSignUps, id: 'x2' })).toMatchObject({ signUps: true })
+    // Changing it the way index.ts does: the old event, with the new parts on top.
+    expect(fromGoogle({ ...withSignUps, id: 'x2', ...toGoogle({ ...outreach, signUps: false }, 'member-1') })).toMatchObject({ signUps: false, addedBy: 'member-1' })
   })
 
   it('reads timed events people made in Google Calendar, and skips cancelled ones', () => {
     const item = { id: 'g1', summary: 'Build session', location: 'The shop', start: { dateTime: '2026-11-03T18:00:00-06:00' }, end: { dateTime: '2026-11-03T21:00:00-06:00' } }
-    expect(fromGoogle(item)).toMatchObject({ title: 'Build session', start: item.start.dateTime, end: item.end.dateTime, allDay: false, location: 'The shop', fromApp: false })
+    expect(fromGoogle(item)).toMatchObject({ title: 'Build session', start: item.start.dateTime, end: item.end.dateTime, allDay: false, location: 'The shop', fromApp: false, addedBy: null, signUps: false })
     expect(fromGoogle({ ...item, summary: undefined })?.title).toBe('(No title)')
     expect(fromGoogle({ ...item, status: 'cancelled' })).toBeNull()
   })
