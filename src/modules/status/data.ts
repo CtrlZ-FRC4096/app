@@ -73,6 +73,20 @@ export function belongsToSubgroup(id: string, subgroup: PitSubgroup): boolean {
   return subgroup === 'General' || !!subgroupMembersStore.get()[subgroup]?.includes(id)
 }
 
+/** True when the name contains the search, ignoring capitals and spaces at the ends. */
+export function nameMatches(name: string, search: string): boolean {
+  return name.toLowerCase().includes(search.trim().toLowerCase())
+}
+
+/**
+ * The people to show under a "Find someone" box: everyone whose name matches
+ * the search, plus the people already chosen, in their usual order. Chosen
+ * people always stay visible, so searching never hides who is assigned.
+ */
+export function matchMembers<T extends { id: string; name: string }>(members: T[], search: string, chosenIds: string[] = []): T[] {
+  return members.filter((member) => chosenIds.includes(member.id) || nameMatches(member.name, search))
+}
+
 export function setSubgroupMembers(subgroup: PitSubgroup, ids: string[]): Result {
   const user = currentUser()
   if (!user || !isMentor(user.role)) return fail('Ask a mentor to edit subgroup members.')
