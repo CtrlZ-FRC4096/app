@@ -73,6 +73,7 @@ Student leaders, mentors and admins import. Students can add a system's Onshape 
 2. **Import from Onshape** reads its parts through the `onshape` server function (`supabase/functions/onshape/`), which holds the team's Onshape keys. Sub-assemblies are flattened into one list.
 3. The page shows what will change before anything is saved. **Import** makes the changes:
    - **New parts are added.** A custom part keeps its Onshape part number if no other part has it; otherwise it gets the next team number. Standard content (bolts, nuts) and parts with a vendor are COTS: Onshape's part number becomes the vendor's part number, and they get a team number too.
+   - **Vendor part numbers are recognized** (#20). A new part with a vendor's number in its part number or name is COTS with that vendor: `WCP-0123` (West Coast Products), `am-1234` (Andy Mark), `REV-21-1650` (REV Robotics), `217-1234` and `276-1234` (VEX). `identifyCots()` in `data.ts` has the patterns: add a vendor there, with a test. Our own numbers (`4096-…`) are never taken for bought parts. It's a guess from how the number is written, so check the preview; a part already in the app keeps the kind it has, so fixing a wrong guess by hand sticks.
    - **Changed names, quantities, materials and revisions are updated.** Where Onshape has nothing (no material set yet, say), what's in the app stays.
    - **Parts no longer in Onshape are marked "Removed in Onshape"**, not deleted, so their history stays. If they come back, the mark goes.
 
@@ -82,6 +83,7 @@ The example Intake in demo mode is linked to a made-up assembly, so **Import fro
 
 ## Still to do
 
+- A shared catalog of bought parts with names and links to buy them, filled in once and reused each season (#20)
 - Write team part numbers into Onshape (#21)
 - A "My work" list of the stages assigned to you
 - Slack reminders about assigned stages (#22)
