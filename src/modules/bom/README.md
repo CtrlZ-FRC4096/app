@@ -7,7 +7,7 @@ The bill of materials for each robot, checked against Inventory, so the team can
 | File | What it does |
 |:--|:--|
 | `index.ts` | Tells the app about the module, and puts "2 systems · 12 parts" on the home page tile. |
-| `data.ts` | The four tables (`bom_robots`, `bom_systems`, `bom_parts`, `bom_steps`), their example rows, adding and changing them, moving stages along, and reading a system from Onshape. |
+| `data.ts` | The four tables (`bom_robots`, `bom_systems`, `bom_parts`, `bom_steps`), their example rows, adding and changing them, moving stages along, assigning them, and reading a system from Onshape. |
 | `onshape.ts` | Works out what an import from Onshape changes: `planOnshapeImport()`. |
 | `data.test.ts`, `onshape.test.ts` | Tests for both. |
 | `BomPage.tsx` | Pick a system, then see its parts in a table with their stages, change them, and import from Onshape. |
@@ -28,9 +28,11 @@ Every custom part goes through stages before it's on the robot (#15): **Design �
 
 Under each custom part, each stage shows its status (To do, In progress, Done) and how many of the part's quantity are through it ("1 of 3"). Anyone can count parts through with − and +, which never goes below 0 or above the part's quantity, and move a stage along with **Start** and **Mark done** (**Undo** goes back one). Anyone can choose a part's stages with **Change stages**.
 
+Each stage can be **assigned** to a person, with a due date (#16). Under a stage, **Assign** (or **Change**) picks who's doing it and when it's due; both can be left empty. A stage whose due date has passed and isn't done shows **Late**. Anyone on the team can assign stages. People whose access is switched off can't be given work.
+
 The **station filter** shows one station's queue: "Lathe only" lists the parts with a lathe stage that isn't done, and "Waiting for post-process" the parts whose post-process isn't done.
 
-The table is made by `supabase/migrations/20261102120000_bom_steps.sql`, with its rules tested in `supabase/tests/bom-steps.test.ts`: anyone on the team can read, add and remove stages, and change their status and how many are done. Deleting a part deletes its stages.
+The table is made by `supabase/migrations/20261102120000_bom_steps.sql`, with its rules tested in `supabase/tests/bom-steps.test.ts`: anyone on the team can read, add and remove stages, and change their status and how many are done. Deleting a part deletes its stages. The assignee and due date columns are added by `supabase/migrations/20261109120000_bom_steps_assign.sql`.
 
 The CNC board tracks routing separately (Ready to CAM → To cut → Cutting → Cut), so for now a part's CNC router stage is moved along by hand here too.
 
@@ -60,7 +62,8 @@ The example Intake in demo mode is linked to a made-up assembly, so **Import fro
 
 - Write team part numbers into Onshape (#21)
 - Add up a bought part used in more than one system, and a To order list (#17)
-- Assign stages to people, with due dates (#16)
+- A "My work" list of the stages assigned to you
+- Slack reminders about assigned stages (#22)
 - Move a part's CNC router stage along when the CNC board marks it cut
 - Mentors mark short parts as ordered
 - Costs, visible only to mentors and admins
