@@ -6,8 +6,8 @@ open it; only admins can change anything.
 - **People add themselves** by signing in with the Ctrl-Z Slack workspace.
   Everyone starts as a student. Anyone signing in through another workspace
   is turned away by the database.
-- **Admins change roles** (student, mentor, admin) and **switch off access**
-  for people who have left the team. Switched-off people can't see anything,
+- **Admins change roles** (student, student leader, mentor, admin) and
+  **switch off access** for people who have left the team. Switched-off people can't see anything,
   straight away.
 - Nobody can change their own role or access here, and the database never
   lets the team end up without an admin.

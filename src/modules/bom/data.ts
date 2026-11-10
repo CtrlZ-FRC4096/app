@@ -8,9 +8,10 @@
  *
  * The tables are made in the team database by
  * supabase/migrations/..._bom.sql. Anyone on the team can add and change
- * robots, systems and parts, delete parts, and import from Onshape. Only
- * mentors can delete a system, because that deletes every part in it too
- * (..._bom_members_edit.sql).
+ * systems, and choose and move along a part's stages. Only student leaders,
+ * mentors and admins can add and rename robots, add, change and delete
+ * parts, import from Onshape, and delete a system, which deletes every part
+ * in it too (..._bom_student_leaders.sql).
  *
  * Made parts have stages (Design, Pre-process, Process 1 and 2,
  * Post-process), each with a status and how many are through it
@@ -21,7 +22,7 @@ import { callFunction } from '../../core/functions'
 import { createTable, fail, ok, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { membersTable, type Member } from '../../core/members'
-import { isMentor } from '../../core/roles'
+import { isLeader, type Role } from '../../core/roles'
 import { currentUser } from '../../core/session'
 import { isLive } from '../../core/supabase'
 import { plural } from '../../core/format'
@@ -259,6 +260,25 @@ export function shelfText(part: Part, items: Item[], request?: PurchaseItem): st
 }
 
 // ---------------------------------------------------------------------------
+// Who can do what. The database checks the same (..._bom_student_leaders.sql):
+// these only explain it before trying.
+
+/**
+ * Can someone with this role add and rename robots, add, change and delete
+ * parts, import from Onshape and delete systems? Student leaders, mentors and
+ * admins can. Everyone can add and change systems and work on stages.
+ */
+export function canEditRobotsAndParts(role: Role): boolean {
+  return isLeader(role)
+}
+
+/** Why the signed-in person can't do this, or null if they can. `doing` is like "add parts". */
+function leadersOnly(doing: string): string | null {
+  const user = currentUser()
+  return user && canEditRobotsAndParts(user.role) ? null : `Only student leaders and mentors can ${doing}. Ask one of them.`
+}
+
+// ---------------------------------------------------------------------------
 // Robots and systems.
 
 /** Why a robot name won't do, or null if it will. */
@@ -270,13 +290,13 @@ export function checkRobotName(name: string): string | null {
 }
 
 export async function addRobot(name: string): Promise<Result<Robot>> {
-  const problem = checkRobotName(name)
+  const problem = leadersOnly('add robots') ?? checkRobotName(name)
   if (problem) return fail(problem)
   return robotsTable.insert({ name: name.trim() })
 }
 
 export async function renameRobot(robot: Robot, name: string): Promise<Result<Robot>> {
-  const problem = checkRobotName(name)
+  const problem = leadersOnly('rename robots') ?? checkRobotName(name)
   if (problem) return fail(problem)
   return robotsTable.update(robot.id, { name: name.trim() })
 }
@@ -332,10 +352,10 @@ export async function changeSystem(system: BomSystem, changes: NewSystem): Promi
   return systemsTable.update(system.id, systemFields(changes))
 }
 
-/** Delete a system and every part in it. Mentors only: the database enforces this too. */
+/** Delete a system and every part in it. Student leaders, mentors and admins only. */
 export async function removeSystem(system: BomSystem): Promise<Result> {
   const user = currentUser()
-  if (!user || !isMentor(user.role)) return fail('Only a mentor can delete a system, because it deletes every part in it.')
+  if (!user || !canEditRobotsAndParts(user.role)) return fail('Only student leaders and mentors can delete a system, because it deletes every part in it.')
   const result = await systemsTable.remove(system.id)
   // The database deletes the parts with the system. Example data has to do it here.
   if (result.ok && !isLive) {
@@ -400,29 +420,31 @@ function partFields(part: NewPart) {
   }
 }
 
-/** Add a part. Anyone on the team can add, change and delete parts. */
+/** Add a part. Student leaders, mentors and admins add, change and delete parts. */
 export async function addPart(part: NewPart): Promise<Result<Part>> {
-  const problem = checkPart(part, partsTable.rows())
+  const problem = leadersOnly('add parts') ?? checkPart(part, partsTable.rows())
   if (problem) return fail(problem)
   return partsTable.insert({ system_id: part.system_id, ...partFields(part), onshape_url: null, onshape_id: null, removed_in_onshape: false })
 }
 
 /** Change a part. It stays in its system. The next import from Onshape updates what Onshape has. */
 export async function changePart(part: Part, changes: NewPart): Promise<Result<Part>> {
-  const problem = checkPart(changes, partsTable.rows(), part.id, Boolean(part.onshape_id))
+  const problem = leadersOnly('change parts') ?? checkPart(changes, partsTable.rows(), part.id, Boolean(part.onshape_id))
   if (problem) return fail(problem)
   return partsTable.update(part.id, partFields(changes))
 }
 
 export async function removePart(part: Part): Promise<Result> {
+  const problem = leadersOnly('delete parts')
+  if (problem) return fail(problem)
   return partsTable.remove(part.id)
 }
 
 // ---------------------------------------------------------------------------
 // Stages: what a made part goes through before it's on the robot (#15).
-// Made by ..._bom_steps.sql. Anyone on the team can add and remove stages,
-// move a stage along and count parts through it, and assign it to someone
-// with a due date (#16, ..._bom_steps_assign.sql).
+// Made by ..._bom_steps.sql. Anyone on the team, students too, can add and
+// remove stages, move a stage along and count parts through it, and assign
+// it to someone with a due date (#16, ..._bom_steps_assign.sql).
 
 export type Stage = 'design' | 'pre' | 'process1' | 'process2' | 'post'
 /** In order. A part only has the stages it needs. */
@@ -675,6 +697,8 @@ export function stationQueue(parts: Part[], steps: Step[], station: Station): { 
  * it when someone asks to import. In demo mode it answers with example parts.
  */
 export function getOnshapeBom(system: BomSystem): Promise<Result<OnshapeBom>> {
+  const problem = leadersOnly('import from Onshape')
+  if (problem) return Promise.resolve(fail(problem))
   if (!system.onshape_url) {
     return Promise.resolve(fail(`Add ${system.name}'s Onshape link first: Change system, then paste the assembly's address.`))
   }
@@ -683,6 +707,8 @@ export function getOnshapeBom(system: BomSystem): Promise<Result<OnshapeBom>> {
 
 /** Make the changes an import plan lists, and note when the system was imported. */
 export async function applyOnshapeImport(system: BomSystem, plan: OnshapeImportPlan): Promise<Result<string>> {
+  const problem = leadersOnly('import from Onshape')
+  if (problem) return fail(problem)
   const added = await partsTable.insertMany(plan.add)
   if (!added.ok) return added
   for (const { part, changes } of plan.change) {

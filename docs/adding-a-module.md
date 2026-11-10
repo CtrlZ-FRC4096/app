@@ -89,10 +89,14 @@ database fills in.
 its own rules first and then return what they return.
 
 **Roles.** `useSession()` gives the signed-in person's `id`, `name` and
-`role`. `isMentor(role)` is true for mentors and admins. To limit a whole
-module to some roles, set `roles` in `index.ts`, for example
-`roles: ['mentor', 'admin']`. Hiding a button only keeps the page tidy: the
-database's permission rules are what stop people.
+`role`. `isMentor(role)` is true for mentors and admins. `isLeader(role)` is
+true for student leaders, mentors and admins: use it for what student leaders
+can do too. Student leaders only get what a module gives them with
+`isLeader()` (and `private.is_leader()` in its migration), so anything
+checked with `isMentor()` stays with mentors. To limit a whole module to some
+roles, set `roles` in `index.ts`, for example `roles: ['mentor', 'admin']`.
+Hiding a button only keeps the page tidy: the database's permission rules are
+what stop people.
 
 **Showing who did something.** `useMemberNames()` from `src/core/members.ts`
 turns a `created_by` id into a name.

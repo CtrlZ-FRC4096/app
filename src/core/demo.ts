@@ -1,6 +1,7 @@
 /**
  * Demo mode: the made-up people in the example data, and the "View as"
- * switch that lets anyone try the app as a student, mentor or admin.
+ * switch that lets anyone try the app as a student, student leader, mentor
+ * or admin.
  *
  * Demo mode is how the app runs on your computer and in tests, and on the
  * live site until the team database is set up. See src/core/supabase.ts.
@@ -15,11 +16,13 @@ export const DEMO_PEOPLE = {
   morgan: '00000000-0000-4000-8000-00000000304a',
   jordan: '00000000-0000-4000-8000-00000000d0a0',
   sam: '00000000-0000-4000-8000-0000000005a3',
+  casey: '00000000-0000-4000-8000-00000000ca5e',
 } as const
 
 /** Who you are in demo mode when you view the app as each role. */
 const DEMO_USER: Record<Role, string> = {
   student: DEMO_PEOPLE.alex,
+  leader: DEMO_PEOPLE.casey,
   mentor: DEMO_PEOPLE.pat,
   admin: DEMO_PEOPLE.morgan,
 }

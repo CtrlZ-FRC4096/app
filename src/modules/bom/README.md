@@ -2,7 +2,7 @@
 
 The bill of materials for each robot, checked against Inventory, so the team can see what to make and what to order.
 
-**Built so far:** a robot is made of systems (Intake, Drivetrain, …), and each system has a list of parts. The page shows one system's parts with an All / Custom / COTS filter. Anyone on the team can add, change and delete parts, and import a system's parts from Onshape. Custom parts (made in our shop) show their stages (see below). COTS parts show their order from Purchasing, or a **Purchase** button that opens a request there, filled in from the part. COTS parts also show how many Inventory has on the shelf and where, and how many are missing or being ordered (see below).
+**Built so far:** a robot is made of systems (Intake, Drivetrain, …), and each system has a list of parts. The page shows one system's parts with an All / Custom / COTS filter. Student leaders, mentors and admins can add, change and delete parts, and import a system's parts from Onshape (see [Who can do what](#who-can-do-what)). Custom parts (made in our shop) show their stages (see below). COTS parts show their order from Purchasing, or a **Purchase** button that opens a request there, filled in from the part. COTS parts also show how many Inventory has on the shelf and where, and how many are missing or being ordered (see below).
 
 | File | What it does |
 |:--|:--|
@@ -12,7 +12,21 @@ The bill of materials for each robot, checked against Inventory, so the team can
 | `data.test.ts`, `onshape.test.ts` | Tests for both. |
 | `BomPage.tsx` | Pick a system, then see its parts in a table with their stages, change them, and import from Onshape. |
 
-The tables are made by `supabase/migrations/20261027150000_bom.sql`, and their permission rules are tested in `supabase/tests/bom.test.ts`. Anyone on the team can add and change robots, systems and parts, and delete parts (`supabase/migrations/20261027170000_bom_members_edit.sql`). Only mentors can delete a system, because that deletes every part in it too.
+The tables are made by `supabase/migrations/20261027150000_bom.sql`, and their permission rules are tested in `supabase/tests/bom.test.ts`.
+
+## Who can do what
+
+| | Students | Student leaders, mentors and admins |
+|:--|:--|:--|
+| See everything | Yes | Yes |
+| Add and change systems | Yes | Yes |
+| Choose a part's stages, and move stages along | Yes | Yes |
+| Add and rename robots | | Yes |
+| Add, change and delete parts | | Yes |
+| Import from Onshape | | Yes |
+| Delete a system (and every part in it) | | Yes |
+
+The rules are in `supabase/migrations/20261110130000_bom_student_leaders.sql` (using `private.is_leader()`), and tested in `supabase/tests/bom.test.ts` and `bom-steps.test.ts`. In the app, `canEditRobotsAndParts()` in `data.ts` decides which buttons a student sees, and the functions in `data.ts` explain who to ask.
 
 **Custom and COTS.** Custom parts are made in our shop; COTS parts are bought. The page calls them Custom, but the database still stores them as `made`, so no migration was needed for the name.
 
@@ -26,7 +40,7 @@ Every custom part goes through stages before it's on the robot (#15): **Design �
 - **Process 1 and 2:** a machine each: CNC router, lathe, mill, 3D printer, laser or hand tools. On the page they're shown by their machine, like "Lathe".
 - **Post-process:** deburring, tapping, finishing.
 
-Under each custom part, each stage shows its status (To do, In progress, Done) and how many of the part's quantity are through it ("1 of 3"). Anyone can count parts through with − and +, which never goes below 0 or above the part's quantity, and move a stage along with **Start** and **Mark done** (**Undo** goes back one). Anyone can choose a part's stages with **Change stages**.
+Under each custom part, each stage shows its status (To do, In progress, Done) and how many of the part's quantity are through it ("1 of 3"). Anyone on the team, students too, can count parts through with − and +, which never goes below 0 or above the part's quantity, and move a stage along with **Start** and **Mark done** (**Undo** goes back one). Anyone can choose a part's stages with **Change stages**.
 
 Each stage can be **assigned** to a person, with a due date (#16). Under a stage, **Assign** (or **Change**) picks who's doing it and when it's due; both can be left empty. A stage whose due date has passed and isn't done shows **Late**. Anyone on the team can assign stages. People whose access is switched off can't be given work.
 
@@ -46,6 +60,8 @@ Under each COTS part, the page shows what Inventory has, in plain text: "On the 
  `shelfItem()` in `data.ts` finds the Inventory part with the same **vendor part number**, ignoring capitals and spaces. Vendor names only decide when two Inventory parts have the same number, because the team writes them differently ("REV" and "REV Robotics"). Missing compares the shelf with that one line's quantity. It doesn't yet add up the same part used in more than one system (#17).
 
 ## Importing from Onshape
+
+Student leaders, mentors and admins import. Students can add a system's Onshape link, then ask one of them.
 
 1. **Link the system.** Open the system's assembly (or Part Studio) in Onshape, copy the address, and paste it into **Change system > Onshape link**.
 2. **Import from Onshape** reads its parts through the `onshape` server function (`supabase/functions/onshape/`), which holds the team's Onshape keys. Sub-assemblies are flattened into one list.
