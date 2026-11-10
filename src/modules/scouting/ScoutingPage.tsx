@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { shortDate } from '../../core/format'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick, Pill } from '../../core/ui'
-import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
+import { DRIVER_SKILLS, STOPS, saveEntry, syncEntries, useEntries, useSyncStatus, type Stop } from './data'
 import { COUNTERS, ENDGAME, ROLES } from './season'
 
 /** Width and height of the − and + buttons, in pixels. Big enough to tap without looking. */
@@ -35,9 +35,12 @@ function PickMany(props: { label: string; options: string[]; value: string[]; on
 
 // The form for one robot in one match. Every field comes from season.ts,
 // so a new game means new settings, not a new page. Saving goes through
-// saveEntry() in data.ts, which keeps the entry on this device.
+// saveEntry() in data.ts, which keeps the entry on this device and sends it
+// to the team database whenever there's a connection.
 export default function ScoutingPage() {
   const entries = useEntries()
+  const sync = useSyncStatus()
+  const waiting = entries.filter((e) => !e.synced).length
   const [match, setMatch] = useState('')
   const [team, setTeam] = useState('')
   const [counts, setCounts] = useState(zeroCounts)
@@ -81,6 +84,12 @@ export default function ScoutingPage() {
     setDriverSkill(0)
     setNotes('')
     toast(`Saved match ${result.value.match}, team ${result.value.team}.`)
+  }
+
+  async function sendNow() {
+    const result = await syncEntries()
+    if (!result.ok) toast(result.error)
+    else toast(result.value === 0 ? 'Everything on this phone is sent.' : `Sent ${result.value === 1 ? '1 entry' : `${result.value} entries`} to the team.`)
   }
 
   const tap = { width: TAP_SIZE, minHeight: TAP_SIZE, padding: 0, fontSize: 24 }
@@ -151,7 +160,25 @@ export default function ScoutingPage() {
           </div>
         </Panel>
       </form>
-      <Panel title="Saved on this device" aside={<span className="note">{entries.length} saved</span>}>
+      <Panel
+        title="Saved on this device"
+        aside={<span className="note">{waiting > 0 ? `${waiting} waiting` : entries.length > 0 ? 'All synced' : '0 saved'}</span>}
+      >
+        {/* Waiting entries send by themselves once there's a connection. The button is only for the impatient. */}
+        {waiting > 0 && (
+          <div className="panel-body">
+            <p className="note" style={{ margin: 0 }} aria-live="polite">
+              {sync.sending
+                ? 'Sending…'
+                : sync.problem
+                  ? `Not sent yet. ${sync.problem}`
+                  : "Waiting entries send to the team by themselves when there's a connection."}
+            </p>
+            <div className="toolbar">
+              <button type="button" className="btn" disabled={sync.sending} onClick={() => void sendNow()}>Send now</button>
+            </div>
+          </div>
+        )}
         {entries.length === 0 ? (
           <p className="panel-body muted">No entries yet. Fill in the form and press Save entry.</p>
         ) : (

@@ -3,9 +3,14 @@
  *
  * Entries: what a scout counted for one robot in one match. Venue Wi-Fi is
  * unreliable, so an entry is saved on this device first, in a store, and
- * marked as not synced. Sending entries to the team database comes later.
- * This is why entries aren't in a table from createTable(): on the live
- * site a table saves straight to the database, which needs a connection.
+ * marked Waiting (not synced). This is why entries aren't saved straight
+ * into a table from createTable(): on the live site a table saves to the
+ * database, which needs a connection.
+ *
+ * Syncing: Waiting entries are sent to the scouting_entries table whenever
+ * there's a connection (supabase/migrations/..._scouting_entries.sql), then
+ * marked Synced. Each keeps the id this device gave it, and the table skips
+ * an id it already has, so sending an entry twice never makes two rows.
  *
  * The Blue Alliance (TBA): an event's match schedule and rankings, and a
  * team's matches and name. These come through the `tba` server function
@@ -20,8 +25,9 @@ import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 import { currentUser } from '../../core/session'
+import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore } from '../../core/store'
-import { fail, ok, type Result } from '../../core/table'
+import { createTable, fail, newestFirst, ok, type Result, type Row } from '../../core/table'
 import { EVENT_KEY } from './season'
 
 // ---------------------------------------------------------------------------
@@ -46,6 +52,11 @@ export interface Entry {
   id: string
   /** ISO date and time it was saved. */
   created_at: string
+  /**
+   * The event it was scouted at, like 2026ilch. Entries saved before this
+   * was added don't have one; they're sent with today's EVENT_KEY.
+   */
+  event_key?: string
   /** The qualification match number. */
   match: number
   /** The team number, like 4096. */
@@ -91,11 +102,21 @@ export function useEntrySummary(): Notice {
 
 const isCount = (value: number) => Number.isInteger(value) && value > 0
 
+// The team database allows the same: see the checks in the scouting_entries
+// migration. An entry it would refuse could never sync, so refuse it here.
+export const MAX_MATCH = 1000
+export const MAX_TEAM = 99999
+export const MAX_NOTES_LENGTH = 1000
+
 /** Why an entry can't be saved, or null if it can. */
 export function checkEntry(fields: EntryFields): string | null {
   if (!isCount(fields.team)) return 'Enter the team number first.'
+  if (fields.team > MAX_TEAM) return `Check the team number: ${fields.team} is too big.`
   if (!isCount(fields.match)) return 'Enter the match number first.'
+  if (fields.match > MAX_MATCH) return `Check the match number: ${fields.match} is too big.`
   if (!DRIVER_SKILLS.includes(fields.driver_skill)) return 'Choose a driver skill first.'
+  const notes = fields.notes.trim().length
+  if (notes > MAX_NOTES_LENGTH) return `Keep the notes under ${MAX_NOTES_LENGTH} characters. These are ${notes}.`
   return null
 }
 
@@ -108,12 +129,155 @@ export function saveEntry(fields: EntryFields): Result<Entry> {
     notes: fields.notes.trim(),
     id: newId(),
     created_at: new Date().toISOString(),
+    event_key: EVENT_KEY,
     scouted_by: currentUser()?.id ?? null,
     synced: false,
   }
   entryStore.set((entries) => [entry, ...entries])
+  // Send it now if there's a connection. If not, it waits on this device.
+  void syncEntries()
   return ok(entry)
 }
+
+// ---------------------------------------------------------------------------
+// Syncing entries to the team database.
+
+/** One row of the scouting_entries table: an entry that reached the team database. */
+export interface ScoutingEntry extends Row {
+  event_key: string
+  match_number: number
+  team_number: number
+  counts: Record<string, number>
+  endgame: string
+  /** Any of ROLES in season.ts. */
+  roles: string[]
+  broke_down: boolean
+  stop: Stop
+  /** 1 to 5. Empty for entries saved before driver skill was on the form. */
+  driver_skill: number | null
+  notes: string | null
+  /** Who scouted it, and when, on their phone. */
+  scouted_by: string | null
+  scouted_at: string
+  /** Who sent it. Usually the scout, but a shared phone can send someone else's entries. */
+  created_by: string | null
+}
+
+// Made up, for demo mode. Team numbers in the 9990s, so nobody mistakes them for real scouting.
+const EXAMPLE_ENTRIES: ScoutingEntry[] = [
+  { id: '00000000-0000-4000-8000-0000000d0001', event_key: EVENT_KEY, match_number: 1, team_number: 9991, counts: { autoFuel: 3, teleopFuel: 12, fuelMissed: 4 }, endgame: 'Level 2', roles: ['Scorer'], broke_down: false, stop: 'None', driver_skill: 4, notes: 'Fast intake', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-07T15:02:00Z', created_at: '2026-11-07T15:03:00Z', created_by: DEMO_PEOPLE.jordan },
+  { id: '00000000-0000-4000-8000-0000000d0002', event_key: EVENT_KEY, match_number: 1, team_number: 9992, counts: { autoFuel: 0, teleopFuel: 5, fuelMissed: 1 }, endgame: 'None', roles: ['Defender'], broke_down: true, stop: 'A-stop', driver_skill: 2, notes: null, scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-07T15:02:30Z', created_at: '2026-11-07T15:04:00Z', created_by: DEMO_PEOPLE.alex },
+]
+
+export const entriesTable = createTable<ScoutingEntry>('scouting_entries', { demo: EXAMPLE_ENTRIES, sort: newestFirst })
+
+/** An entry saved on a phone before roles, broke down, stop and driver skill were on the form (#28). */
+type OlderEntry = Omit<Entry, 'roles' | 'broke_down' | 'stop' | 'driver_skill'> &
+  Partial<Pick<Entry, 'roles' | 'broke_down' | 'stop' | 'driver_skill'>> & { defense?: boolean }
+
+/**
+ * An entry from this device, as a row for the team database. Entries saved
+ * before #28 have "played defense" instead of roles: it becomes the
+ * Defender role, the way the form treats it now. Their other new fields are
+ * left at "no", "None" and empty.
+ */
+export function toRow(saved: Entry | OlderEntry): Omit<ScoutingEntry, 'created_at' | 'created_by'> {
+  const entry = saved as OlderEntry
+  return {
+    id: entry.id,
+    event_key: entry.event_key ?? EVENT_KEY,
+    match_number: entry.match,
+    team_number: entry.team,
+    counts: entry.counts,
+    endgame: entry.endgame,
+    roles: entry.roles ?? (entry.defense ? ['Defender'] : []),
+    broke_down: entry.broke_down ?? false,
+    stop: entry.stop ?? 'None',
+    driver_skill: entry.driver_skill ?? null,
+    notes: entry.notes.trim() || null,
+    scouted_by: entry.scouted_by,
+    scouted_at: entry.created_at,
+  }
+}
+
+/** Whether entries are being sent right now, and why the last try didn't work, if it didn't. */
+export interface SyncStatus {
+  sending: boolean
+  problem: string | null
+}
+
+// Only for this page visit: not saved.
+export const syncStatus = createStore<SyncStatus>('scouting-sync', 1, () => ({ sending: false, problem: null }), { persist: false, keepOnReset: true })
+
+export function useSyncStatus(): SyncStatus {
+  return useStore(syncStatus)
+}
+
+const NO_CONNECTION = "No connection. They'll send by themselves when this phone is back online."
+
+// The send under way, if there is one, so two tries at once share it.
+let inFlight: Promise<Result<number>> | null = null
+
+/**
+ * Send every Waiting entry to the team database, and mark them Synced.
+ * Gives back how many were sent. If it can't (no connection, or not signed
+ * in), they stay Waiting and the next try sends them. If a send is already
+ * under way, this waits for it, then sends whatever is still waiting, such
+ * as an entry saved in the meantime.
+ */
+export function syncEntries(): Promise<Result<number>> {
+  if (inFlight) return inFlight.then(() => syncEntries())
+  inFlight = send().finally(() => {
+    inFlight = null
+  })
+  return inFlight
+}
+
+async function send(): Promise<Result<number>> {
+  const waiting = entryStore.get().filter((e) => !e.synced)
+  if (waiting.length === 0) return ok(0)
+  if (globalThis.navigator?.onLine === false) {
+    syncStatus.set({ sending: false, problem: NO_CONNECTION })
+    return fail(NO_CONNECTION)
+  }
+  if (!currentUser()) return fail('Sign in to send your entries.')
+
+  syncStatus.set({ sending: true, problem: syncStatus.get().problem })
+  const result = await entriesTable.insertOnce(waiting.map(toRow))
+  if (!result.ok) {
+    syncStatus.set({ sending: false, problem: result.error })
+    return result
+  }
+  // Mark only the ones just sent: entries saved while sending stay Waiting.
+  const sent = new Set(waiting.map((e) => e.id))
+  entryStore.set((entries) => entries.map((e) => (sent.has(e.id) ? { ...e, synced: true } : e)))
+  syncStatus.set({ sending: false, problem: null })
+  return ok(waiting.length)
+}
+
+/** How often to try again while entries are waiting. */
+export const RETRY_MS = 60 * 1000
+
+/**
+ * Keep trying to send Waiting entries: when the app opens, when the phone
+ * comes back online, when the app comes back on screen, and every minute
+ * while any are waiting. Venue Wi-Fi comes and goes, so this doesn't rely
+ * on any one of them.
+ */
+function keepSyncing() {
+  const tryNow = () => {
+    if (entryStore.get().some((e) => !e.synced)) void syncEntries()
+  }
+  globalThis.addEventListener('online', tryNow)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') tryNow()
+  })
+  setInterval(tryNow, RETRY_MS)
+  setTimeout(tryNow, 0)
+}
+
+// Only in a browser: the tests call syncEntries() themselves.
+if (typeof window !== 'undefined' && typeof document !== 'undefined') keepSyncing()
 
 /** A random id like the database makes. Works on http:// pages too, unlike crypto.randomUUID(). */
 function newId(): string {
