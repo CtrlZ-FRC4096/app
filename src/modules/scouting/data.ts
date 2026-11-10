@@ -32,8 +32,8 @@ import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 import { currentUser } from '../../core/session'
 import { DEMO_PEOPLE } from '../../core/demo'
-import { createStore, useStore } from '../../core/store'
-import { createTable, fail, newestFirst, ok, type Result, type Row } from '../../core/table'
+import { createStore, useStore, type Store } from '../../core/store'
+import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row, type Table } from '../../core/table'
 import { EVENT_KEY } from './season'
 
 // ---------------------------------------------------------------------------
@@ -240,40 +240,49 @@ export function syncEntries(): Promise<Result<number>> {
   return inFlight
 }
 
+/** Whether any match or pit entry on this device is Waiting. */
+function hasWaiting(): boolean {
+  return entryStore.get().some((e) => !e.synced) || pitStore.get().some((e) => !e.synced)
+}
+
+/** Stop sending, and show why on the page. */
+function stopSending(problem: string): Result<number> {
+  syncStatus.set({ sending: false, problem })
+  return fail(problem)
+}
+
+// Sends match entries, then pit entries.
 async function send(): Promise<Result<number>> {
-  const waiting = entryStore.get().filter((e) => !e.synced)
-  const pitWaiting = pitStore.get().filter((e) => !e.synced)
-  if (waiting.length + pitWaiting.length === 0) return ok(0)
-  if (globalThis.navigator?.onLine === false) {
-    syncStatus.set({ sending: false, problem: NO_CONNECTION })
-    return fail(NO_CONNECTION)
-  }
+  if (!hasWaiting()) return ok(0)
+  if (globalThis.navigator?.onLine === false) return stopSending(NO_CONNECTION)
   if (!currentUser()) return fail('Sign in to send your entries.')
 
   syncStatus.set({ sending: true, problem: syncStatus.get().problem })
-  // Mark only the ones just sent: entries saved while sending stay Waiting.
-  const markSent = <T extends { id: string; synced: boolean }>(sent: T[]) => {
-    const ids = new Set(sent.map((e) => e.id))
-    return (entries: T[]) => entries.map((e) => (ids.has(e.id) ? { ...e, synced: true } : e))
-  }
-  if (waiting.length > 0) {
-    const result = await entriesTable.insertOnce(waiting.map(toRow))
-    if (!result.ok) {
-      syncStatus.set({ sending: false, problem: result.error })
-      return result
-    }
-    entryStore.set(markSent(waiting))
-  }
-  if (pitWaiting.length > 0) {
-    const result = await pitTable.insertOnce(pitWaiting.map(pitToRow))
-    if (!result.ok) {
-      syncStatus.set({ sending: false, problem: result.error })
-      return result
-    }
-    pitStore.set(markSent(pitWaiting))
-  }
+  const matches = await sendWaiting(entryStore, entriesTable, toRow)
+  if (!matches.ok) return stopSending(matches.error)
+  const pits = await sendWaiting(pitStore, pitTable, pitToRow)
+  if (!pits.ok) return stopSending(pits.error)
   syncStatus.set({ sending: false, problem: null })
-  return ok(waiting.length + pitWaiting.length)
+  return ok(matches.value + pits.value)
+}
+
+/**
+ * Send one kind of entry: the Waiting ones in a store go to its table, then
+ * are marked Synced. Gives back how many were sent.
+ */
+async function sendWaiting<E extends { id: string; synced: boolean }, T extends Row>(
+  store: Store<E[]>,
+  table: Table<T>,
+  asRow: (entry: E) => Fields<T> & { id: string },
+): Promise<Result<number>> {
+  const waiting = store.get().filter((e) => !e.synced)
+  if (waiting.length === 0) return ok(0)
+  const result = await table.insertOnce(waiting.map(asRow))
+  if (!result.ok) return result
+  // Mark only the ones just sent: entries saved while sending stay Waiting.
+  const sent = new Set(waiting.map((e) => e.id))
+  store.set((entries) => entries.map((e) => (sent.has(e.id) ? { ...e, synced: true } : e)))
+  return ok(waiting.length)
 }
 
 /** How often to try again while entries are waiting. */
@@ -287,7 +296,7 @@ export const RETRY_MS = 60 * 1000
  */
 function keepSyncing() {
   const tryNow = () => {
-    if ([...entryStore.get(), ...pitStore.get()].some((e) => !e.synced)) void syncEntries()
+    if (hasWaiting()) void syncEntries()
   }
   globalThis.addEventListener('online', tryNow)
   document.addEventListener('visibilitychange', () => {
@@ -603,6 +612,194 @@ export async function getPredictions(event = EVENT_KEY): Promise<Result<MatchPre
   return ok(
     (result.value?.matches ?? []).map(({ key, pred }) => ({ key, redWinChance: pred.winProb, redScore: pred.redScore, blueScore: pred.blueScore })),
   )
+}
+
+// ---------------------------------------------------------------------------
+// The match schedule page: The Blue Alliance's schedule with Match 13's
+// prediction for each match. The last ones fetched are saved on this
+// device, so the schedule still shows with no connection.
+
+/** Our team, so the schedule can pick out our matches. */
+export const OUR_TEAM = 4096
+
+/** One match on the schedule page. */
+export interface ScheduleRow {
+  key: string
+  /** Like "Qual 12" or "Semifinal 3". */
+  label: string
+  /** When it's expected to start, in seconds since 1970, or null. */
+  time: number | null
+  /** Team numbers on each side. */
+  red: number[]
+  blue: number[]
+  /** The real score once the match is played, or null before. */
+  score: { red: number; blue: number } | null
+  /** Match 13's prediction, or null if it hasn't predicted this match yet. */
+  prediction: MatchPrediction | null
+  /** True when our team plays in it. */
+  ours: boolean
+}
+
+const LEVELS: TbaMatch['comp_level'][] = ['qm', 'ef', 'qf', 'sf', 'f']
+const LEVEL_NAMES: Record<TbaMatch['comp_level'], string> = { qm: 'Qual', ef: 'Eighthfinal', qf: 'Quarterfinal', sf: 'Semifinal', f: 'Final' }
+
+/** "Qual 12", "Semifinal 3", "Final 2", or "Quarterfinal 1 match 2" when a set has more than one match. */
+export function matchLabel(match: Pick<TbaMatch, 'comp_level' | 'set_number' | 'match_number'>): string {
+  const name = LEVEL_NAMES[match.comp_level] ?? match.comp_level
+  if (match.comp_level === 'qm' || match.comp_level === 'f') return `${name} ${match.match_number}`
+  return match.match_number > 1 ? `${name} ${match.set_number} match ${match.match_number}` : `${name} ${match.set_number}`
+}
+
+/**
+ * Put each match with its prediction, matched by the match key, in the
+ * order they're played: qualifications, then playoffs. A match Match 13
+ * hasn't predicted yet still shows, with no prediction. Played matches have
+ * their real score.
+ */
+export function matchesWithPredictions(schedule: TbaMatch[], predictions: MatchPrediction[], team = OUR_TEAM): ScheduleRow[] {
+  const predicted = new Map(predictions.map((p) => [p.key, p]))
+  const order = (m: TbaMatch) => LEVELS.indexOf(m.comp_level)
+  return [...schedule]
+    .sort((a, b) => order(a) - order(b) || a.set_number - b.set_number || a.match_number - b.match_number)
+    .map((m) => {
+      const red = m.alliances.red.team_keys.map(teamNumber)
+      const blue = m.alliances.blue.team_keys.map(teamNumber)
+      // TBA sends -1 (or sometimes null) until the match is played.
+      const scored = (score: number | null) => typeof score === 'number' && score >= 0
+      const played = scored(m.alliances.red.score) && scored(m.alliances.blue.score)
+      return {
+        key: m.key,
+        label: matchLabel(m),
+        time: m.predicted_time ?? null,
+        red,
+        blue,
+        score: played ? { red: m.alliances.red.score, blue: m.alliances.blue.score } : null,
+        prediction: predicted.get(m.key) ?? null,
+        ours: red.includes(team) || blue.includes(team),
+      }
+    })
+}
+
+/** Who's likely to win and their chance, like "Red 72%", or "Toss-up" when it's even. */
+export function likelyWinner(prediction: MatchPrediction): string {
+  const red = Math.round(prediction.redWinChance * 100)
+  if (red === 50) return 'Toss-up'
+  return red > 50 ? `Red ${red}%` : `Blue ${100 - red}%`
+}
+
+/** "just now", "1 minute ago", "3 hours ago", "2 days ago". */
+export function updatedAgo(at: string, now: Date = new Date()): string {
+  const minutes = Math.max(0, Math.floor((now.getTime() - Date.parse(at)) / 60_000))
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${plural(minutes, 'minute', 'minutes')} ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) return `${plural(hours, 'hour', 'hours')} ago`
+  return `${Math.floor(hours / 24)} days ago`
+}
+
+/** The schedule and predictions as last fetched, kept on this device. */
+export interface SavedSchedule {
+  event: string
+  matches: TbaMatch[]
+  predictions: MatchPrediction[]
+  /** ISO date and time they were fetched. */
+  savedAt: string
+}
+
+// Kept through "Reset example data", like entries: at an event it may be the
+// only copy of the schedule on a phone with no connection.
+export const scheduleStore = createStore<SavedSchedule | null>('scouting-schedule', 1, () => null, { keepOnReset: true })
+
+/**
+ * The schedule saved on this device for the event, or null if there isn't
+ * one yet. Anything that needs the schedule with no connection (such as
+ * filling in the team from the match number, #40) can use this.
+ */
+export function savedSchedule(event = EVENT_KEY): SavedSchedule | null {
+  const saved = scheduleStore.get()
+  return saved?.event === event ? saved : null
+}
+
+export function useSavedSchedule(event = EVENT_KEY): SavedSchedule | null {
+  const saved = useStore(scheduleStore)
+  return saved?.event === event ? saved : null
+}
+
+export interface ScheduleStatus {
+  loading: boolean
+  /** Why the last try didn't work, written for the person, or null. */
+  problem: string | null
+}
+
+// Only for this page visit: not saved.
+export const scheduleStatus = createStore<ScheduleStatus>('scouting-schedule-status', 1, () => ({ loading: false, problem: null }), { persist: false, keepOnReset: true })
+
+export function useScheduleStatus(): ScheduleStatus {
+  return useStore(scheduleStatus)
+}
+
+// The fetch under way, if there is one, so two tries at once share it.
+let scheduleInFlight: Promise<Result<SavedSchedule>> | null = null
+
+/**
+ * Get the latest schedule and predictions, and save them on this device.
+ * If the schedule can't be fetched, the saved one stays. If only the
+ * predictions can't, the schedule is saved with the last predictions.
+ */
+export function refreshSchedule(event = EVENT_KEY): Promise<Result<SavedSchedule>> {
+  scheduleInFlight ??= fetchSchedule(event).finally(() => {
+    scheduleInFlight = null
+  })
+  return scheduleInFlight
+}
+
+async function fetchSchedule(event: string): Promise<Result<SavedSchedule>> {
+  if (globalThis.navigator?.onLine === false) {
+    scheduleStatus.set({ loading: false, problem: 'No connection.' })
+    return fail('No connection.')
+  }
+  scheduleStatus.set((now) => ({ ...now, loading: true }))
+  const [schedule, predictions] = await Promise.all([getSchedule(event), getPredictions(event)])
+  if (!schedule.ok) {
+    scheduleStatus.set({ loading: false, problem: schedule.error })
+    return schedule
+  }
+  const saved: SavedSchedule = {
+    event,
+    matches: schedule.value,
+    predictions: predictions.ok ? predictions.value : (savedSchedule(event)?.predictions ?? []),
+    savedAt: new Date().toISOString(),
+  }
+  scheduleStore.set(saved)
+  scheduleStatus.set({
+    loading: false,
+    problem: predictions.ok ? null : `Couldn't get new predictions from Match 13, so these may be old. ${predictions.error}`,
+  })
+  return ok(saved)
+}
+
+/** How often the schedule page asks again. The match13 function reuses its answer for 2 minutes, so sooner doesn't help. */
+export const SCHEDULE_REFRESH_MS = 2 * 60 * 1000
+
+/**
+ * While the schedule page is open, keep it up to date: ask now, every 2
+ * minutes, when the app comes back on screen, and when the phone comes back
+ * online. Gives back a function that stops it, for when the page closes.
+ */
+export function keepScheduleFresh(event = EVENT_KEY): () => void {
+  const refresh = () => void refreshSchedule(event)
+  const onScreen = () => {
+    if (globalThis.document?.visibilityState === 'visible') refresh()
+  }
+  globalThis.addEventListener?.('online', refresh)
+  globalThis.document?.addEventListener('visibilitychange', onScreen)
+  const timer = setInterval(refresh, SCHEDULE_REFRESH_MS)
+  refresh()
+  return () => {
+    globalThis.removeEventListener?.('online', refresh)
+    globalThis.document?.removeEventListener('visibilitychange', onScreen)
+    clearInterval(timer)
+  }
 }
 
 // ---------------------------------------------------------------------------
