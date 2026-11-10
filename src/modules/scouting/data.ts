@@ -3,9 +3,15 @@
  *
  * Entries: what a scout counted for one robot in one match. Venue Wi-Fi is
  * unreliable, so an entry is saved on this device first, in a store, and
- * marked as not synced. Sending entries to the team database comes later.
- * This is why entries aren't in a table from createTable(): on the live
- * site a table saves straight to the database, which needs a connection.
+ * marked as not synced (Waiting). That's why saving doesn't use a table
+ * from createTable(): on the live site a table saves straight to the
+ * database, which needs a connection.
+ *
+ * Syncing: syncEntries() sends Waiting entries to the scouting_entries
+ * table (entriesTable below), where everyone on the team can see them, and
+ * marks them Synced. It runs after each save, when the connection comes
+ * back, and every minute while anything is Waiting. The table and its rules
+ * are in supabase/migrations/..._scouting_entries.sql.
  *
  * The Blue Alliance (TBA): an event's match schedule and rankings, and a
  * team's matches and name. These come through the `tba` server function
@@ -16,12 +22,15 @@
  * The types are the parts of TBA's answers we use. TBA sends more; see
  * https://www.thebluealliance.com/apidocs/v3 for everything.
  */
+import { useSyncExternalStore } from 'react'
 import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 import { currentUser } from '../../core/session'
 import { createStore, useStore } from '../../core/store'
-import { fail, ok, type Result } from '../../core/table'
+import { supabase } from '../../core/supabase'
+import { createTable, explain, fail, ok, type Fields, type Result, type Row } from '../../core/table'
+import { DEMO_PEOPLE } from '../../core/demo'
 import { EVENT_KEY } from './season'
 
 // ---------------------------------------------------------------------------
@@ -34,18 +43,23 @@ export type Stop = (typeof STOPS)[number]
 /** Driver skill, from 1 (struggles to drive) to 5 (smooth and quick). */
 export const DRIVER_SKILLS = [1, 2, 3, 4, 5]
 
+/** The database allows up to this many characters of notes. */
+export const MAX_NOTES_LENGTH = 1000
+
 /**
  * What a scout recorded for one robot in one match.
  *
- * Entries saved before roles, broke_down, stop and driver_skill were added
- * don't have them, and have a defense field instead. Syncing must fill in
- * the missing ones rather than assume every entry has them.
+ * Entries saved before event, roles, broke_down, stop and driver_skill were
+ * added don't have them, and have a defense field instead. toTeamEntry()
+ * fills in the missing ones when they're sent.
  */
 export interface Entry {
   /** Made on the device, so sending an entry twice can't make two rows. */
   id: string
   /** ISO date and time it was saved. */
   created_at: string
+  /** EVENT_KEY from season.ts when it was saved, like 2026ilch. */
+  event: string
   /** The qualification match number. */
   match: number
   /** The team number, like 4096. */
@@ -96,6 +110,8 @@ export function checkEntry(fields: EntryFields): string | null {
   if (!isCount(fields.team)) return 'Enter the team number first.'
   if (!isCount(fields.match)) return 'Enter the match number first.'
   if (!DRIVER_SKILLS.includes(fields.driver_skill)) return 'Choose a driver skill first.'
+  const notes = fields.notes.trim().length
+  if (notes > MAX_NOTES_LENGTH) return `Keep the notes under ${MAX_NOTES_LENGTH} characters. These are ${notes}.`
   return null
 }
 
@@ -108,6 +124,7 @@ export function saveEntry(fields: EntryFields): Result<Entry> {
     notes: fields.notes.trim(),
     id: newId(),
     created_at: new Date().toISOString(),
+    event: EVENT_KEY,
     scouted_by: currentUser()?.id ?? null,
     synced: false,
   }
@@ -122,6 +139,167 @@ function newId(): string {
   bytes[8] = (bytes[8] & 0x3f) | 0x80
   const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+// ---------------------------------------------------------------------------
+// Syncing: entries the team can see, in the team database.
+
+/** One row of the scouting_entries table: a synced entry. The fields match its columns. */
+export interface TeamEntry extends Row {
+  /** Who scouted it: the entry's scouted_by. Show their name with useMemberNames(). */
+  created_by: string | null
+  event: string
+  match: number
+  team: number
+  counts: Record<string, number>
+  endgame: string
+  roles: string[]
+  broke_down: boolean
+  stop: Stop
+  /** Null only for entries saved before driver skill was on the form. */
+  driver_skill: number | null
+  notes: string
+}
+
+const EXAMPLE_TEAM_ENTRIES: TeamEntry[] = [
+  {
+    id: '00000000-0000-4000-8000-0000005c0001',
+    created_at: '2026-03-13T15:09:00Z',
+    created_by: DEMO_PEOPLE.alex,
+    event: EVENT_KEY,
+    match: 1,
+    team: 9991,
+    counts: { autoFuel: 4, teleopFuel: 18, fuelMissed: 3 },
+    endgame: 'Level 2',
+    roles: ['Scorer'],
+    broke_down: false,
+    stop: 'None',
+    driver_skill: 4,
+    notes: 'Quick to line up shots.',
+  },
+  {
+    id: '00000000-0000-4000-8000-0000005c0002',
+    created_at: '2026-03-13T15:10:00Z',
+    created_by: DEMO_PEOPLE.jordan,
+    event: EVENT_KEY,
+    match: 1,
+    team: 9993,
+    counts: { autoFuel: 0, teleopFuel: 6, fuelMissed: 5 },
+    endgame: 'None',
+    roles: ['Defender'],
+    broke_down: true,
+    stop: 'None',
+    driver_skill: 2,
+    notes: 'Intake stopped working halfway through.',
+  },
+]
+
+export const entriesTable = createTable<TeamEntry>('scouting_entries', { demo: EXAMPLE_TEAM_ENTRIES })
+
+/**
+ * An entry as a row for the table. Entries saved before some fields were on
+ * the form get the same values a new form starts with, and this event.
+ */
+export function toTeamEntry(entry: Entry): TeamEntry {
+  // Older entries are missing fields their type says they have.
+  const saved: Partial<Entry> = entry
+  return {
+    id: entry.id,
+    created_at: entry.created_at,
+    created_by: entry.scouted_by,
+    event: saved.event ?? EVENT_KEY,
+    match: entry.match,
+    team: entry.team,
+    counts: entry.counts,
+    endgame: entry.endgame,
+    roles: saved.roles ?? [],
+    broke_down: saved.broke_down ?? false,
+    stop: saved.stop ?? 'None',
+    driver_skill: saved.driver_skill ?? null,
+    notes: entry.notes,
+  }
+}
+
+/**
+ * False when the phone knows it has no connection. Phones can also say
+ * they're connected to venue Wi-Fi that has no internet, so a true here
+ * doesn't promise sending will work.
+ */
+export function isOnline(): boolean {
+  return globalThis.navigator?.onLine !== false
+}
+
+/** isOnline() for a page. The page redraws when the connection comes or goes. */
+export function useOnline(): boolean {
+  return useSyncExternalStore(subscribeOnline, isOnline, () => true)
+}
+
+function subscribeOnline(listener: () => void) {
+  window.addEventListener('online', listener)
+  window.addEventListener('offline', listener)
+  return () => {
+    window.removeEventListener('online', listener)
+    window.removeEventListener('offline', listener)
+  }
+}
+
+/**
+ * The Waiting entries the signed-in person can send. The database only
+ * takes someone's own entries, so on a phone shared by scouts, each
+ * person's entries wait until they sign in.
+ */
+export function entriesToSend(entries: Entry[], userId: string | null | undefined): Entry[] {
+  return entries.filter((e) => !e.synced && userId != null && e.scouted_by === userId)
+}
+
+let sending: Promise<Result<number>> | null = null
+
+/**
+ * Send the signed-in person's Waiting entries to the team database, then
+ * mark them Synced. Returns how many were sent. If it fails, they stay
+ * Waiting, to try again later. If it's already sending, this waits for that.
+ */
+export function syncEntries(): Promise<Result<number>> {
+  sending ??= sendWaiting().finally(() => {
+    sending = null
+  })
+  return sending
+}
+
+async function sendWaiting(): Promise<Result<number>> {
+  const toSend = entriesToSend(entryStore.get(), currentUser()?.id)
+  if (toSend.length === 0) return ok(0)
+  if (!isOnline()) return fail("No connection. Entries will send when it's back.")
+  const rows = toSend.map(toTeamEntry)
+  if (supabase) {
+    // All at once. An id the database already has was sent before, perhaps
+    // just as the connection dropped, so it's skipped instead of failing.
+    const { error } = await supabase.from(entriesTable.name).upsert(rows, { onConflict: 'id', ignoreDuplicates: true })
+    if (error) return fail(explain(error))
+  } else {
+    // Demo mode: add them to the example table, skipping ids it has, like
+    // the database does. The rows keep their own id and created_at, which
+    // the demo table's insert leaves alone.
+    const have = new Set(entriesTable.rows().map((row) => row.id))
+    for (const row of rows.filter((r) => !have.has(r.id))) {
+      const result = await entriesTable.insert(row as Fields<TeamEntry>)
+      if (!result.ok) return result
+    }
+  }
+  const sent = new Set(toSend.map((e) => e.id))
+  entryStore.set((entries) => entries.map((e) => (sent.has(e.id) ? { ...e, synced: true } : e)))
+  return ok(sent.size)
+}
+
+// Keep trying in the background. Not in the tests, which have no window.
+const RETRY_MS = 60_000
+if (typeof window !== 'undefined') {
+  const retry = () => void syncEntries()
+  window.addEventListener('online', retry)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') retry()
+  })
+  setInterval(retry, RETRY_MS)
 }
 
 // ---------------------------------------------------------------------------

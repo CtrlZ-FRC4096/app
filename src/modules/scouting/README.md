@@ -6,9 +6,12 @@
 
 - The match form, drawn from `season.ts`: counters, role (choose any), broke down, E-stop or A-stop, driver skill, endgame and notes
 - Save entry: `saveEntry()` in `data.ts` keeps the entry on this device, marked Waiting. It refuses an entry with no team or match number, or no driver skill chosen.
-- A list of the entries saved on this device, newest first
+- A list of the entries saved on this device, newest first, each Waiting or Synced
+- Syncing: `syncEntries()` sends Waiting entries to the team database and marks them Synced. It runs after each save, when the connection comes back, and every minute while anything is Waiting. There's also a Send now button.
 
-Entries are kept in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. Sending Waiting entries to the team database is the next step.
+Entries are saved in a store on the device first (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. Once sent, they're in the `scouting_entries` table (`entriesTable`), where every signed-in member can read everyone's entries. Use that table for anything that adds up the team's scouting.
+
+The database only takes a scout's own entries. On a phone shared by scouts, each person's entries stay Waiting until they sign in on it. iPhones delete a website's saved data after about 7 days without a visit (unless the app is on the home screen), so make sure entries sync soon after an event.
 
 ## What it needs to do
 

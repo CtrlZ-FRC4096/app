@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from 'react'
-import { shortDate } from '../../core/format'
+import { plural, shortDate } from '../../core/format'
+import { useMemberNames } from '../../core/members'
+import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick, Pill } from '../../core/ui'
-import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
+import { DRIVER_SKILLS, MAX_NOTES_LENGTH, STOPS, entriesToSend, saveEntry, syncEntries, useEntries, useOnline, type Stop } from './data'
 import { COUNTERS, ENDGAME, ROLES } from './season'
 
 /** Width and height of the − and + buttons, in pixels. Big enough to tap without looking. */
@@ -35,9 +37,15 @@ function PickMany(props: { label: string; options: string[]; value: string[]; on
 
 // The form for one robot in one match. Every field comes from season.ts,
 // so a new game means new settings, not a new page. Saving goes through
-// saveEntry() in data.ts, which keeps the entry on this device.
+// saveEntry() in data.ts, which keeps the entry on this device, and
+// syncEntries() sends it to the team database when it can.
 export default function ScoutingPage() {
+  const { id: me } = useSession()
+  const nameOf = useMemberNames()
+  const online = useOnline()
   const entries = useEntries()
+  const toSend = entriesToSend(entries, me)
+  const [sending, setSending] = useState(false)
   const [match, setMatch] = useState('')
   const [team, setTeam] = useState('')
   const [counts, setCounts] = useState(zeroCounts)
@@ -81,6 +89,15 @@ export default function ScoutingPage() {
     setDriverSkill(0)
     setNotes('')
     toast(`Saved match ${result.value.match}, team ${result.value.team}.`)
+    // Send it now if there's a connection. If not, it waits and sends later.
+    void syncEntries()
+  }
+
+  async function sendNow() {
+    setSending(true)
+    const result = await syncEntries()
+    setSending(false)
+    toast(result.ok ? `Sent ${plural(result.value, 'entry', 'entries')}.` : result.error)
   }
 
   const tap = { width: TAP_SIZE, minHeight: TAP_SIZE, padding: 0, fontSize: 24 }
@@ -143,7 +160,7 @@ export default function ScoutingPage() {
             <Pick label="Endgame" options={ENDGAME} value={endgame} onChange={setEndgame} />
             <label className="field" htmlFor="scout-notes">
               Notes
-              <textarea id="scout-notes" className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything the form doesn't show: tipped, fast cycles, slow intake" />
+              <textarea id="scout-notes" className="input" rows={3} maxLength={MAX_NOTES_LENGTH} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything the form doesn't show: tipped, fast cycles, slow intake" />
             </label>
             <div className="toolbar">
               <button type="submit" className="btn btn-lg btn-primary">Save entry</button>
@@ -152,13 +169,31 @@ export default function ScoutingPage() {
         </Panel>
       </form>
       <Panel title="Saved on this device" aside={<span className="note">{entries.length} saved</span>}>
+        {toSend.length > 0 && (
+          <div className="panel-body toolbar">
+            <button type="button" className="btn btn-lg" disabled={sending || !online} onClick={() => void sendNow()}>
+              {sending ? 'Sending…' : 'Send now'}
+            </button>
+            <span className="note">
+              {online ? `${plural(toSend.length, 'entry', 'entries')} waiting to send.` : "No connection. Entries will send when it's back."}
+            </span>
+          </div>
+        )}
         {entries.length === 0 ? (
           <p className="panel-body muted">No entries yet. Fill in the form and press Save entry.</p>
         ) : (
           <div className="row-list">
             {entries.map((e) => (
               <div key={e.id}>
-                <span>Match {e.match} · Team {e.team}<br /><span className="note">{shortDate(e.created_at)}</span></span>
+                <span>
+                  Match {e.match} · Team {e.team}
+                  <br />
+                  <span className="note">
+                    {shortDate(e.created_at)}
+                    {/* On a shared phone, the database only takes each scout's own entries. */}
+                    {!e.synced && e.scouted_by !== me && ` · Waiting for ${nameOf(e.scouted_by)} to sign in`}
+                  </span>
+                </span>
                 <span style={{ marginLeft: 'auto' }}>
                   {e.synced ? <Pill tone="ok">Synced</Pill> : <Pill tone="warn">Waiting</Pill>}
                 </span>
