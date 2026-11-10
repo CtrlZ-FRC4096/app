@@ -5,6 +5,7 @@ import { PageHead, Panel, Pick } from '../../core/ui'
 import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
 import FormSection from './FormSection'
 import PitForm from './PitForm'
+import RankingsPage from './RankingsPage'
 import Schedule from './Schedule'
 import SavedOnDevice from './SavedOnDevice'
 import TeamPage, { TeamLink } from './TeamPage'
@@ -38,16 +39,16 @@ function PickMany(props: { label: string; options: string[]; value: string[]; on
   )
 }
 
-const VIEWS = ['Match', 'Pit', 'Schedule']
+const VIEWS = ['Match', 'Pit', 'Schedule', 'Rankings']
 /** Each view's address after #/scouting/. */
-const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule' }
+const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule', Rankings: 'rankings' }
 
-// A Match / Pit / Schedule switch at the top. The choice is in the address,
-// so #/scouting/pit opens the pit form straight away: a menu or a bookmark
-// can link to any of them. Both forms stay on the page, and the one not
-// chosen is hidden, so switching doesn't lose what's typed. The schedule is
-// only on the page while it's chosen, so it only updates while someone's
-// looking at it.
+// A Match / Pit / Schedule / Rankings switch at the top. The choice is in the
+// address, so #/scouting/pit opens the pit form straight away: a menu or a
+// bookmark can link to any of them. Both forms stay on the page, and the one not
+// chosen is hidden, so switching doesn't lose what's typed. The schedule and
+// rankings are only on the page while they're chosen, so they only update
+// while someone's looking at them.
 //
 // #/scouting/team/9991 is the team page for team 9991 (TeamPage.tsx), with
 // both forms hidden. It's only drawn while open: it waits for the team
@@ -64,6 +65,7 @@ export default function ScoutingPage() {
       <div hidden={view !== 'Match'}><MatchForm /></div>
       <div hidden={view !== 'Pit'}><PitForm /></div>
       {view === 'Schedule' && <Schedule />}
+      {view === 'Rankings' && <RankingsPage />}
       {view === 'Team' && <TeamPage team={Number.isInteger(team) && team > 0 ? team : null} />}
     </>
   )

@@ -3,6 +3,9 @@
 import { describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import ScoutingPage from './ScoutingPage'
+import RankingsPage from './RankingsPage'
+import { rankingsStore } from './data'
+import { EVENT_KEY } from './season'
 import Schedule from './Schedule'
 import TeamPage from './TeamPage'
 import { AUTO_SIDES, COUNTERS, DRIVETRAINS, ROLES } from './season'
@@ -87,5 +90,27 @@ describe('the match form', () => {
     const html = renderToString(<ScoutingPage />)
     const driverSkill = html.slice(html.indexOf('aria-label="Driver skill"'))
     expect(driverSkill.slice(0, driverSkill.indexOf('</div>'))).not.toContain('aria-pressed="true"')
+  })
+})
+
+describe('the rankings page', () => {
+  const ranking = { rank: 1, team_key: 'frc9991', record: { wins: 5, losses: 1, ties: 0 }, matches_played: 6, extra_stats: [17] }
+
+  it('shows the rankings kept on this device, with when they are from', () => {
+    rankingsStore.set({ event: EVENT_KEY, rankings: [ranking], checked_at: new Date().toISOString() })
+    // React puts <!-- --> between text and numbers: take them out to read it.
+    const html = renderToString(<RankingsPage />).replaceAll('<!-- -->', '')
+    expect(html).toContain('Updated just now')
+    expect(html).toContain('Team 9991')
+    expect(html).toContain('5-1-0')
+    expect(html).toContain('17 RP')
+  })
+
+  it("doesn't show rankings kept from another event", () => {
+    rankingsStore.set({ event: '2025oldevent', rankings: [ranking], checked_at: new Date().toISOString() })
+    const html = renderToString(<RankingsPage />)
+    expect(html).not.toContain('Team 9991')
+    expect(html).toContain('No rankings on this phone yet')
+    rankingsStore.reset()
   })
 })
