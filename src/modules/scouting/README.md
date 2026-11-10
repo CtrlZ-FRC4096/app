@@ -26,6 +26,7 @@
   - **Numbers**: each counter in `season.ts`, its average per match and each match's count
   - **How often**: bars for endgame, role, driver skill, E-stop or A-stop, and drivetrain (from the pit form), and how often it broke down
   - **Written answers**: match notes and pit answers, newest first, with who wrote them
+  - **Match 13** (#37, `TeamRatings.tsx`): the team's xP rank at the event ("Rank 3 of 42"), its xP and how much it changed since the event started, the Auto / Teleop / Endgame parts, Statbotics' EPA and the win-loss-tie record, with when the numbers are from and a **Refresh** button. It reads the saved copy from `useRatings()` (see "One team's numbers" below), so with no connection it shows the saved numbers and says so. A team Match 13 hasn't rated shows "No Match 13 rating yet", and a part Match 13 left out shows "not given".
 
   The sums are `teamSummary()` in `data.ts`, a plain function so the picklist can use the same numbers. Adding a counter to `season.ts` adds it to the page with no other change. It counts this event's match and pit entries from the team database plus this phone's Waiting ones; two scouts watching the same robot count as two entries. `pitAnswers()` and `pitDrivetrain()` are the only code that reads a pit entry's answers. Each panel is its own component, so new ones (like Match 13's numbers or match videos) go below the others.
 - The Competition menu lists Match, Pit, Schedule and Teams under Scouting (`pages` in `index.ts`).
@@ -85,6 +86,25 @@ They work like The Blue Alliance's above: same `EVENT_KEY`, same
 `{ ok, value }` answers, and made-up example data in demo mode. Match 13
 has no schedule or team names: get those from The Blue Alliance and match
 them up by the match `key` or the team number.
+
+### One team's numbers (#37)
+
+For a team page or the picklist, don't call `getRatings()` from the page.
+Use the saved copy instead: one request gets every team, and it still
+shows with no Wi-Fi.
+
+| In `data.ts` | Gives you |
+|:--|:--|
+| `useRatings()` | Every team's rating (Match 13) and ranking (The Blue Alliance) at `EVENT_KEY`, saved on this device. Loads when nothing's saved, when the copy is over 5 minutes old (`STALE_MS`), and when the phone comes back online. Has `loading`, `error`, `loadedAt` and `refresh()` for a Refresh button |
+| `teamRating(ratings, team)` | One team's rating, xP rank (tied teams share a rank), how many teams were rated, and the change since the event started. `null` means "No Match 13 rating yet" |
+| `teamRecord(rankings, team)` | Their wins, losses and ties, or `null` |
+| `signed(n)` | A change like "+4.6" or "−1.4" |
+| `savedWhen(loadedAt)` | When the saved numbers are from, like "Today at 3:40 PM" |
+
+If a load doesn't work, the last copy stays and `error` says why. Match 13
+having nothing for the event yet isn't an error: nobody's rated yet. A copy
+saved for another event counts as nothing saved. "Reset example data" may
+clear the copy; that's fine, it loads again.
 - Scouting data is visible to signed-in team members only.
 
 ## Where to start

@@ -27,7 +27,8 @@
  * example data in demo mode. See https://match13.com/docs/api for
  * everything Match 13 sends.
  */
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
+import { TEAM_TIME_ZONE } from '../../core/calendar'
 import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
@@ -1044,6 +1045,165 @@ export function keepScheduleFresh(event = EVENT_KEY): () => void {
     globalThis.document?.removeEventListener('visibilitychange', onScreen)
     clearInterval(timer)
   }
+}
+
+// ---------------------------------------------------------------------------
+// One team's Match 13 numbers (#37), and a saved copy of every team's.
+//
+// getRatings() gets every team at the event in one request, so pages don't
+// ask for one team at a time: they read the saved copy with useRatings(),
+// then find a team in it with teamRating(). The win-loss record comes from
+// The Blue Alliance's getRankings(), since Match 13 doesn't have records.
+//
+// The copy is kept on this device, because Match 13 is sometimes down and
+// venue Wi-Fi is worse: with no connection, pages show the saved numbers
+// and when they're from (savedWhen()). The team page and the picklist (#42)
+// both use this copy, so neither makes its own requests.
+
+/** A team's Match 13 rating, and where it puts them at the event. */
+export interface TeamRating {
+  rating: Match13Rating
+  /** Their xP rank at the event: 1 is best. Teams with the same xpEnd share a rank. */
+  rank: number
+  /** How many teams Match 13 rated at the event. */
+  teams: number
+  /** xpEnd minus xpStart, to one decimal place: how much they've gone up (or down) at the event. */
+  change: number
+}
+
+const oneDecimal = (n: number) => Math.round(n * 10) / 10
+
+/**
+ * One team's rating and rank, from every team's ratings (getRatings() or
+ * useRatings()). Null when Match 13 hasn't rated them at this event: show
+ * "No Match 13 rating yet", not an error.
+ */
+export function teamRating(ratings: Match13Rating[], team: number): TeamRating | null {
+  const rating = ratings.find((r) => r.teamNumber === team)
+  if (!rating) return null
+  // Tied teams share a rank: two teams at the top are both 1, and the next is 3.
+  const rank = 1 + ratings.filter((r) => r.xpEnd > rating.xpEnd).length
+  return { rating, rank, teams: ratings.length, change: oneDecimal(rating.xpEnd - rating.xpStart) }
+}
+
+/** A team's wins, losses and ties at the event, from getRankings(). Null if they aren't in the rankings yet. */
+export function teamRecord(rankings: TbaRanking[], team: number): { wins: number; losses: number; ties: number } | null {
+  return rankings.find((r) => teamNumber(r.team_key) === team)?.record ?? null
+}
+
+/** A change with its sign, to one decimal place: "+4.6", "−1.4" or "0.0". */
+export function signed(n: number): string {
+  const rounded = oneDecimal(n)
+  if (rounded > 0) return `+${rounded.toFixed(1)}`
+  if (rounded < 0) return `−${Math.abs(rounded).toFixed(1)}`
+  return '0.0'
+}
+
+/** When the saved numbers are from, in Chicago time: "Today at 3:40 PM" or "Nov 8 at 3:40 PM". */
+export function savedWhen(iso: string, now: Date = new Date()): string {
+  const at = new Date(iso)
+  const day = (date: Date) => new Intl.DateTimeFormat('en-US', { timeZone: TEAM_TIME_ZONE, month: 'short', day: 'numeric' }).format(date)
+  const time = new Intl.DateTimeFormat('en-US', { timeZone: TEAM_TIME_ZONE, hour: 'numeric', minute: '2-digit' }).format(at)
+  return `${day(at) === day(now) ? 'Today' : day(at)} at ${time}`
+}
+
+/** Load again when the saved copy is older than this. */
+export const STALE_MS = 5 * 60 * 1000
+
+/** The saved copy of the event's Match 13 ratings and TBA rankings. */
+export interface RatingsState {
+  /** The event they're for, or null if nothing's saved. A copy for another event counts as nothing saved. */
+  event: string | null
+  /** Every team's rating, best first. Empty if none are saved, or Match 13 hasn't rated anyone yet. */
+  ratings: Match13Rating[]
+  /** The Blue Alliance's rankings, for each team's record. */
+  rankings: TbaRanking[]
+  /** When the ratings were last loaded, as ISO, or null if never. */
+  loadedAt: string | null
+  /** Why the last load didn't work, or null. The saved copy stays when it doesn't. */
+  error: string | null
+}
+
+const noRatings = (): RatingsState => ({ event: null, ratings: [], rankings: [], loadedAt: null, error: null })
+
+// Saved on this device, so the numbers still show with no connection. Not
+// keepOnReset: it's only a copy, so "Reset example data" may clear it.
+export const ratingsStore = createStore<RatingsState>('scouting-ratings', 1, noRatings)
+// Only for this page visit: not saved.
+const ratingsLoading = createStore('scouting-ratings-loading', 1, () => false, { persist: false, keepOnReset: true })
+
+/** The saved copy for this event (EVENT_KEY), for code outside a page. A copy for another event gives nothing saved. */
+export function savedRatings(): RatingsState {
+  const saved = ratingsStore.get()
+  return saved.event === EVENT_KEY ? saved : noRatings()
+}
+
+/** Whether to load again: nothing saved for this event, or the copy is older than STALE_MS. */
+export function needsLoading(saved: RatingsState, now: Date = new Date()): boolean {
+  return saved.event !== EVENT_KEY || !saved.loadedAt || now.getTime() - Date.parse(saved.loadedAt) > STALE_MS
+}
+
+// What the match13 function says when Match 13 has no ratings for the
+// event yet (see supabase/functions/match13/match13.ts). That just means
+// nobody's rated yet, so it isn't shown as a problem.
+const NOT_RATED_YET = /nothing for that event/i
+
+// The load under way, if there is one, so two pages loading at once share it.
+let loading: Promise<void> | null = null
+
+/**
+ * Load every team's Match 13 rating and TBA ranking at the event, and save
+ * them on this device. Each part is saved only if its own request worked;
+ * if one didn't, the last saved copy of it stays and `error` says why.
+ */
+export function loadRatings(now: Date = new Date()): Promise<void> {
+  if (!loading) {
+    ratingsLoading.set(true)
+    loading = load(now).finally(() => {
+      loading = null
+      ratingsLoading.set(false)
+    })
+  }
+  return loading
+}
+
+async function load(now: Date): Promise<void> {
+  const [ratings, rankings] = await Promise.all([getRatings(EVENT_KEY), getRankings(EVENT_KEY)])
+  const notRatedYet = !ratings.ok && NOT_RATED_YET.test(ratings.error)
+  const rated: Result<Match13Rating[]> = notRatedYet ? ok([]) : ratings
+  // Start from this event's copy, so another event's numbers never mix in.
+  const prev = savedRatings()
+  ratingsStore.set({
+    event: EVENT_KEY,
+    ratings: rated.ok ? rated.value : prev.ratings,
+    rankings: rankings.ok ? rankings.value : prev.rankings,
+    loadedAt: rated.ok ? now.toISOString() : prev.loadedAt,
+    error: !rated.ok ? rated.error : !rankings.ok ? rankings.error : null,
+  })
+}
+
+/** For tests: forget the saved copy. */
+export function resetRatings() {
+  ratingsStore.reset()
+  ratingsLoading.reset()
+}
+
+/**
+ * The saved Match 13 ratings and TBA rankings for this event, loading them
+ * when nothing's saved, when the copy is older than STALE_MS, and when the
+ * phone comes back online. `refresh` is for a Refresh button.
+ */
+export function useRatings(): RatingsState & { loading: boolean; refresh: () => void } {
+  const saved = useStore(ratingsStore)
+  const state = saved.event === EVENT_KEY ? saved : noRatings()
+  const isLoading = useStore(ratingsLoading)
+  useEffect(() => {
+    if (needsLoading(ratingsStore.get())) void loadRatings()
+    const reload = () => void loadRatings()
+    globalThis.addEventListener('online', reload)
+    return () => globalThis.removeEventListener('online', reload)
+  }, [])
+  return { ...state, loading: isLoading, refresh: () => void loadRatings() }
 }
 
 // ---------------------------------------------------------------------------

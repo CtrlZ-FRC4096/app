@@ -8,6 +8,7 @@ import {
   MAX_NOTES_LENGTH, blankOrNumber, checkEntry, checkPitEntry, getEventTeams, tbaTeamUrl, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
   MAX_PIT_NUMBER, numberOnly, pitAnswers, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, scoutedTeams, syncEntries, syncStatus, teamNumber,
   teamSummary, toRow, type EntryFields, type MatchRow, type PitFields, type PitRow, type TeamSummary,
+  loadRatings, needsLoading, ratingsStore, resetRatings, savedRatings, savedWhen, signed, STALE_MS, teamRating, teamRecord, type Match13Rating,
 } from './data'
 import {
   SCHEDULE_REFRESH_MS, keepScheduleFresh, likelyWinner, matchLabel, matchesWithPredictions, refreshSchedule, savedSchedule, scheduleStatus, scheduleStore, updatedAgo,
@@ -895,5 +896,182 @@ describe('pitAnswers', () => {
     const answers = pitAnswers(pitToRow({ ...PIT, id: 'pit-1', created_at: '2026-11-07T14:00:00Z', scouted_by: null, synced: false, motors: '' }))
     expect(answers.map((a) => a.question)).toEqual(['Weight', 'Size', 'Auto starting side', 'Auto path', 'What they want partners to do', 'What they will do'])
     expect(answers[1].text).toBe('28 × 28 × 36 inches (length × width × height)')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// One team's Match 13 numbers (#37), with the example ratings.
+
+// A hand-made rating: only the team and the two xP numbers matter here.
+const rating = (teamNumber: number, xpEnd: number, xpStart = 40): Match13Rating => ({
+  teamNumber, xpStart, xpEnd, xAuto: null, xTele: null, xEnd: null, epa: null, opr: null, dpr: null,
+})
+
+describe('teamRating', () => {
+  async function exampleRatings() {
+    const result = await getRatings()
+    if (!result.ok) throw new Error(result.error)
+    return result.value
+  }
+
+  it('ranks us first of six, up 4.6 since the event started', async () => {
+    const us = teamRating(await exampleRatings(), 4096)
+    expect(us).toMatchObject({ rank: 1, teams: 6, change: 4.6, rating: { teamNumber: 4096, xpEnd: 48.6 } })
+  })
+
+  it('ranks the lowest-rated team last', async () => {
+    expect(teamRating(await exampleRatings(), 9995)).toMatchObject({ rank: 6, teams: 6 })
+  })
+
+  it('gives a negative change for a team that went down', async () => {
+    expect(teamRating(await exampleRatings(), 9992)?.change).toBe(-1.4)
+  })
+
+  it('gives tied teams the same rank, and skips the next one', () => {
+    const ratings = [rating(4096, 50), rating(9991, 50), rating(9992, 40)]
+    expect(teamRating(ratings, 4096)?.rank).toBe(1)
+    expect(teamRating(ratings, 9991)?.rank).toBe(1)
+    expect(teamRating(ratings, 9992)?.rank).toBe(3)
+  })
+
+  it("gives null for a team Match 13 hasn't rated", async () => {
+    expect(teamRating(await exampleRatings(), 1234)).toBeNull()
+    expect(teamRating([], 4096)).toBeNull()
+  })
+})
+
+describe('teamRecord', () => {
+  it("finds a team's record in The Blue Alliance's rankings", async () => {
+    const rankings = await getRankings()
+    if (!rankings.ok) throw new Error(rankings.error)
+    expect(teamRecord(rankings.value, 4096)).toEqual({ wins: 1, losses: 1, ties: 0 })
+    expect(teamRecord(rankings.value, 1234)).toBeNull()
+  })
+})
+
+describe('signed', () => {
+  it('shows the sign, to one decimal place', () => {
+    expect(signed(4.6)).toBe('+4.6')
+    expect(signed(-1.4)).toBe('−1.4')
+    expect(signed(3)).toBe('+3.0')
+    expect(signed(0)).toBe('0.0')
+    expect(signed(-0.04)).toBe('0.0')
+  })
+})
+
+describe('savedWhen', () => {
+  // Intl puts thin spaces before AM and PM; the tests compare plain ones.
+  const plain = (text: string) => text.replace(/[  ]/g, ' ')
+  // Monday, Nov 9, 3:40 PM in Chicago.
+  const now = new Date('2026-11-09T21:40:00Z')
+
+  it('says Today, or the day, in Chicago time', () => {
+    expect(plain(savedWhen('2026-11-09T21:40:00Z', now))).toBe('Today at 3:40 PM')
+    expect(plain(savedWhen('2026-11-08T21:40:00Z', now))).toBe('Nov 8 at 3:40 PM')
+    // 5:30 AM UTC on the 9th is still the evening of the 8th in Chicago.
+    expect(plain(savedWhen('2026-11-09T05:30:00Z', now))).toBe('Nov 8 at 11:30 PM')
+  })
+})
+
+describe('the saved copy of the ratings', () => {
+  const now = new Date('2026-11-09T21:40:00Z')
+  const minutesLater = (minutes: number) => new Date(now.getTime() + minutes * 60_000)
+
+  beforeEach(async () => {
+    // Let any load from an earlier test finish before starting fresh.
+    await loadRatings(now)
+    resetRatings()
+  })
+
+  it('loads every rating and ranking and saves them for this event', async () => {
+    await loadRatings(now)
+    const saved = savedRatings()
+    expect(saved).toMatchObject({ event: EVENT_KEY, loadedAt: now.toISOString(), error: null })
+    expect(saved.ratings).toHaveLength(6)
+    expect(saved.rankings).toHaveLength(6)
+  })
+
+  it('shares a load already under way', async () => {
+    const first = loadRatings(now)
+    expect(loadRatings(now)).toBe(first)
+    await first
+  })
+
+  it('loads when nothing is saved, or the copy is old', async () => {
+    expect(needsLoading(ratingsStore.get(), now)).toBe(true)
+    await loadRatings(now)
+    expect(needsLoading(ratingsStore.get(), minutesLater(1))).toBe(false)
+    expect(needsLoading(ratingsStore.get(), minutesLater(STALE_MS / 60_000 + 1))).toBe(true)
+  })
+
+  it('treats a copy for another event as nothing saved', () => {
+    ratingsStore.set({ event: '2025old', ratings: [rating(4096, 50)], rankings: [], loadedAt: now.toISOString(), error: null })
+    expect(savedRatings()).toEqual({ event: null, ratings: [], rankings: [], loadedAt: null, error: null })
+    expect(needsLoading(ratingsStore.get(), now)).toBe(true)
+  })
+
+  it('is cleared by Reset example data, since it is only a copy', async () => {
+    await loadRatings(now)
+    resetAllStores()
+    expect(savedRatings().loadedAt).toBeNull()
+  })
+})
+
+describe("the saved copy when Match 13 or The Blue Alliance can't be reached", () => {
+  const now = new Date('2026-11-09T21:40:00Z')
+  const later = new Date('2026-11-09T22:00:00Z')
+  const rankings = [{ rank: 1, team_key: 'frc4096', record: { wins: 2, losses: 0, ties: 0 }, matches_played: 2 }]
+  const DOWN = "Couldn't reach Match 13. Try again in a minute."
+  type Answer = { ok: true; value: unknown } | { ok: false; error: string }
+  const works: Record<string, Answer> = { match13: { ok: true, value: { teams: [rating(4096, 50)] } }, tba: { ok: true, value: { rankings } } }
+
+  // What each server function answers. A test can change them between loads.
+  async function withAnswers(first: Record<string, Answer>) {
+    vi.resetModules()
+    const answers = { ...first }
+    const callFunction = vi.fn(async (name: string) => answers[name])
+    vi.doMock('../../core/functions', () => ({ callFunction }))
+    const data = await import('./data')
+    data.resetRatings()
+    return { data, answers }
+  }
+  afterEach(() => {
+    vi.doUnmock('../../core/functions')
+    vi.resetModules()
+  })
+
+  it("keeps the saved numbers, and says why, when it can't load", async () => {
+    const { data, answers } = await withAnswers(works)
+    await data.loadRatings(now)
+    answers.match13 = { ok: false, error: DOWN }
+    answers.tba = { ok: false, error: "Couldn't reach the server. Check your connection and try again." }
+    await data.loadRatings(later)
+    expect(data.savedRatings()).toEqual({ event: EVENT_KEY, ratings: [rating(4096, 50)], rankings, loadedAt: now.toISOString(), error: DOWN })
+  })
+
+  it('saves the part that worked when only one does', async () => {
+    const { data, answers } = await withAnswers(works)
+    await data.loadRatings(now)
+    answers.match13 = { ok: false, error: DOWN }
+    answers.tba = { ok: true, value: { rankings: [] } }
+    await data.loadRatings(later)
+    expect(data.savedRatings()).toMatchObject({ ratings: [rating(4096, 50)], rankings: [], loadedAt: now.toISOString(), error: DOWN })
+  })
+
+  it('treats Match 13 having nothing for the event as nobody rated yet, not a problem', async () => {
+    const { data } = await withAnswers({
+      ...works,
+      match13: { ok: false, error: 'Match 13 has nothing for that event yet. Check EVENT_KEY in season.ts, or try again once the event starts.' },
+    })
+    await data.loadRatings(now)
+    expect(data.savedRatings()).toMatchObject({ ratings: [], loadedAt: now.toISOString(), error: null })
+    expect(data.teamRating(data.savedRatings().ratings, 4096)).toBeNull()
+  })
+
+  it("never mixes in another event's saved copy", async () => {
+    const { data } = await withAnswers({ match13: { ok: false, error: DOWN }, tba: { ok: false, error: 'No connection.' } })
+    data.ratingsStore.set({ event: '2025old', ratings: [rating(9991, 30)], rankings, loadedAt: now.toISOString(), error: null })
+    await data.loadRatings(later)
+    expect(data.savedRatings()).toEqual({ event: EVENT_KEY, ratings: [], rankings: [], loadedAt: null, error: DOWN })
   })
 })
