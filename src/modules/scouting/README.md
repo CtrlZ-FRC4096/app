@@ -101,6 +101,24 @@ saved for another event counts as nothing saved. "Reset example data" may
 clear the copy; that's fine, it loads again.
 - Scouting data is visible to signed-in team members only.
 
+## Picklist score (#42)
+
+The functions are ready; the page isn't built yet. It waits on the team
+page (#36), for our averages, and saved Match 13 ratings (#37).
+
+| In `data.ts` | Does |
+|:--|:--|
+| `picklistParts()` | What a team is scored on: Match 13 auto, teleop and endgame xP, then each counter in `season.ts` |
+| `rankTeams(teams, weights)` | Ranks teams best first, with a score from 0 to 100 |
+| `picklistCsv(ranked, parts)` | The list as CSV, for a spreadsheet |
+| `weightsStore` | How much each part counts (0 to 5), saved on this phone |
+
+For each part, the best team gets 1 and the worst 0. A counter with
+`lowerIsBetter` in `season.ts` (fuel missed) counts the other way. A team's
+score is the weighted average of its parts. A number we don't have yet (no
+scouting, or not rated by Match 13) is left out of that team's average
+rather than counted as 0. Equal scores go in team number order.
+
 ## Where to start
 
 1. Create `season.ts` with this season's counters and endgame choices.

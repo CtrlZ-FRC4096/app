@@ -36,6 +36,7 @@ import { currentUser } from '../../core/session'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore, type Store } from '../../core/store'
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row, type Table } from '../../core/table'
+import { toCsv } from '../attendance/data'
 import { COUNTERS, DRIVETRAINS, ENDGAME, EVENT_KEY, ROLES, type Counter } from './season'
 
 // ---------------------------------------------------------------------------
@@ -788,6 +789,132 @@ export async function getPredictions(event = EVENT_KEY): Promise<Result<MatchPre
 }
 
 // ---------------------------------------------------------------------------
+// Picklist score (#42): every team ranked by a mix of its Match 13 xP and our
+// scouting averages, with a weight for how much each part counts. These are
+// plain functions that take the numbers in. Working out each team's numbers
+// waits on the team page (#36) and saved Match 13 ratings (#37).
+
+/** One thing a team is scored on, like Match 13 auto or fuel missed. */
+export interface PicklistPart {
+  /** The key in TeamNumbers' values and in Weights. */
+  key: string
+  label: string
+  /** True if fewer is better, like fuel missed. */
+  lowerIsBetter: boolean
+}
+
+/**
+ * Everything a team is scored on: Match 13's auto, teleop and endgame xP,
+ * then each counter in season.ts. Not Match 13's total as well: it's the
+ * three parts added up, so weighting it too would count xP twice. A new
+ * counter in season.ts shows up here by itself.
+ */
+export function picklistParts(): PicklistPart[] {
+  return [
+    { key: 'xAuto', label: 'Match 13 auto', lowerIsBetter: false },
+    { key: 'xTele', label: 'Match 13 teleop', lowerIsBetter: false },
+    { key: 'xEnd', label: 'Match 13 endgame', lowerIsBetter: false },
+    ...COUNTERS.map((c) => ({ key: c.key, label: c.label, lowerIsBetter: c.lowerIsBetter ?? false })),
+  ]
+}
+
+/** How much each part counts, from 0 (not at all) to 5, by the part's key. */
+export type Weights = Record<string, number>
+
+/** A part with no weight saved, like a counter added after the weights were set, counts this much. */
+export const DEFAULT_WEIGHT = 1
+export const MAX_WEIGHT = 5
+
+export const DEFAULT_WEIGHTS: Weights = Object.fromEntries(picklistParts().map((part) => [part.key, DEFAULT_WEIGHT]))
+
+// Saved on this phone only, so each scout can try their own weights.
+// keepOnReset: "Reset example data" shouldn't undo them at an event.
+export const weightsStore = createStore<Weights>('scouting-picklist-weights', 1, () => ({ ...DEFAULT_WEIGHTS }), { keepOnReset: true })
+
+/** One team's numbers for the picklist, by part key. Null if we don't have that number yet. */
+export interface TeamNumbers {
+  team: number
+  values: Record<string, number | null>
+  /** How many matches we scouted them in. 0 if none yet. */
+  matches: number
+  /** False if Match 13 hasn't rated them yet. */
+  rated: boolean
+}
+
+/** One line of the picklist. */
+export interface RankedTeam {
+  /** 1 is the best. */
+  rank: number
+  team: number
+  /** 0 to 100, or null if the team has none of the weighted numbers. */
+  score: number | null
+  /** The numbers behind the score, by part key, as they came in. Null if missing. */
+  parts: Record<string, number | null>
+}
+
+/**
+ * Every team ranked best first. For each part, the best team gets 1 and the
+ * worst 0, and the rest in between by how close they are (if every team has
+ * the same number, they all get 0.5). For lower-is-better parts it's the
+ * other way round. A team's score is the average of these, weighted, out of
+ * 100.
+ *
+ * A team missing a number (no scouting yet, or not rated by Match 13 yet) is
+ * scored on the numbers it has, so it isn't pushed down for what we don't
+ * know. A team with none of the weighted numbers has no score and goes at
+ * the bottom. Equal scores go in team number order, so every phone shows the
+ * same list.
+ */
+export function rankTeams(teams: TeamNumbers[], weights: Weights): RankedTeam[] {
+  const parts = picklistParts()
+  const value = (team: TeamNumbers, key: string) => team.values[key] ?? null
+
+  // Each part's lowest and highest number, over the teams that have one.
+  const ranges = new Map(
+    parts.map((part) => {
+      const values = teams.map((t) => value(t, part.key)).filter((v): v is number => v !== null)
+      return [part.key, { min: Math.min(...values), max: Math.max(...values) }]
+    }),
+  )
+
+  const scored = teams.map((team) => {
+    let total = 0
+    let weightTotal = 0
+    for (const part of parts) {
+      const v = value(team, part.key)
+      const weight = weights[part.key] ?? DEFAULT_WEIGHT
+      if (v === null || weight <= 0) continue
+      const { min, max } = ranges.get(part.key)!
+      const n = max === min ? 0.5 : (v - min) / (max - min)
+      total += weight * (part.lowerIsBetter ? 1 - n : n)
+      weightTotal += weight
+    }
+    return {
+      team: team.team,
+      score: weightTotal > 0 ? (total / weightTotal) * 100 : null,
+      parts: Object.fromEntries(parts.map((part) => [part.key, value(team, part.key)])),
+    }
+  })
+
+  return scored
+    .sort((a, b) => {
+      if (a.score === b.score) return a.team - b.team
+      if (a.score === null) return 1
+      if (b.score === null) return -1
+      return b.score - a.score
+    })
+    .map((line, i) => ({ rank: i + 1, ...line }))
+}
+
+/** The picklist as CSV text, to paste into a spreadsheet. A missing number is an empty cell. */
+export function picklistCsv(ranked: RankedTeam[], parts: PicklistPart[]): string {
+  const number = (n: number | null) => (n === null ? '' : String(Math.round(n * 10) / 10))
+  return toCsv([
+    ['Rank', 'Team', 'Score', ...parts.map((part) => part.label)],
+    ...ranked.map((line) => [String(line.rank), String(line.team), number(line.score), ...parts.map((part) => number(line.parts[part.key] ?? null))]),
+  ])
+}
+
 // The match schedule page: The Blue Alliance's schedule with Match 13's
 // prediction for each match. The last ones fetched are saved on this
 // device, so the schedule still shows with no connection.
