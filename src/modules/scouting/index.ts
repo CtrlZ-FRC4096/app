@@ -7,5 +7,10 @@ export const scouting: ModuleDefinition = {
   purpose: 'Match scouting that works without Wi-Fi.',
   group: 'competition',
   load: () => import('./ScoutingPage'),
+  // In the Competition menu, under Scouting. ScoutingPage reads which is open.
+  pages: [
+    { name: 'Match', path: '' },
+    { name: 'Pit', path: 'pit' },
+  ],
   useSummary: useEntrySummary,
 }

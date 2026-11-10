@@ -125,6 +125,98 @@ function newId(): string {
 }
 
 // ---------------------------------------------------------------------------
+// The pit form: what a team told us about their robot in their pit. Saved on
+// this device first, like match entries, and synced later.
+
+/** One pit form, filled in. Numbers the scout left blank are null. */
+export interface PitEntry {
+  /** Made on the device, so sending an entry twice can't make two rows. */
+  id: string
+  /** ISO date and time it was saved. */
+  created_at: string
+  /** The team number, like 4096. */
+  team: number
+  /** The qualification match it was before, or null: pit scouting often happens before any match. */
+  match: number | null
+  /** One of DRIVETRAINS in season.ts, or '' if not chosen. */
+  drivetrain: string
+  /** Pounds. */
+  weight: number | null
+  /** Inches. */
+  length: number | null
+  width: number | null
+  height: number | null
+  motors: string
+  /** One of AUTO_SIDES in season.ts, or '' if not chosen. */
+  auto_side: string
+  auto_path: string
+  /** "What do they want their partners to do?" */
+  partners_do: string
+  /** "What will they do?" */
+  they_do: string
+  /** Who scouted it. Show their name with useMemberNames(). */
+  scouted_by: string | null
+  /** False while it's only on this device (Waiting). */
+  synced: boolean
+}
+
+/** What the scout fills in on the pit form. savePitEntry() adds the rest. */
+export type PitFields = Omit<PitEntry, 'id' | 'created_at' | 'scouted_by' | 'synced'>
+
+// Newest first. keepOnReset and the version: see entryStore above.
+export const pitStore = createStore<PitEntry[]>('scouting-pit-entries', 1, () => [], { keepOnReset: true })
+
+/** Every pit entry saved on this device, newest first. */
+export function usePitEntries(): PitEntry[] {
+  return useStore(pitStore)
+}
+
+/** Why a pit entry can't be saved, or null if it can. */
+export function checkPitEntry(fields: PitFields): string | null {
+  if (!isCount(fields.team)) return 'Enter the team number first.'
+  if (fields.match !== null && !isCount(fields.match)) return 'Check the match number, or leave it blank.'
+  for (const [name, value] of [['weight', fields.weight], ['length', fields.length], ['width', fields.width], ['height', fields.height]] as const) {
+    if (value !== null && !(value > 0)) return `Check the ${name}, or leave it blank.`
+  }
+  return null
+}
+
+/** Save a pit entry on this device, marked as not synced yet. */
+export function savePitEntry(fields: PitFields): Result<PitEntry> {
+  const problem = checkPitEntry(fields)
+  if (problem) return fail(problem)
+  const trim = (text: string) => text.trim()
+  const entry: PitEntry = {
+    ...fields,
+    motors: trim(fields.motors),
+    auto_path: trim(fields.auto_path),
+    partners_do: trim(fields.partners_do),
+    they_do: trim(fields.they_do),
+    id: newId(),
+    created_at: new Date().toISOString(),
+    scouted_by: currentUser()?.id ?? null,
+    synced: false,
+  }
+  pitStore.set((entries) => [entry, ...entries])
+  return ok(entry)
+}
+
+/** A number box's text as a number, or null if it's blank. */
+export function blankOrNumber(text: string): number | null {
+  return text.trim() === '' ? null : Number(text)
+}
+
+/**
+ * What's typed in a number box with everything but the number taken out:
+ * digits and one decimal point, like "115.5". For weight and size, so a
+ * scout can't type "about 120" or "120 lbs".
+ */
+export function numberOnly(text: string): string {
+  const [whole, ...rest] = text.replace(/[^0-9.]/g, '').split('.')
+  return rest.length === 0 ? whole : `${whole}.${rest.join('')}`
+}
+
+// ---------------------------------------------------------------------------
 // The Blue Alliance.
 
 export interface TbaAlliance {

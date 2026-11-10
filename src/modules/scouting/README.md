@@ -7,6 +7,8 @@
 - The match form, drawn from `season.ts`: counters, role (choose any), broke down, E-stop or A-stop, driver skill, endgame and notes
 - Save entry: `saveEntry()` in `data.ts` keeps the entry on this device, marked Waiting. It refuses an entry with no team or match number, or no driver skill chosen.
 - A list of the entries saved on this device, newest first
+- A Match / Pit switch at the top of the page. The choice is in the address: `#/scouting` is the match form and `#/scouting/pit` the pit form. Each form is one panel, with a line between its sections (`FormSection.tsx`). The pit form (`PitForm.tsx`) asks for the team, drivetrain, weight and size, motors, preferred auto and strategy. Its choice lists are `DRIVETRAINS` and `AUTO_SIDES` in `season.ts`. Save pit entry: `savePitEntry()` in `data.ts` keeps it on this device (`pitStore`), marked Waiting, like match entries. It needs a team number; the match number is optional.
+- The Competition menu lists Match and Pit under Scouting (`pages` in `index.ts`).
 
 Entries are kept in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. Sending Waiting entries to the team database is the next step.
 

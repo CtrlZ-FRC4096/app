@@ -72,23 +72,54 @@ function Frame({ children }: { children: ReactNode }) {
 }
 
 function Shell({ user }: { user: User }) {
-  const { id } = useRoute()
+  const { id, rest } = useRoute()
+  // The page inside the module, like 'pit' in #/scouting/pit, or '' for none.
+  const subpage = rest[0] ?? ''
   const groups = groupModules(modules.filter((m) => canOpen(user.role, m.roles)))
   /*
    * Which menu is open: its name (a group's id, or 'account') together with
    * the page we were on when it opened. Only one menu is open at a time, and
-   * because the page is remembered with it, opening a module closes the menu
-   * by itself.
+   * because the page is remembered with it, opening a module, or a page
+   * inside one, closes the menu by itself.
    */
+  const page = `${id}/${subpage}`
   const [menu, setMenu] = useState({ name: '', page: '' })
-  const openMenu = menu.page === id ? menu.name : ''
+  const openMenu = menu.page === page ? menu.name : ''
+  /*
+   * Which module's list of pages is open inside a menu (like Scouting's
+   * Match and Pit): a module id, or '' for none. Like the menu above, it
+   * remembers the page it opened on, so it closes when the page changes,
+   * and it closes whenever its menu closes.
+   */
+  const [pages, setPages] = useState({ id: '', page: '' })
+  const openPages = pages.page === page ? pages.id : ''
+
+  /*
+   * When the page changes, close every menu for good. Without this, going
+   * from Pit to Match and back to Pit (with the switch on the page) would
+   * reopen a menu that was open on Pit, because it remembered that page.
+   * React's way to do this is to check while drawing, not in an effect:
+   * https://react.dev/learn/you-might-not-need-an-effect
+   */
+  const [lastPage, setLastPage] = useState(page)
+  if (lastPage !== page) {
+    setLastPage(page)
+    setMenu({ name: '', page })
+    setPages({ id: '', page })
+  }
+
+  function setOpenPages(moduleId: string) {
+    setPages({ id: moduleId, page })
+  }
 
   function toggle(name: string) {
-    setMenu({ name: openMenu === name ? '' : name, page: id })
+    setMenu({ name: openMenu === name ? '' : name, page })
+    setOpenPages('')
   }
 
   function close() {
-    setMenu({ name: '', page: id })
+    setMenu({ name: '', page })
+    setOpenPages('')
   }
 
   // Every page starts at the top.
@@ -100,7 +131,10 @@ function Shell({ user }: { user: User }) {
   useEffect(() => {
     if (!openMenu) return
     function closeIfOutside(event: Event) {
-      if (!(event.target as Element | null)?.closest('.menu')) setMenu({ name: '', page: '' })
+      if (!(event.target as Element | null)?.closest('.menu')) {
+        setMenu({ name: '', page: '' })
+        setPages({ id: '', page: '' })
+      }
     }
     document.addEventListener('pointerdown', closeIfOutside)
     return () => document.removeEventListener('pointerdown', closeIfOutside)
@@ -124,7 +158,28 @@ function Shell({ user }: { user: User }) {
                 onToggle={() => toggle(group.id)}
                 onClose={close}
               >
-                {group.modules.map((m) => (
+                {group.modules.map((m) => m.pages ? (
+                  // A module with pages: its name opens and closes a list of them.
+                  <div key={m.id} className="menu-pages">
+                    <button
+                      type="button"
+                      className="menu-item menu-pages-btn"
+                      aria-expanded={openPages === m.id}
+                      aria-controls={`menu-pages-${m.id}`}
+                      onClick={() => setOpenPages(openPages === m.id ? '' : m.id)}
+                    >
+                      <span className="menu-item-name">{m.name}</span>
+                      <span className="chev" aria-hidden="true" />
+                    </button>
+                    <div id={`menu-pages-${m.id}`} className="menu-pages-list" hidden={openPages !== m.id}>
+                      {m.pages.map((p) => (
+                        <a key={p.path} className="menu-item" href={href(m.id, p.path)} aria-current={m.id === id && p.path === subpage ? 'page' : undefined}>
+                          <span className="menu-item-name">{p.name}</span>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
                   <a key={m.id} className="menu-item" href={href(m.id)} aria-current={m.id === id ? 'page' : undefined}>
                     <span className="menu-item-name">{m.name}</span>
                   </a>

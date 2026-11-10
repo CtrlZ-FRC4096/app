@@ -1,8 +1,11 @@
 import { useState, type FormEvent } from 'react'
 import { shortDate } from '../../core/format'
+import { navigate, useRoute } from '../../core/router'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick, Pill } from '../../core/ui'
 import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
+import FormSection from './FormSection'
+import PitForm from './PitForm'
 import { COUNTERS, ENDGAME, ROLES } from './season'
 
 /** Width and height of the − and + buttons, in pixels. Big enough to tap without looking. */
@@ -33,10 +36,29 @@ function PickMany(props: { label: string; options: string[]; value: string[]; on
   )
 }
 
+const FORMS = ['Match', 'Pit']
+
+// A Match / Pit switch at the top. The choice is in the address, so
+// #/scouting/pit opens the pit form straight away: a menu or a bookmark can
+// link to either form. Both forms stay on the page, and the one not chosen
+// is hidden, so switching doesn't lose what's typed.
+export default function ScoutingPage() {
+  const form = useRoute().rest[0] === 'pit' ? 'Pit' : 'Match'
+  return (
+    <>
+      <div style={{ marginBottom: 12 }}>
+        <Pick label="Which form" options={FORMS} value={form} onChange={(f) => navigate('scouting', f === 'Pit' ? 'pit' : '')} />
+      </div>
+      <div hidden={form !== 'Match'}><MatchForm /></div>
+      <div hidden={form !== 'Pit'}><PitForm /></div>
+    </>
+  )
+}
+
 // The form for one robot in one match. Every field comes from season.ts,
 // so a new game means new settings, not a new page. Saving goes through
 // saveEntry() in data.ts, which keeps the entry on this device.
-export default function ScoutingPage() {
+function MatchForm() {
   const entries = useEntries()
   const [match, setMatch] = useState('')
   const [team, setTeam] = useState('')
@@ -91,22 +113,22 @@ export default function ScoutingPage() {
         Count what one robot does in one match. Entries save on this device, so it works with no Wi-Fi.
       </PageHead>
       <form onSubmit={save}>
-        <Panel title="Match">
-          <div className="panel-body" style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-            <label className="field" htmlFor="scout-match">
-              Match number
-              <input id="scout-match" className="input" style={{ width: '9ch', minHeight: 46, fontSize: 16 }} inputMode="numeric" value={match} onChange={(e) => setMatch(e.target.value)} placeholder="12" />
-            </label>
-            <label className="field" htmlFor="scout-team">
-              Team number
-              <input id="scout-team" className="input" style={{ width: '9ch', minHeight: 46, fontSize: 16 }} inputMode="numeric" value={team} onChange={(e) => setTeam(e.target.value)} placeholder="4096" />
-            </label>
-          </div>
-        </Panel>
-        <Panel title="Scoring">
-          <div className="row-list">
+        <Panel>
+          <FormSection title="Match" first>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+              <label className="field" htmlFor="scout-match">
+                Match number
+                <input id="scout-match" className="input" style={{ width: '9ch', minHeight: 46, fontSize: 16 }} inputMode="numeric" value={match} onChange={(e) => setMatch(e.target.value)} placeholder="12" />
+              </label>
+              <label className="field" htmlFor="scout-team">
+                Team number
+                <input id="scout-team" className="input" style={{ width: '9ch', minHeight: 46, fontSize: 16 }} inputMode="numeric" value={team} onChange={(e) => setTeam(e.target.value)} placeholder="4096" />
+              </label>
+            </div>
+          </FormSection>
+          <FormSection title="Scoring">
             {COUNTERS.map((c) => (
-              <div key={c.key}>
+              <div key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span>{c.label}</span>
                 <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
                   <button type="button" className="btn btn-lg" style={tap} aria-label={`${c.label}: one fewer`} onClick={() => change(c.key, -1)}>−</button>
@@ -115,10 +137,8 @@ export default function ScoutingPage() {
                 </span>
               </div>
             ))}
-          </div>
-        </Panel>
-        <Panel title="How it went">
-          <div className="panel-body">
+          </FormSection>
+          <FormSection title="How it went">
             <div className="field">
               Role (choose all that fit)
               <PickMany label="Role" options={ROLES} value={roles} onChange={setRoles} />
@@ -136,37 +156,38 @@ export default function ScoutingPage() {
               <Pick label="Driver skill" options={DRIVER_SKILLS} value={driverSkill} onChange={setDriverSkill} />
               <span className="note">1: struggles to drive, 5: smooth and quick</span>
             </div>
-          </div>
-        </Panel>
-        <Panel title="Endgame">
-          <div className="panel-body">
+          </FormSection>
+          <FormSection title="Endgame">
             <Pick label="Endgame" options={ENDGAME} value={endgame} onChange={setEndgame} />
             <label className="field" htmlFor="scout-notes">
               Notes
               <textarea id="scout-notes" className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything the form doesn't show: tipped, fast cycles, slow intake" />
             </label>
             <div className="toolbar">
-              <button type="submit" className="btn btn-lg btn-primary">Save entry</button>
+              <button type="submit" className="btn btn-lg btn-primary">Save Entry</button>
             </div>
-          </div>
+          </FormSection>
         </Panel>
       </form>
-      <Panel title="Saved on this device" aside={<span className="note">{entries.length} saved</span>}>
-        {entries.length === 0 ? (
-          <p className="panel-body muted">No entries yet. Fill in the form and press Save entry.</p>
-        ) : (
-          <div className="row-list">
-            {entries.map((e) => (
-              <div key={e.id}>
-                <span>Match {e.match} · Team {e.team}<br /><span className="note">{shortDate(e.created_at)}</span></span>
-                <span style={{ marginLeft: 'auto' }}>
-                  {e.synced ? <Pill tone="ok">Synced</Pill> : <Pill tone="warn">Waiting</Pill>}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Panel>
+      {/* Space between the form and the list, so they don't run together. */}
+      <div style={{ marginTop: 28 }}>
+        <Panel title="Saved on this device" aside={<span className="note">{entries.length} saved</span>}>
+          {entries.length === 0 ? (
+            <p className="panel-body muted">No entries yet. Fill in the form and press Save Entry.</p>
+          ) : (
+            <div className="row-list">
+              {entries.map((e) => (
+                <div key={e.id}>
+                  <span>Match {e.match} · Team {e.team}<br /><span className="note">{shortDate(e.created_at)}</span></span>
+                  <span style={{ marginLeft: 'auto' }}>
+                    {e.synced ? <Pill tone="ok">Synced</Pill> : <Pill tone="warn">Waiting</Pill>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      </div>
     </>
   )
 }
