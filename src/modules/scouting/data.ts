@@ -32,11 +32,14 @@ import { TEAM_TIME_ZONE } from '../../core/calendar'
 import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
-import { currentUser } from '../../core/session'
+import { currentUser, onSignedIn } from '../../core/session'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore, type Store } from '../../core/store'
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row, type Table } from '../../core/table'
 import { COUNTERS, DRIVETRAINS, ENDGAME, EVENT_KEY, ROLES, type Counter } from './season'
+
+/** The event we're at, from season.ts, for other modules. */
+export { EVENT_KEY }
 
 // ---------------------------------------------------------------------------
 // Entries, saved on this device.
@@ -301,6 +304,8 @@ function keepSyncing() {
     if (hasWaiting()) void syncEntries()
   }
   globalThis.addEventListener('online', tryNow)
+  // The sign-in is checked again once the connection is back: send then too.
+  onSignedIn(tryNow)
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') tryNow()
   })
@@ -732,6 +737,67 @@ export function getTeam(team: number): Promise<Result<TbaTeam>> {
   return callFunction<TbaTeam>('tba', { kind: 'team', team }, () => demoTeam(team))
 }
 
+/** Every team registered for an event, by number. TBA lists them before the schedule is out. */
+export async function getEventTeams(event = EVENT_KEY): Promise<Result<TbaTeam[]>> {
+  const result = await callFunction<TbaTeam[] | null>('tba', { kind: 'teams', event }, () => DEMO_TEAMS.map(([team]) => demoTeam(team)))
+  return result.ok ? ok([...(result.value ?? [])].sort((a, b) => a.team_number - b.team_number)) : result
+}
+
+/** A team's page on The Blue Alliance, for the season of `event` (like 2026ilch → 2026). */
+export function tbaTeamUrl(team: number, event = EVENT_KEY): string {
+  return `https://www.thebluealliance.com/team/${team}/${event.slice(0, 4)}`
+}
+
+// ---------------------------------------------------------------------------
+// Filling in the team from the schedule (#40). A scout picks their position
+// once, and the match form fills in the team for that position from the
+// schedule. The schedule is saved on this device, so it still works with no
+// Wi-Fi once it's been loaded.
+
+/** Where a scout sits: which robot they watch in every match. */
+export const POSITIONS = ['Red 1', 'Red 2', 'Red 3', 'Blue 1', 'Blue 2', 'Blue 3'] as const
+export type Position = (typeof POSITIONS)[number]
+
+// '' until the scout picks one. keepOnReset: it belongs to this device, not the example data.
+export const positionStore = createStore<Position | ''>('scouting-position', 1, () => '', { keepOnReset: true })
+
+/** This device's position, or '' if the scout hasn't picked one. */
+export function usePosition(): Position | '' {
+  return useStore(positionStore)
+}
+
+/** Remember this device's position. */
+export function setPosition(position: Position) {
+  positionStore.set(position)
+}
+
+/**
+ * Get the latest schedule for the match form. It uses the schedule page's
+ * saved copy (savedSchedule() and refreshSchedule() below), so there's one
+ * schedule on the phone. If the latest can't be fetched (no Wi-Fi, say) but
+ * a copy for this event is saved, that copy is used, so the form keeps
+ * working.
+ */
+export async function loadSchedule(): Promise<Result<SavedSchedule>> {
+  const result = await refreshSchedule()
+  const saved = savedSchedule()
+  if (saved && saved.matches.length > 0) return ok(saved)
+  if (!result.ok) return fail(`Couldn't get the match schedule. ${result.error}`)
+  // TBA has no schedule until shortly before the event.
+  return fail("The Blue Alliance doesn't have the match schedule yet.")
+}
+
+/** The team in `position` in qualification match `match`, or null if the schedule doesn't say. */
+export function teamFor(schedule: SavedSchedule | null, match: number, position: Position | ''): number | null {
+  if (!schedule || !position) return null
+  // Only qualification matches: the form's match number is one of those.
+  const found = schedule.matches.find((m) => m.comp_level === 'qm' && m.match_number === match)
+  if (!found) return null
+  const [color, spot] = position.split(' ')
+  const team = (color === 'Red' ? found.alliances.red : found.alliances.blue).team_keys[Number(spot) - 1]
+  return team ? teamNumber(team) : null
+}
+
 // ---------------------------------------------------------------------------
 // Match 13: team ratings and match predictions.
 
@@ -936,6 +1002,12 @@ async function fetchSchedule(event: string): Promise<Result<SavedSchedule>> {
   if (!schedule.ok) {
     scheduleStatus.set({ loading: false, problem: schedule.error })
     return schedule
+  }
+  // TBA has no schedule until shortly before the event. Don't swap a saved one for an empty one.
+  const previous = savedSchedule(event)
+  if (schedule.value.length === 0 && previous && previous.matches.length > 0) {
+    scheduleStatus.set({ loading: false, problem: null })
+    return ok(previous)
   }
   const saved: SavedSchedule = {
     event,
@@ -1177,13 +1249,14 @@ function demoMatches(event: string): TbaMatchWithVideos[] {
 }
 
 // Made-up Match 13 ratings, in no order like the real ones: [team, xpStart, xpEnd].
+// Best to worst isn't the same as by team number, so sorting by EPA shows a change.
 const DEMO_RATINGS: [team: number, start: number, end: number][] = [
   [9993, 31.2, 30.4],
   [4096, 44.0, 48.6],
   [9995, 20.1, 22.8],
   [9991, 40.3, 41.7],
-  [9994, 27.5, 26.1],
-  [9992, 33.9, 35.2],
+  [9994, 38.0, 44.9],
+  [9992, 27.5, 26.1],
 ]
 
 function demoRatings(): Match13Rating[] {
