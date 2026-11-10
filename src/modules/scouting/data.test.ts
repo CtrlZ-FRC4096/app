@@ -466,7 +466,7 @@ describe('teamRating', () => {
   })
 
   it('gives a negative change for a team that went down', async () => {
-    expect(teamRating(await exampleRatings(), 9994)?.change).toBe(-1.4)
+    expect(teamRating(await exampleRatings(), 9992)?.change).toBe(-1.4)
   })
 
   it('gives tied teams the same rank, and skips the next one', () => {
