@@ -24,10 +24,12 @@
  *
  * When notifications don't pop up, the Details section on the
  * Notifications page (pushDetails(), showTestHere()) shows what's wrong
- * without needing DevTools.
+ * without needing DevTools. It also lists your other saved devices, which
+ * removeOtherDevices() clears out.
  */
 import { callFunction } from './functions'
 import { addTestNotification } from './notifications'
+import { currentUser } from './session'
 import { createStore } from './store'
 import { supabase } from './supabase'
 import { fail, ok, type Result } from './table'
@@ -134,6 +136,18 @@ export const BLOCKED_TEXT = "Notifications are blocked for this site. Allow them
 
 async function registration(): Promise<ServiceWorkerRegistration | undefined> {
   return navigator.serviceWorker.getRegistration(WORKER)
+}
+
+/**
+ * This device's address at its push service, or null if notifications
+ * were never turned on here. Throws if the browser refuses to answer, for
+ * example in a private window.
+ */
+async function thisEndpoint(): Promise<string | null> {
+  const device = thisDevice()
+  if (!device.serviceWorker || !device.pushManager) return null
+  const worker = await registration()
+  return (await worker?.pushManager.getSubscription())?.endpoint ?? null
 }
 
 /** Where notifications are up to on this device. */
@@ -263,8 +277,38 @@ export interface PushDetails {
   workerScope: string | null
   /** Only the push service's name, like fcm.googleapis.com. See pushServiceName(). */
   pushService: string | null
+  /** Your devices saved in the database, or null in demo mode or if they couldn't be read. See countSaved(). */
+  saved: SavedDevices | null
   /** Demo mode, which has no server, so never signs up with a push service. */
   demo: boolean
+}
+
+/** Whether this device is saved for you, and how many others are. */
+export interface SavedDevices {
+  thisOne: boolean
+  others: number
+}
+
+/** Count your saved devices from their addresses, given this device's (null if it has none). */
+export function countSaved(endpoints: string[], thisOne: string | null): SavedDevices {
+  const saved = thisOne !== null && endpoints.includes(thisOne)
+  return { thisOne: saved, others: endpoints.length - (saved ? 1 : 0) }
+}
+
+/** "1 other device", "2 other devices". */
+export function otherDevicesText(count: number): string {
+  return count === 1 ? '1 other device' : `${count} other devices`
+}
+
+function savedLine(saved: SavedDevices | null, hasAddress: boolean, demo: boolean): DetailLine {
+  const label = 'Your devices'
+  if (demo) return { label, tone: 'plain', text: "None: demo mode has no server, so it doesn't save any." }
+  if (!saved) return { label, tone: 'warn', text: "Couldn't check them. Check your connection, then reload the page." }
+  const others = saved.others > 0 ? ` You have ${otherDevicesText(saved.others)} saved.` : ''
+  if (saved.thisOne) return { label, tone: 'ok', text: saved.others > 0 ? `This one, and ${otherDevicesText(saved.others)}.` : 'Just this one.' }
+  // Turned on here, but the database doesn't have it, so nothing sent to you can reach it.
+  if (hasAddress) return { label, tone: 'warn', text: `This device isn't saved, so notifications can't reach it. Tap Turn off, then Turn on.${others}` }
+  return { label, tone: 'plain', text: saved.others > 0 ? `Not this one yet.${others}` : 'None yet. Turn on saves this one.' }
 }
 
 /**
@@ -288,7 +332,7 @@ export interface DetailLine {
 }
 
 export function detailLines(details: PushDetails): DetailLine[] {
-  const { address, secure, permission, worker, workerScope, pushService, demo } = details
+  const { address, secure, permission, worker, workerScope, pushService, saved, demo } = details
   return [
     secure
       ? { label: 'Site address', tone: 'ok', text: address }
@@ -310,6 +354,7 @@ export function detailLines(details: PushDetails): DetailLine[] {
       : demo
         ? { label: 'Push service', tone: 'plain', text: "None: demo mode has no server, so it doesn't use one." }
         : { label: 'Push service', tone: 'plain', text: 'None yet. Turn on sets it up.' },
+    savedLine(saved, pushService !== null, demo),
   ]
 }
 
@@ -331,6 +376,43 @@ export async function pushDetails(): Promise<PushDetails> {
     worker: !worker ? 'none' : worker.active ? 'running' : 'starting',
     workerScope: worker?.scope ?? null,
     pushService: subscription ? pushServiceName(subscription.endpoint) : null,
+    saved: await savedDevices(subscription?.endpoint ?? null),
     demo: !supabase,
   }
+}
+
+/** Your saved devices, from the database. Its rules only show people their own. */
+async function savedDevices(thisOne: string | null): Promise<SavedDevices | null> {
+  if (!supabase) return null
+  const { data, error } = await supabase.from('push_subscriptions').select('endpoint')
+  if (error || !data) return null
+  return countSaved(data.map((row: { endpoint: string }) => row.endpoint), thisOne)
+}
+
+/** What removeOtherDevices() says it did. */
+export function removedText(count: number): string {
+  if (count === 0) return 'You had no other devices saved.'
+  return `Removed ${otherDevicesText(count)}. To use one again, open the app on it and turn notifications back on.`
+}
+
+/**
+ * Remove all your saved devices except this one: phones you don't use any
+ * more, or ones turned on at the app's old github.io address. Turn off
+ * can't do this, because it only removes the device you're using.
+ */
+export async function removeOtherDevices(): Promise<Result<string>> {
+  if (!supabase) return ok("Demo mode doesn't save devices, so there's nothing to remove.")
+  const me = currentUser()
+  if (!me) return fail('Sign in first.')
+  let keep: string | null
+  try {
+    keep = await thisEndpoint()
+  } catch {
+    // Without knowing which one this is, it might remove this one too.
+    return fail("Couldn't check this device. Reload the page and try again.")
+  }
+  let removing = supabase.from('push_subscriptions').delete().eq('member_id', me.id)
+  if (keep) removing = removing.neq('endpoint', keep)
+  const { data, error } = await removing.select('id')
+  return error ? fail("Couldn't remove them. Check your connection and try again.") : ok(removedText(data.length))
 }
