@@ -3,6 +3,7 @@ import { shortDate } from '../../core/format'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick, Pill } from '../../core/ui'
 import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
+import PitForm from './PitForm'
 import { COUNTERS, ENDGAME, ROLES } from './season'
 
 /** Width and height of the − and + buttons, in pixels. Big enough to tap without looking. */
@@ -33,10 +34,31 @@ function PickMany(props: { label: string; options: string[]; value: string[]; on
   )
 }
 
+const FORMS = ['Match', 'Pit'] as const
+type Form = (typeof FORMS)[number]
+
+// The Scouting page: a switch between the match form and the pit form.
+export default function ScoutingPage() {
+  const [form, setForm] = useState<Form>('Match')
+  return (
+    <>
+      <PageHead title={form === 'Match' ? 'Match form' : 'Pit form'}>
+        {form === 'Match'
+          ? 'Count what one robot does in one match. Entries save on this device, so it works with no Wi-Fi.'
+          : "Talk to a team in their pit about their robot. Entries save on this device, and sync when there's a connection."}
+      </PageHead>
+      <div className="toolbar" style={{ marginBottom: 12 }}>
+        <Pick label="Match or pit scouting" options={[...FORMS]} value={form} onChange={setForm} />
+      </div>
+      {form === 'Match' ? <MatchForm /> : <PitForm />}
+    </>
+  )
+}
+
 // The form for one robot in one match. Every field comes from season.ts,
 // so a new game means new settings, not a new page. Saving goes through
 // saveEntry() in data.ts, which keeps the entry on this device.
-export default function ScoutingPage() {
+function MatchForm() {
   const entries = useEntries()
   const [match, setMatch] = useState('')
   const [team, setTeam] = useState('')
@@ -87,9 +109,6 @@ export default function ScoutingPage() {
 
   return (
     <>
-      <PageHead title="Match form">
-        Count what one robot does in one match. Entries save on this device, so it works with no Wi-Fi.
-      </PageHead>
       <form onSubmit={save}>
         <Panel title="Match">
           <div className="panel-body" style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>

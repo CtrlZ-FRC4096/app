@@ -1,7 +1,8 @@
 /**
- * This season's scouting form. The form is drawn from these settings, so
+ * This season's scouting forms. The forms are drawn from these settings, so
  * next season only this file changes: add, remove or rename counters,
- * endgame choices and roles here, and the page follows.
+ * endgame choices, roles, drivetrains and auto sides here, and the page
+ * follows.
  *
  * 2026: REBUILT. Check these with the scouting lead before an event.
  */
@@ -25,6 +26,12 @@ export const ENDGAME: string[] = ['None', 'Level 1', 'Level 2', 'Level 3']
 
 /** What the robot spent the match doing. Scouts can choose more than one, or none. */
 export const ROLES: string[] = ['Scorer', 'Defender', 'Feeder']
+
+/** Pit scouting: the robot's drivetrain. Scouts choose one. */
+export const DRIVETRAINS: string[] = ['Swerve', 'Tank', 'Mecanum', 'H-drive', 'Other omni/holonomic']
+
+/** Pit scouting: where the robot starts its preferred auto. */
+export const AUTO_SIDES: string[] = ['Left', 'Center', 'Right']
 
 /**
  * The event we're at, the way The Blue Alliance names it: the year and a

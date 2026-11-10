@@ -7,8 +7,10 @@
 - The match form, drawn from `season.ts`: counters, role (choose any), broke down, E-stop or A-stop, driver skill, endgame and notes
 - Save entry: `saveEntry()` in `data.ts` keeps the entry on this device, marked Waiting. It refuses an entry with no team or match number, or no driver skill chosen.
 - A list of the entries saved on this device, newest first
+- The pit form (`PitForm.tsx`), behind a Match / Pit switch at the top of the page: team number, drivetrain, weight and size (numbers only), motors, preferred auto, and strategy. The drivetrain and auto side choices are in `season.ts`.
+- Pit entries save on this device with `savePitEntry()`, marked Waiting, then `syncPitEntries()` sends them to the `scouting_pit_entries` table. It runs when the pit form opens, when the device gets its connection back, and from the **Sync now** button. Every visit to a team is kept, newest first. Members can read every pit entry and add their own; only mentors can change or delete them.
 
-Entries are kept in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. Sending Waiting entries to the team database is the next step.
+Entries are kept in a store (`entryStore` and `pitStore` in `data.ts`), not only in a table from `createTable()`, because a table needs a connection on the live site. Each entry is sent with the id the device made, so sending it twice can't make two rows. Sending Waiting match entries to the team database is the next step, and can work the same way as `syncPitEntries()`.
 
 ## What it needs to do
 

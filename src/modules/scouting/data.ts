@@ -3,9 +3,13 @@
  *
  * Entries: what a scout counted for one robot in one match. Venue Wi-Fi is
  * unreliable, so an entry is saved on this device first, in a store, and
- * marked as not synced. Sending entries to the team database comes later.
- * This is why entries aren't in a table from createTable(): on the live
- * site a table saves straight to the database, which needs a connection.
+ * marked as not synced. Sending match entries to the team database comes
+ * later. This is why entries aren't only in a table from createTable(): on
+ * the live site a table saves straight to the database, which needs a
+ * connection.
+ *
+ * Pit entries: what a scout learned in a team's pit. Saved on the device the
+ * same way, then sent to the team database by syncPitEntries().
  *
  * The Blue Alliance (TBA): an event's match schedule and rankings, and a
  * team's matches and name. These come through the `tba` server function
@@ -16,12 +20,13 @@
  * The types are the parts of TBA's answers we use. TBA sends more; see
  * https://www.thebluealliance.com/apidocs/v3 for everything.
  */
+import { useEffect } from 'react'
 import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 import { currentUser } from '../../core/session'
 import { createStore, useStore } from '../../core/store'
-import { fail, ok, type Result } from '../../core/table'
+import { createTable, fail, newestFirst, ok, type Fields, type Result } from '../../core/table'
 import { EVENT_KEY } from './season'
 
 // ---------------------------------------------------------------------------
@@ -122,6 +127,167 @@ function newId(): string {
   bytes[8] = (bytes[8] & 0x3f) | 0x80
   const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+// ---------------------------------------------------------------------------
+// Pit entries: what a scout learned talking to a team in their pit. Saved on
+// this device first, like match entries, because pit Wi-Fi is bad too. Then
+// syncPitEntries() sends the waiting ones to the scouting_pit_entries table
+// (supabase/migrations/..._scouting_pit_entries.sql).
+//
+// Teams change their robots, so every visit is kept, not just the latest.
+
+/** What a scout recorded about one team's robot, on one visit to their pit. */
+export interface PitEntry {
+  /** Made on the device and sent with the entry, so sending it twice can't make two rows. */
+  id: string
+  /** ISO date and time it was saved. */
+  created_at: string
+  /** The team number, like 4096. */
+  team: number
+  /** One of DRIVETRAINS in season.ts, or null if the scout didn't choose. */
+  drivetrain: string | null
+  /** Pounds. Null if the scout didn't fill it in. */
+  weight_lb: number | null
+  /** Inches. */
+  length_in: number | null
+  width_in: number | null
+  height_in: number | null
+  motors: string
+  /** One of AUTO_SIDES in season.ts, or null. */
+  auto_side: string | null
+  /** The path their preferred auto takes. */
+  auto_path: string
+  /** What they want their alliance partners to do. */
+  partner_strategy: string
+  /** What they'll do themselves. */
+  own_strategy: string
+  /** Who scouted it. Show their name with useMemberNames(). */
+  created_by: string | null
+  /** False while it's only on this device (Waiting). */
+  synced: boolean
+}
+
+/** What the scout fills in on the pit form. savePitEntry() adds the rest. */
+export type PitFields = Omit<PitEntry, 'id' | 'created_at' | 'created_by' | 'synced'>
+
+/** One row of the scouting_pit_entries table: a pit entry, without whether it's synced. */
+export type PitRow = Omit<PitEntry, 'synced'>
+
+/** The database has the same limits: see the checks in the scouting_pit_entries migration. */
+export const PIT_TEXT_LIMIT = 1000
+
+// Newest first. keepOnReset, for the same reasons as entryStore above.
+export const pitStore = createStore<PitEntry[]>('scouting-pit-entries', 1, () => [], { keepOnReset: true })
+
+export const pitTable = createTable<PitRow>('scouting_pit_entries', { demo: [], sort: newestFirst })
+
+/** Every pit entry saved on this device, newest first. */
+export function usePitEntries(): PitEntry[] {
+  return useStore(pitStore)
+}
+
+/**
+ * What's typed in a number box, with anything that isn't part of a number
+ * taken out: "115.5 lb" becomes "115.5". For weights and sizes.
+ */
+export function numbersOnly(text: string): string {
+  const [whole, ...rest] = text.replace(/[^\d.]/g, '').split('.')
+  return rest.length ? `${whole}.${rest.join('')}` : whole
+}
+
+/** A number box's text as a number, or null when it's empty. */
+export function toNumber(text: string): number | null {
+  return text.trim() === '' ? null : Number(text)
+}
+
+const PIT_NUMBERS = [
+  ['weight_lb', 'weight'],
+  ['length_in', 'length'],
+  ['width_in', 'width'],
+  ['height_in', 'height'],
+] as const
+
+const PIT_TEXTS = [
+  ['motors', 'motors'],
+  ['auto_path', 'auto path'],
+  ['partner_strategy', 'partner strategy'],
+  ['own_strategy', 'strategy'],
+] as const
+
+/** Why a pit entry can't be saved, or null if it can. */
+export function checkPitEntry(fields: PitFields): string | null {
+  if (!isCount(fields.team)) return 'Enter the team number first.'
+  for (const [key, name] of PIT_NUMBERS) {
+    const value = fields[key]
+    if (value !== null && !(Number.isFinite(value) && value > 0)) return `Check the ${name}: it should be a number more than 0, or empty.`
+  }
+  for (const [key, name] of PIT_TEXTS) {
+    const length = fields[key].trim().length
+    if (length > PIT_TEXT_LIMIT) return `Keep the ${name} under ${PIT_TEXT_LIMIT} characters. This one is ${length}.`
+  }
+  return null
+}
+
+/** Save a pit entry on this device, marked as not synced yet. */
+export function savePitEntry(fields: PitFields): Result<PitEntry> {
+  const problem = checkPitEntry(fields)
+  if (problem) return fail(problem)
+  const entry: PitEntry = {
+    ...fields,
+    motors: fields.motors.trim(),
+    auto_path: fields.auto_path.trim(),
+    partner_strategy: fields.partner_strategy.trim(),
+    own_strategy: fields.own_strategy.trim(),
+    id: newId(),
+    created_at: new Date().toISOString(),
+    created_by: currentUser()?.id ?? null,
+    synced: false,
+  }
+  pitStore.set((entries) => [entry, ...entries])
+  return ok(entry)
+}
+
+/** What the database answers when a row with that id is already there. See explain() in src/core/table.ts. */
+const ALREADY_THERE = "That's already there."
+
+let syncing = false
+
+/**
+ * Send the pit entries waiting on this device to the team database, oldest
+ * first, and mark each one synced. Stops at the first one that doesn't go
+ * (usually no connection) and gives the reason; the rest stay Waiting for
+ * next time. Gives how many it sent.
+ */
+export async function syncPitEntries(): Promise<Result<number>> {
+  if (syncing) return ok(0)
+  syncing = true
+  try {
+    let sent = 0
+    for (const entry of pitStore.get().filter((e) => !e.synced).reverse()) {
+      const row: Partial<PitEntry> = { ...entry }
+      delete row.synced
+      // The id, created_at and created_by go too, so the row matches the device and can't be sent twice.
+      const result = await pitTable.insert(row as unknown as Fields<PitRow>)
+      // ALREADY_THERE: it went last time, but the answer was lost on the way back.
+      if (!result.ok && result.error !== ALREADY_THERE) return result
+      pitStore.set((entries) => entries.map((e) => (e.id === entry.id ? { ...e, synced: true } : e)))
+      sent += 1
+    }
+    return ok(sent)
+  } finally {
+    syncing = false
+  }
+}
+
+/** Sync waiting pit entries when the page opens, and again whenever the device gets its connection back. */
+export function useSyncPitEntries() {
+  useEffect(() => {
+    const sync = () => void syncPitEntries()
+    sync()
+    window.addEventListener('online', sync)
+    return () => window.removeEventListener('online', sync)
+  }, [])
 }
 
 // ---------------------------------------------------------------------------
