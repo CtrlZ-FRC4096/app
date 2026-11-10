@@ -10,11 +10,14 @@ import {
   teamSummary, toRow, type EntryFields, type MatchRow, type PitFields, type PitRow, type TeamSummary,
   qualVideoRows, videoLink, type TbaMatchWithVideos,
   loadRatings, needsLoading, ratingsStore, resetRatings, savedRatings, savedWhen, signed, STALE_MS, teamRating, teamRecord, type Match13Rating,
+  DEFAULT_WEIGHTS, picklistCsv, picklistParts, rankTeams, type TeamNumbers, type Weights,
+  MAX_WEIGHT, allWeightsZero, picklistTeams, resetWeights, setWeight, weightOf, weightsStore,
 } from './data'
 import {
   SCHEDULE_REFRESH_MS, keepScheduleFresh, likelyWinner, matchLabel, matchesWithPredictions, refreshSchedule, savedSchedule, scheduleStatus, scheduleStore, updatedAgo,
   type MatchPrediction, type TbaMatch,
 } from './data'
+import { addMissingTeams, byPosition, moveTeam, picklist, picklistTable, positionBetween, setPickStatus, startPicklist, type PicklistRow } from './data'
 import { COUNTERS, DRIVETRAINS, EVENT_KEY } from './season'
 import { loadSchedule, positionStore, setPosition, teamFor, type SavedSchedule } from './data'
 import { rankOf } from './data'
@@ -348,6 +351,99 @@ describe('syncing pit entries', () => {
   })
 })
 
+describe('the shared picklist', () => {
+  beforeEach(() => {
+    picklistTable.reset()
+  })
+
+  // The example list, top first: 9991, 9993 (Picked), 9992, 9995 (Do not pick), 9994.
+  const teams = () => picklist().map((row) => row.team_number)
+  const idOf = (team: number) => picklist().find((row) => row.team_number === team)!.id
+
+  it('puts a position halfway between two teams, or 1000 past the top or bottom', () => {
+    expect(positionBetween(1000, 2000)).toBe(1500)
+    expect(positionBetween(undefined, 1000)).toBe(0)
+    expect(positionBetween(5000, undefined)).toBe(6000)
+    expect(positionBetween()).toBe(1000)
+  })
+
+  it('moves a team up and down one place', async () => {
+    expect(await moveTeam(idOf(9992), -1)).toEqual({ ok: true, value: null })
+    expect(teams()).toEqual([9991, 9992, 9993, 9995, 9994])
+    await moveTeam(idOf(9992), 1)
+    await moveTeam(idOf(9992), 1)
+    expect(teams()).toEqual([9991, 9993, 9995, 9992, 9994])
+  })
+
+  it('moves a team to the very top and the very bottom', async () => {
+    await moveTeam(idOf(9993), -1)
+    expect(teams()).toEqual([9993, 9991, 9992, 9995, 9994])
+    await moveTeam(idOf(9995), 1)
+    expect(teams()).toEqual([9993, 9991, 9992, 9994, 9995])
+  })
+
+  it('does nothing when moving the top team up or the bottom team down', async () => {
+    const before = picklist()
+    expect(await moveTeam(idOf(9991), -1)).toEqual({ ok: true, value: null })
+    expect(await moveTeam(idOf(9994), 1)).toEqual({ ok: true, value: null })
+    expect(picklist()).toEqual(before)
+  })
+
+  it('changes only the moved team in one move', async () => {
+    const before = picklist()
+    await moveTeam(idOf(9995), -1)
+    const changed = picklist().filter((row) => !before.some((old) => JSON.stringify(old) === JSON.stringify(row)))
+    expect(changed.map((row) => row.team_number)).toEqual([9995])
+  })
+
+  it('keeps working when moves leave no room between two teams, by numbering the list again', async () => {
+    // Moving the same two teams past each other over and over halves the gap each time.
+    for (let i = 0; i < 100; i++) await moveTeam(idOf(i % 2 === 0 ? 9992 : 9993), -1)
+    expect(teams()).toEqual([9991, 9993, 9992, 9995, 9994])
+    expect(new Set(picklist().map((row) => row.position)).size).toBe(5)
+  })
+
+  it('puts teams with the same position in team number order', () => {
+    const row = (team_number: number, position: number) => ({ team_number, position }) as PicklistRow
+    expect([row(9993, 1000), row(9991, 1000), row(9992, 500)].sort(byPosition).map((r) => r.team_number)).toEqual([9992, 9991, 9993])
+  })
+
+  it('says a team is gone if someone else removed it', async () => {
+    expect(await moveTeam('00000000-0000-4000-8000-000000000000', 1)).toEqual({ ok: false, error: expect.stringMatching(/isn't on the picklist/) })
+  })
+
+  it('marks a team Picked, Do not pick, or Open again, and it keeps its place', async () => {
+    for (const status of ['Picked', 'Do not pick', 'Open'] as const) {
+      expect(await setPickStatus(idOf(9992), status)).toEqual({ ok: true, value: null })
+      expect(picklist()[2]).toMatchObject({ team_number: 9992, status })
+    }
+  })
+
+  it('starts an empty picklist in the order given, 1000 apart', async () => {
+    const result = await startPicklist([4096, 9991, 9992], '2026test')
+    expect(result.ok).toBe(true)
+    expect(picklist('2026test').map((row) => [row.team_number, row.position, row.status])).toEqual([
+      [4096, 1000, 'Open'],
+      [9991, 2000, 'Open'],
+      [9992, 3000, 'Open'],
+    ])
+  })
+
+  it("won't start a picklist that already has teams, or with no teams", async () => {
+    expect(await startPicklist([4096])).toEqual({ ok: false, error: expect.stringMatching(/already started/) })
+    expect(teams()).toEqual([9991, 9993, 9992, 9995, 9994])
+    expect(await startPicklist([], '2026test')).toEqual({ ok: false, error: expect.stringMatching(/no teams/) })
+    expect(await startPicklist([0], '2026test')).toEqual({ ok: false, error: expect.stringMatching(/Check the team number/) })
+  })
+
+  it('adds only the missing teams, to the bottom', async () => {
+    const result = await addMissingTeams([9992, 4096, 9991, 9996])
+    expect(result.ok && result.value.map((row) => row.team_number)).toEqual([4096, 9996])
+    expect(teams()).toEqual([9991, 9993, 9992, 9995, 9994, 4096, 9996])
+    expect(await addMissingTeams([9991, 4096])).toEqual({ ok: true, value: [] })
+  })
+})
+
 describe('The Blue Alliance in demo mode', () => {
   it('has a schedule of qualification matches, three teams a side', async () => {
     const result = await getSchedule('2026demo')
@@ -508,6 +604,177 @@ describe('Match 13 answers', () => {
     const { data } = await withAnswer({ ok: false, error: 'Match 13 turned down the key. A mentor should check the MATCH13_KEY secret.' })
     expect(await data.getRatings()).toEqual({ ok: false, error: expect.stringMatching(/MATCH13_KEY/) })
     expect(await data.getPredictions()).toEqual({ ok: false, error: expect.stringMatching(/MATCH13_KEY/) })
+  })
+})
+
+describe('picklist score', () => {
+  // A team with only the numbers given; the rest are missing (null).
+  const team = (number: number, values: Record<string, number | null>): TeamNumbers => ({ team: number, values, matches: 1, rated: true })
+  // Only the weights given count; every other part is 0.
+  const only = (weights: Weights): Weights => ({ ...Object.fromEntries(picklistParts().map((p) => [p.key, 0])), ...weights })
+  const order = (teams: TeamNumbers[], weights: Weights) => rankTeams(teams, weights).map((line) => line.team)
+  const scores = (teams: TeamNumbers[], weights: Weights) => rankTeams(teams, weights).map((line) => line.score)
+  const teamAndScore = (teams: TeamNumbers[], weights: Weights) => rankTeams(teams, weights).map((line) => [line.team, line.score])
+
+  it('scores the best team 100 and the worst 0, and the rest in between', () => {
+    const teams = [team(9991, { autoFuel: 5 }), team(9992, { autoFuel: 10 }), team(9993, { autoFuel: 0 })]
+    expect(rankTeams(teams, only({ autoFuel: 1 }))).toEqual([
+      { rank: 1, team: 9992, score: 100, parts: expect.objectContaining({ autoFuel: 10, xAuto: null }) },
+      { rank: 2, team: 9991, score: 50, parts: expect.objectContaining({ autoFuel: 5 }) },
+      { rank: 3, team: 9993, score: 0, parts: expect.objectContaining({ autoFuel: 0 }) },
+    ])
+  })
+
+  it('ranks fewer fuel missed as better', () => {
+    const teams = [team(9991, { fuelMissed: 5 }), team(9992, { fuelMissed: 1 })]
+    expect(teamAndScore(teams, only({ fuelMissed: 1 }))).toEqual([[9992, 100], [9991, 0]])
+  })
+
+  it('re-sorts when a weight changes', () => {
+    // 9991 is better on Match 13 auto, 9992 on the auto fuel we scouted.
+    const teams = [team(9991, { xAuto: 10, autoFuel: 0 }), team(9992, { xAuto: 0, autoFuel: 10 })]
+    expect(order(teams, only({ xAuto: 3, autoFuel: 1 }))).toEqual([9991, 9992])
+    expect(scores(teams, only({ xAuto: 3, autoFuel: 1 }))).toEqual([75, 25])
+    expect(order(teams, only({ xAuto: 1, autoFuel: 3 }))).toEqual([9992, 9991])
+  })
+
+  it('scores a team with no scouting entries yet on its Match 13 numbers only', () => {
+    const teams = [
+      team(9991, { xAuto: 10, autoFuel: 10 }),
+      team(9992, { xAuto: 0, autoFuel: 0 }),
+      { team: 9993, values: { xAuto: 5, autoFuel: null }, matches: 0, rated: true },
+    ]
+    expect(teamAndScore(teams, only({ xAuto: 1, autoFuel: 1 }))).toEqual([[9991, 100], [9993, 50], [9992, 0]])
+  })
+
+  it("scores a team Match 13 hasn't rated yet on our scouting only", () => {
+    const teams = [
+      team(9991, { xAuto: 10, autoFuel: 0 }),
+      team(9992, { xAuto: 0, autoFuel: 5 }),
+      { team: 9993, values: { xAuto: null, xTele: null, xEnd: null, autoFuel: 10 }, matches: 3, rated: false },
+    ]
+    expect(teamAndScore(teams, only({ xAuto: 1, autoFuel: 1 }))).toEqual([[9993, 100], [9991, 50], [9992, 25]])
+  })
+
+  it('skips a missing Match 13 auto for that team only', () => {
+    const teams = [team(9991, { xAuto: null, xTele: 10 }), team(9992, { xAuto: 10, xTele: 0 }), team(9993, { xAuto: 0, xTele: 5 })]
+    expect(teamAndScore(teams, only({ xAuto: 1, xTele: 1 }))).toEqual([[9991, 100], [9992, 50], [9993, 25]])
+  })
+
+  it('puts a team with none of the weighted numbers at the bottom, with no score', () => {
+    const teams = [team(9991, { xTele: 3 }), team(9992, { autoFuel: 1 }), team(9993, { autoFuel: 4 })]
+    expect(teamAndScore(teams, only({ autoFuel: 1 }))).toEqual([[9993, 100], [9992, 0], [9991, null]])
+  })
+
+  it('gives every team no score, in team number order, when every weight is 0', () => {
+    const teams = [team(9993, { xAuto: 1, autoFuel: 2 }), team(9991, { xAuto: 9 }), team(9992, {})]
+    const ranked = rankTeams(teams, only({}))
+    expect(ranked.map(({ rank, team, score }) => [rank, team, score])).toEqual([[1, 9991, null], [2, 9992, null], [3, 9993, null]])
+  })
+
+  it('gives 0.5 (a score of 50) when there is one team, or every team has the same number', () => {
+    expect(scores([team(9991, { autoFuel: 7 })], only({ autoFuel: 1 }))).toEqual([50])
+    expect(scores([team(9992, { autoFuel: 4 }), team(9991, { autoFuel: 4 })], only({ autoFuel: 1 }))).toEqual([50, 50])
+  })
+
+  it('puts the lower team number first when scores are equal', () => {
+    const teams = [team(9993, { xAuto: 8 }), team(9991, { xAuto: 8 }), team(9992, { xAuto: 2 })]
+    expect(rankTeams(teams, only({ xAuto: 1 })).map(({ rank, team }) => [rank, team])).toEqual([[1, 9991], [2, 9993], [3, 9992]])
+  })
+
+  it('counts a part with no saved weight at the default weight', () => {
+    const teams = [team(9991, { autoFuel: 10, xAuto: 0 }), team(9992, { autoFuel: 0, xAuto: 10 })]
+    const weights = only({ xAuto: 1 })
+    delete weights.autoFuel
+    expect(scores(teams, weights)).toEqual([50, 50])
+    expect(DEFAULT_WEIGHTS).toEqual(Object.fromEntries(picklistParts().map((p) => [p.key, 1])))
+  })
+
+  it("scores Match 13's auto, teleop and endgame, then every counter in season.ts", () => {
+    const parts = picklistParts()
+    expect(parts.slice(0, 3).map((p) => p.key)).toEqual(['xAuto', 'xTele', 'xEnd'])
+    expect(parts.slice(3)).toEqual(COUNTERS.map((c) => ({ key: c.key, label: c.label, lowerIsBetter: c.lowerIsBetter ?? false })))
+    expect(parts.find((p) => p.key === 'fuelMissed')?.lowerIsBetter).toBe(true)
+  })
+
+  it('copies the picklist as CSV, with an empty cell for a missing number', () => {
+    const parts = picklistParts().filter((p) => ['xAuto', 'autoFuel'].includes(p.key))
+    const ranked = rankTeams([team(9991, { xAuto: 12.34, autoFuel: 2 }), team(9992, { xAuto: 3 }), team(9993, {})], only({ xAuto: 1, autoFuel: 1 }))
+    expect(picklistCsv(ranked, parts)).toBe(
+      'Rank,Team,Score,Match 13 auto,Auto fuel scored\r\n' +
+      '1,9991,75,12.3,2\r\n' +
+      '2,9992,0,3,\r\n' +
+      '3,9993,,,\r\n',
+    )
+  })
+})
+
+describe("the picklist page: each team's numbers and the weights", () => {
+  // A match entry as the team database has it, for team 9991 unless changed.
+  let next = 0
+  const row = (match: number, fields: Partial<MatchRow> = {}): MatchRow => ({
+    id: `picklist-entry-${++next}`,
+    event_key: EVENT_KEY,
+    match_number: match,
+    team_number: 9991,
+    counts: { autoFuel: 2, teleopFuel: 10, fuelMissed: 1 },
+    endgame: 'Level 1',
+    roles: ['Scorer'],
+    broke_down: false,
+    stop: 'None',
+    driver_skill: 3,
+    notes: null,
+    scouted_by: DEMO_PEOPLE.alex,
+    scouted_at: '2026-11-07T15:00:00Z',
+    ...fields,
+  })
+  const rated = (teamNumber: number, xAuto: number): Match13Rating => ({
+    teamNumber, xpStart: 30, xpEnd: 40, xAuto, xTele: 20, xEnd: 5, epa: null, opr: null, dpr: null,
+  })
+
+  beforeEach(() => weightsStore.reset())
+
+  it("uses the team page's averages and Match 13's auto, teleop and endgame", () => {
+    const entries = [row(1, { counts: { autoFuel: 1, teleopFuel: 10, fuelMissed: 2 } }), row(2, { counts: { autoFuel: 4, teleopFuel: 6, fuelMissed: 0 } })]
+    const [team] = picklistTeams([rated(9991, 12)], entries, [])
+    expect(team).toEqual({ team: 9991, values: { xAuto: 12, xTele: 20, xEnd: 5, autoFuel: 2.5, teleopFuel: 8, fuelMissed: 1 }, matches: 2, rated: true })
+    const summary = teamSummary(9991, entries, [])
+    for (const c of summary.counters) expect(team.values[c.key]).toBe(c.average)
+  })
+
+  it('lists every team rated by Match 13 or scouted at this event, each once, lowest number first', () => {
+    const entries = [row(1, { team_number: 9993 }), row(2), row(3, { team_number: 9995, event_key: '2025ilch' })]
+    const pit = pitToRow({ ...PIT, team: 9992, id: 'picklist-pit', created_at: '2026-11-07T14:00:00Z', event_key: EVENT_KEY, scouted_by: null, synced: false })
+    expect(picklistTeams([rated(9991, 1), rated(4096, 2)], entries, [pit]).map((t) => t.team)).toEqual([4096, 9991, 9992, 9993])
+  })
+
+  it("leaves our numbers empty for a team with no scouting yet, and Match 13's for a team it hasn't rated", () => {
+    const [notScouted, notRated] = picklistTeams([rated(4096, 9)], [row(1, { team_number: 9991 })], [])
+    expect(notScouted).toMatchObject({ team: 4096, matches: 0, rated: true, values: { xAuto: 9, autoFuel: null, fuelMissed: null } })
+    expect(notRated).toMatchObject({ team: 9991, matches: 1, rated: false, values: { xAuto: null, xTele: null, xEnd: null, autoFuel: 2 } })
+  })
+
+  it('counts two scouts watching the same match as one match', () => {
+    expect(picklistTeams([], [row(5), row(5), row(6)], [])[0].matches).toBe(2)
+  })
+
+  it('keeps each weight a whole number from 0 to 5, and resets them', () => {
+    setWeight('autoFuel', 9)
+    setWeight('xAuto', -2)
+    setWeight('xTele', 2.4)
+    expect(weightsStore.get()).toMatchObject({ autoFuel: MAX_WEIGHT, xAuto: 0, xTele: 2 })
+    resetWeights()
+    expect(weightsStore.get()).toEqual(DEFAULT_WEIGHTS)
+  })
+
+  it('knows when every weight is 0, counting a missing weight as the default', () => {
+    const zero = Object.fromEntries(picklistParts().map((p) => [p.key, 0]))
+    expect(allWeightsZero(zero)).toBe(true)
+    expect(allWeightsZero({ ...zero, xEnd: 1 })).toBe(false)
+    const missingOne = { ...zero }
+    delete missingOne.autoFuel
+    expect(weightOf(missingOne, 'autoFuel')).toBe(1)
+    expect(allWeightsZero(missingOne)).toBe(false)
   })
 })
 

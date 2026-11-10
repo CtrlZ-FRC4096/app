@@ -5,10 +5,12 @@ import { PageHead, Panel, Pick } from '../../core/ui'
 import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
 import FormSection from './FormSection'
 import MatchTeamFields from './MatchTeamFields'
+import Picklist from './Picklist'
 import PitForm from './PitForm'
 import RankingsPage from './RankingsPage'
 import Schedule from './Schedule'
 import SavedOnDevice from './SavedOnDevice'
+import SharedPicklist from './SharedPicklist'
 import TeamPage, { TeamLink } from './TeamPage'
 import { COUNTERS, ENDGAME, ROLES } from './season'
 
@@ -40,16 +42,16 @@ function PickMany(props: { label: string; options: string[]; value: string[]; on
   )
 }
 
-const VIEWS = ['Match', 'Pit', 'Schedule', 'Rankings']
+const VIEWS = ['Match', 'Pit', 'Schedule', 'Rankings', 'Picklist', 'Final picklist']
 /** Each view's address after #/scouting/. */
-const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule', Rankings: 'rankings' }
+const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule', Rankings: 'rankings', Picklist: 'picklist', 'Final picklist': 'shared-picklist' }
 
-// A Match / Pit / Schedule / Rankings switch at the top. The choice is in the
-// address, so #/scouting/pit opens the pit form straight away: a menu or a
-// bookmark can link to any of them. Both forms stay on the page, and the one not
-// chosen is hidden, so switching doesn't lose what's typed. The schedule and
-// rankings are only on the page while they're chosen, so they only update
-// while someone's looking at them.
+// A Match / Pit / Schedule / Rankings / Picklist / Final picklist switch at
+// the top. The choice is in the address, so #/scouting/pit opens the pit form
+// straight away: a menu or a bookmark can link to any of them. Both forms
+// stay on the page, and the one not chosen is hidden, so switching doesn't
+// lose what's typed. The other pages are only on the page while they're
+// chosen, so they only load and update while someone's looking at them.
 //
 // #/scouting/team/9991 is the team page for team 9991 (TeamPage.tsx), with
 // both forms hidden. It's only drawn while open: it waits for the team
@@ -67,6 +69,8 @@ export default function ScoutingPage() {
       <div hidden={view !== 'Pit'}><PitForm /></div>
       {view === 'Schedule' && <Schedule />}
       {view === 'Rankings' && <RankingsPage />}
+      {view === 'Picklist' && <Picklist />}
+      {view === 'Final picklist' && <SharedPicklist />}
       {view === 'Team' && <TeamPage team={Number.isInteger(team) && team > 0 ? team : null} />}
     </>
   )

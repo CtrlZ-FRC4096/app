@@ -36,6 +36,7 @@ import { currentUser, onSignedIn } from '../../core/session'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore, type Store } from '../../core/store'
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row, type Table } from '../../core/table'
+import { toCsv } from '../attendance/data'
 import { COUNTERS, DRIVETRAINS, ENDGAME, EVENT_KEY, ROLES, type Counter } from './season'
 
 /** The event we're at, from season.ts, for other modules. */
@@ -1049,6 +1050,208 @@ export async function getPredictions(event = EVENT_KEY): Promise<Result<MatchPre
   )
 }
 
+// Picklist score (#42): every team ranked by a mix of its Match 13 xP and our
+// scouting averages, with a weight for how much each part counts. These are
+// plain functions that take the numbers in. Working out each team's numbers
+// waits on the team page (#36) and saved Match 13 ratings (#37).
+
+/** One thing a team is scored on, like Match 13 auto or fuel missed. */
+export interface PicklistPart {
+  /** The key in TeamNumbers' values and in Weights. */
+  key: string
+  label: string
+  /** True if fewer is better, like fuel missed. */
+  lowerIsBetter: boolean
+}
+
+/**
+ * Everything a team is scored on: Match 13's auto, teleop and endgame xP,
+ * then each counter in season.ts. Not Match 13's total as well: it's the
+ * three parts added up, so weighting it too would count xP twice. A new
+ * counter in season.ts shows up here by itself.
+ */
+export function picklistParts(): PicklistPart[] {
+  return [
+    { key: 'xAuto', label: 'Match 13 auto', lowerIsBetter: false },
+    { key: 'xTele', label: 'Match 13 teleop', lowerIsBetter: false },
+    { key: 'xEnd', label: 'Match 13 endgame', lowerIsBetter: false },
+    ...COUNTERS.map((c) => ({ key: c.key, label: c.label, lowerIsBetter: c.lowerIsBetter ?? false })),
+  ]
+}
+
+/** How much each part counts, from 0 (not at all) to 5, by the part's key. */
+export type Weights = Record<string, number>
+
+/** A part with no weight saved, like a counter added after the weights were set, counts this much. */
+export const DEFAULT_WEIGHT = 1
+export const MAX_WEIGHT = 5
+
+export const DEFAULT_WEIGHTS: Weights = Object.fromEntries(picklistParts().map((part) => [part.key, DEFAULT_WEIGHT]))
+
+// Saved on this phone only, so each scout can try their own weights.
+// keepOnReset: "Reset example data" shouldn't undo them at an event.
+export const weightsStore = createStore<Weights>('scouting-picklist-weights', 1, () => ({ ...DEFAULT_WEIGHTS }), { keepOnReset: true })
+
+/** One team's numbers for the picklist, by part key. Null if we don't have that number yet. */
+export interface TeamNumbers {
+  team: number
+  values: Record<string, number | null>
+  /** How many matches we scouted them in. 0 if none yet. */
+  matches: number
+  /** False if Match 13 hasn't rated them yet. */
+  rated: boolean
+}
+
+/** One line of the picklist. */
+export interface RankedTeam {
+  /** 1 is the best. */
+  rank: number
+  team: number
+  /** 0 to 100, or null if the team has none of the weighted numbers. */
+  score: number | null
+  /** The numbers behind the score, by part key, as they came in. Null if missing. */
+  parts: Record<string, number | null>
+}
+
+/**
+ * Every team ranked best first. For each part, the best team gets 1 and the
+ * worst 0, and the rest in between by how close they are (if every team has
+ * the same number, they all get 0.5). For lower-is-better parts it's the
+ * other way round. A team's score is the average of these, weighted, out of
+ * 100.
+ *
+ * A team missing a number (no scouting yet, or not rated by Match 13 yet) is
+ * scored on the numbers it has, so it isn't pushed down for what we don't
+ * know. A team with none of the weighted numbers has no score and goes at
+ * the bottom. Equal scores go in team number order, so every phone shows the
+ * same list.
+ */
+export function rankTeams(teams: TeamNumbers[], weights: Weights): RankedTeam[] {
+  const parts = picklistParts()
+  const value = (team: TeamNumbers, key: string) => team.values[key] ?? null
+
+  // Each part's lowest and highest number, over the teams that have one.
+  const ranges = new Map(
+    parts.map((part) => {
+      const values = teams.map((t) => value(t, part.key)).filter((v): v is number => v !== null)
+      return [part.key, { min: Math.min(...values), max: Math.max(...values) }]
+    }),
+  )
+
+  const scored = teams.map((team) => {
+    let total = 0
+    let weightTotal = 0
+    for (const part of parts) {
+      const v = value(team, part.key)
+      const weight = weights[part.key] ?? DEFAULT_WEIGHT
+      if (v === null || weight <= 0) continue
+      const { min, max } = ranges.get(part.key)!
+      const n = max === min ? 0.5 : (v - min) / (max - min)
+      total += weight * (part.lowerIsBetter ? 1 - n : n)
+      weightTotal += weight
+    }
+    return {
+      team: team.team,
+      score: weightTotal > 0 ? (total / weightTotal) * 100 : null,
+      parts: Object.fromEntries(parts.map((part) => [part.key, value(team, part.key)])),
+    }
+  })
+
+  return scored
+    .sort((a, b) => {
+      if (a.score === b.score) return a.team - b.team
+      if (a.score === null) return 1
+      if (b.score === null) return -1
+      return b.score - a.score
+    })
+    .map((line, i) => ({ rank: i + 1, ...line }))
+}
+
+/** The picklist as CSV text, to paste into a spreadsheet. A missing number is an empty cell. */
+export function picklistCsv(ranked: RankedTeam[], parts: PicklistPart[]): string {
+  const number = (n: number | null) => (n === null ? '' : String(Math.round(n * 10) / 10))
+  return toCsv([
+    ['Rank', 'Team', 'Score', ...parts.map((part) => part.label)],
+    ...ranked.map((line) => [String(line.rank), String(line.team), number(line.score), ...parts.map((part) => number(line.parts[part.key] ?? null))]),
+  ])
+}
+
+// The picklist page (#42). Each team's numbers come from teamSummary(), the
+// same sums as the team page, so the two never disagree, and from the saved
+// Match 13 ratings (useRatings()), so the list still works with no Wi-Fi.
+
+/**
+ * Every team in Match 13's ratings or our entries at this event, with its
+ * numbers for rankTeams(): Match 13's auto, teleop and endgame xP, and our
+ * average for each counter. Lowest team number first.
+ */
+export function picklistTeams(ratings: Match13Rating[], entries: MatchRow[], pitEntries: PitRow[]): TeamNumbers[] {
+  const teams = [...new Set([...ratings.map((r) => r.teamNumber), ...scoutedTeams(entries, pitEntries)])].sort((a, b) => a - b)
+  return teams.map((team) => {
+    const rating = ratings.find((r) => r.teamNumber === team)
+    const summary = teamSummary(team, entries, pitEntries)
+    // Two scouts watching the same robot in the same match is still one match.
+    const matches = new Set(entries.filter((e) => e.event_key === EVENT_KEY && e.team_number === team).map((e) => e.match_number))
+    return {
+      team,
+      values: {
+        xAuto: rating?.xAuto ?? null,
+        xTele: rating?.xTele ?? null,
+        xEnd: rating?.xEnd ?? null,
+        ...Object.fromEntries(summary.counters.map((c) => [c.key, c.average])),
+      },
+      matches: matches.size,
+      rated: rating !== undefined,
+    }
+  })
+}
+
+/** How much one part counts. A part with no saved weight counts DEFAULT_WEIGHT. */
+export function weightOf(weights: Weights, key: string): number {
+  return weights[key] ?? DEFAULT_WEIGHT
+}
+
+/** True when every part's weight is 0, so no team can be scored. */
+export function allWeightsZero(weights: Weights): boolean {
+  return picklistParts().every((part) => weightOf(weights, part.key) <= 0)
+}
+
+/** Set how much one part counts: a whole number from 0 to MAX_WEIGHT. Saved on this phone. */
+export function setWeight(key: string, weight: number) {
+  const clamped = Math.min(MAX_WEIGHT, Math.max(0, Math.round(weight)))
+  weightsStore.set((prev) => ({ ...prev, [key]: clamped }))
+}
+
+/** Put every weight back to DEFAULT_WEIGHT. */
+export function resetWeights() {
+  weightsStore.set({ ...DEFAULT_WEIGHTS })
+}
+
+/** One line of the picklist page: a RankedTeam, and what we know about the team. */
+export interface PicklistLine extends RankedTeam {
+  /** How many matches we scouted them in. 0 if none yet. */
+  matches: number
+  /** False if Match 13 hasn't rated them yet. */
+  rated: boolean
+}
+
+/**
+ * The picklist page's list: every team ranked with this phone's weights,
+ * re-sorted as soon as a weight changes. `ratings` is useRatings(), for
+ * when the Match 13 numbers are from and whether they could be loaded.
+ */
+export function useRankedPicklist() {
+  const ratings = useRatings()
+  const { entries, pitEntries } = useScoutingRows()
+  const weights = useStore(weightsStore)
+  const teams = useMemo(() => picklistTeams(ratings.ratings, entries, pitEntries), [ratings.ratings, entries, pitEntries])
+  const ranked = useMemo(() => {
+    const known = new Map(teams.map((t) => [t.team, t]))
+    return rankTeams(teams, weights).map((line): PicklistLine => ({ ...line, matches: known.get(line.team)?.matches ?? 0, rated: known.get(line.team)?.rated ?? false }))
+  }, [teams, weights])
+  return { ranked, weights, ratings }
+}
+
 // ---------------------------------------------------------------------------
 // The match schedule page: The Blue Alliance's schedule with Match 13's
 // prediction for each match. The last ones fetched are saved on this
@@ -1498,4 +1701,152 @@ function demoRankings(): TbaRanking[] {
     .sort(([a, ra], [b, rb]) => rb.wins - ra.wins || ra.losses - rb.losses || teamNumber(a) - teamNumber(b))
     // Made-up ranking points: 3 for a win and 1 for a tie, with no bonus points.
     .map(([team_key, r], i) => ({ rank: i + 1, team_key, record: r, matches_played: r.wins + r.losses + r.ties, extra_stats: [r.wins * 3 + r.ties] }))
+}
+
+// ---------------------------------------------------------------------------
+// Shared picklist (#43): the order the strategy team wants to pick teams in
+// on alliance selection day. It's a table, so every phone shows the same
+// order and changes show up by themselves. Everyone signed in can read it;
+// only mentors and admins can change it (the rules in
+// supabase/migrations/..._scouting_picklist.sql).
+//
+// Each team has a position, and the list is in position order, smallest
+// first. Positions start 1000 apart. Moving a team changes only its own
+// position, to halfway between its new neighbours, so one move is one small
+// change, and two people moving different teams at once don't undo each
+// other. After many moves in one spot the halves get too close to tell
+// apart; then moveTeam() numbers the list 1000, 2000, … again.
+
+export const PICK_STATUSES = ['Open', 'Picked', 'Do not pick'] as const
+/** Picked: already on another alliance. Teams keep their place when marked. */
+export type PickStatus = (typeof PICK_STATUSES)[number]
+
+/** One row of the scouting_picklist table: one team on one event's list. */
+export interface PicklistRow extends Row {
+  /** The event, like 2026ilch. Each event has its own list. */
+  event_key: string
+  team_number: number
+  /** Smaller is higher on the list. */
+  position: number
+  status: PickStatus
+  /** Who added it. Show their name with useMemberNames(). */
+  created_by: string | null
+}
+
+/** How far apart positions are when teams are added. */
+export const POSITION_GAP = 1000
+
+/** Top of the list first. Two teams with the same position go by team number. */
+export const byPosition = (a: PicklistRow, b: PicklistRow) => a.position - b.position || a.team_number - b.team_number
+
+// Made up, for demo mode: the example teams above, not real ones.
+const EXAMPLE_PICKLIST: PicklistRow[] = [
+  { id: '00000000-0000-4000-8000-0000000d0101', event_key: EVENT_KEY, team_number: 9991, position: 1000, status: 'Open', created_at: '2026-11-07T20:00:00Z', created_by: DEMO_PEOPLE.pat },
+  { id: '00000000-0000-4000-8000-0000000d0102', event_key: EVENT_KEY, team_number: 9993, position: 2000, status: 'Picked', created_at: '2026-11-07T20:00:00Z', created_by: DEMO_PEOPLE.pat },
+  { id: '00000000-0000-4000-8000-0000000d0103', event_key: EVENT_KEY, team_number: 9992, position: 3000, status: 'Open', created_at: '2026-11-07T20:00:00Z', created_by: DEMO_PEOPLE.pat },
+  { id: '00000000-0000-4000-8000-0000000d0104', event_key: EVENT_KEY, team_number: 9995, position: 4000, status: 'Do not pick', created_at: '2026-11-07T20:00:00Z', created_by: DEMO_PEOPLE.pat },
+  { id: '00000000-0000-4000-8000-0000000d0105', event_key: EVENT_KEY, team_number: 9994, position: 5000, status: 'Open', created_at: '2026-11-07T20:00:00Z', created_by: DEMO_PEOPLE.pat },
+]
+
+export const picklistTable = createTable<PicklistRow>('scouting_picklist', { demo: EXAMPLE_PICKLIST, sort: byPosition })
+
+/** One event's picklist, top first. */
+export function picklist(event = EVENT_KEY): PicklistRow[] {
+  return picklistTable.rows().filter((row) => row.event_key === event)
+}
+
+/** One event's picklist, top first, for a page. */
+export function usePicklist(event = EVENT_KEY): PicklistRow[] {
+  return picklistTable.useRows().filter((row) => row.event_key === event)
+}
+
+/**
+ * A position between two teams' positions: halfway between them, or
+ * POSITION_GAP above the top or below the bottom of the list. Leave out
+ * `before` for the top, `after` for the bottom, and both for an empty list.
+ */
+export function positionBetween(before?: number, after?: number): number {
+  if (before === undefined) return after === undefined ? POSITION_GAP : after - POSITION_GAP
+  if (after === undefined) return before + POSITION_GAP
+  return (before + after) / 2
+}
+
+/** Why these team numbers can't go on the list, or null if they can. */
+function checkTeams(teams: number[]): string | null {
+  const bad = teams.find((team) => !isCount(team) || team > MAX_TEAM)
+  return bad === undefined ? null : `Check the team number: ${bad} isn't one.`
+}
+
+/** New rows for these teams, in the order given, each once, below the position `last`. */
+function rowsBelow(teams: number[], last: number | undefined, event: string) {
+  let position = last
+  return [...new Set(teams)].map((team) => {
+    position = positionBetween(position)
+    return { event_key: event, team_number: team, position, status: 'Open' as const }
+  })
+}
+
+/**
+ * Start the event's picklist with these teams, best first (like the ranked
+ * list). Only for an empty list: once it's started, the order is the
+ * strategy team's, so this never replaces it.
+ */
+export async function startPicklist(teams: number[], event = EVENT_KEY): Promise<Result<PicklistRow[]>> {
+  if (teams.length === 0) return fail('There are no teams to start the picklist with.')
+  const problem = checkTeams(teams)
+  if (problem) return fail(problem)
+  if (picklist(event).length > 0) return fail('The picklist is already started. Move teams on it, or add the teams that are missing.')
+  return picklistTable.insertMany(rowsBelow(teams, undefined, event))
+}
+
+/**
+ * Add the teams that aren't on the event's picklist yet to the bottom, in
+ * the order given. Teams already on it stay where they are.
+ */
+export async function addMissingTeams(teams: number[], event = EVENT_KEY): Promise<Result<PicklistRow[]>> {
+  const problem = checkTeams(teams)
+  if (problem) return fail(problem)
+  const list = picklist(event)
+  const onList = new Set(list.map((row) => row.team_number))
+  const missing = teams.filter((team) => !onList.has(team))
+  if (missing.length === 0) return ok([])
+  return picklistTable.insertMany(rowsBelow(missing, list.at(-1)?.position, event))
+}
+
+/**
+ * Move a team one place up (-1) or down (1) its event's list. Up from the
+ * top or down from the bottom does nothing.
+ */
+export async function moveTeam(id: string, direction: -1 | 1): Promise<Result> {
+  const row = picklistTable.rows().find((r) => r.id === id)
+  if (!row) return fail("That team isn't on the picklist any more.")
+  const list = picklist(row.event_key)
+  const to = list.indexOf(row) + direction
+  if (to < 0 || to >= list.length) return ok(null)
+
+  // Its new neighbours: the teams it ends up between (none past either end).
+  const [before, after] = direction === -1 ? [list[to - 1], list[to]] : [list[to], list[to + 1]]
+  const position = positionBetween(before?.position, after?.position)
+  if (position !== before?.position && position !== after?.position) {
+    const result = await picklistTable.update(id, { position })
+    return result.ok ? ok(null) : result
+  }
+
+  // Too close to tell apart: number the whole list again, with this move in it.
+  const order = list.filter((r) => r.id !== id)
+  order.splice(to, 0, row)
+  for (const [i, r] of order.entries()) {
+    const renumbered = (i + 1) * POSITION_GAP
+    if (r.position === renumbered) continue
+    const result = await picklistTable.update(r.id, { position: renumbered })
+    if (!result.ok) return result
+  }
+  return ok(null)
+}
+
+/** Mark a team Open, Picked (on another alliance) or Do not pick. It keeps its place. */
+export async function setPickStatus(id: string, status: PickStatus): Promise<Result> {
+  if (!PICK_STATUSES.includes(status)) return fail('Choose Open, Picked or Do not pick.')
+  const result = await picklistTable.update(id, { status })
+  return result.ok ? ok(null) : result
 }
