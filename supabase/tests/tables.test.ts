@@ -35,30 +35,44 @@ describe('every table in the database', () => {
   })
 })
 
-describe.each(tables.map((t) => [t.name, t] as const))('the %s table', (name, table) => {
+// Each check goes through every table the app uses, and reports every table
+// that fails it (expect.soft keeps going after the first), naming the table.
+describe('every table the app uses', () => {
   it('is made by a migration', async () => {
-    const found = await db.sql('select 1 from pg_tables where schemaname = $1 and tablename = $2', ['public', name])
-    expect(found, `No migration makes public.${name}. Copy supabase/migrations/..._example_notes.sql.`).toHaveLength(1)
+    for (const { name } of tables) {
+      const found = await db.sql('select 1 from pg_tables where schemaname = $1 and tablename = $2', ['public', name])
+      expect.soft(found, `No migration makes public.${name}. Copy supabase/migrations/..._example_notes.sql.`).toHaveLength(1)
+    }
   })
 
   it('sends live updates to the app', async () => {
-    const found = await db.sql("select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = $1", [name])
-    expect(found, `Add "alter publication supabase_realtime add table public.${name}" to the migration`).toHaveLength(1)
+    for (const { name } of tables) {
+      const found = await db.sql("select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = $1", [name])
+      expect.soft(found, `Add "alter publication supabase_realtime add table public.${name}" to the migration`).toHaveLength(1)
+    }
   })
 
   it('has example rows with exactly its columns', async () => {
-    const columns = (await db.sql<{ name: string }>(
-      'select column_name as name from information_schema.columns where table_schema = $1 and table_name = $2 order by 1',
-      ['public', name],
-    )).map((c) => c.name)
-    for (const row of table.demoRows) {
-      expect(Object.keys(row).sort(), `An example row in ${name} doesn't match the table's columns`).toEqual(columns)
+    for (const { name, demoRows } of tables) {
+      const columns = (await db.sql<{ name: string }>(
+        'select column_name as name from information_schema.columns where table_schema = $1 and table_name = $2 order by 1',
+        ['public', name],
+      )).map((c) => c.name)
+      for (const row of demoRows) {
+        expect.soft(Object.keys(row).sort(), `An example row in ${name} doesn't match the table's columns`).toEqual(columns)
+      }
     }
   })
 
   it('accepts its example rows', async () => {
-    await addDemoPeople()
-    await insertDemoRows(table)
+    const refused: string[] = []
+    for (const table of tables) {
+      // Start each table from an empty database, so one table's rows can't affect another's.
+      await db.empty()
+      await addDemoPeople()
+      await insertDemoRows(table).catch((error: Error) => refused.push(`${table.name}: ${error.message}`))
+    }
+    expect(refused, "These tables' example rows break the table's rules").toEqual([])
   })
 })
 
