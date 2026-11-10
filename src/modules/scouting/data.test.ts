@@ -8,6 +8,7 @@ import {
   MAX_NOTES_LENGTH, blankOrNumber, checkEntry, checkPitEntry, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
   MAX_PIT_NUMBER, numberOnly, pitAnswers, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, scoutedTeams, syncEntries, syncStatus, teamNumber,
   teamSummary, toRow, type EntryFields, type MatchRow, type PitFields, type PitRow, type TeamSummary,
+  qualVideoRows, videoLink, type TbaMatchWithVideos,
 } from './data'
 import {
   SCHEDULE_REFRESH_MS, keepScheduleFresh, likelyWinner, matchLabel, matchesWithPredictions, refreshSchedule, savedSchedule, scheduleStatus, scheduleStore, updatedAgo,
@@ -376,6 +377,74 @@ describe('The Blue Alliance in demo mode', () => {
   it('names teams', async () => {
     expect(await getTeam(4096)).toMatchObject({ ok: true, value: { team_number: 4096, nickname: 'Ctrl-Z' } })
     expect(teamNumber('frc4096')).toBe(4096)
+  })
+})
+
+describe('match videos', () => {
+  // A made-up match with 4096 on red. Each test changes only the part it's about.
+  const match = (number: number, change: Partial<TbaMatchWithVideos> = {}): TbaMatchWithVideos => ({
+    key: `2026test_qm${number}`,
+    comp_level: 'qm',
+    set_number: 1,
+    match_number: number,
+    alliances: {
+      red: { score: 80, team_keys: ['frc4096', 'frc9991', 'frc9992'] },
+      blue: { score: 60, team_keys: ['frc9993', 'frc9994', 'frc9995'] },
+    },
+    winning_alliance: 'red',
+    predicted_time: null,
+    videos: [{ type: 'youtube', key: 'abc123' }],
+    ...change,
+  })
+  const scores = (red: number, blue: number) => ({
+    red: { score: red, team_keys: ['frc4096', 'frc9991', 'frc9992'] },
+    blue: { score: blue, team_keys: ['frc9993', 'frc9994', 'frc9995'] },
+  })
+
+  it('links to YouTube videos, keeping a start time', () => {
+    expect(videoLink({ type: 'youtube', key: 'dQw4w9WgXcQ' })).toBe('https://youtu.be/dQw4w9WgXcQ')
+    expect(videoLink({ type: 'youtube', key: 'abc_123-x?t=30' })).toBe('https://youtu.be/abc_123-x?t=30')
+  })
+
+  it("gives no link for other kinds of video, or keys that don't look right", () => {
+    expect(videoLink({ type: 'tba', key: 'abc123' })).toBeNull()
+    for (const key of ['', 'abc/123', 'abc 123', 'abc"123', 'abc123?t=soon', 'javascript:alert(1)']) {
+      expect(videoLink({ type: 'youtube', key })).toBeNull()
+    }
+  })
+
+  it('lists only qualification matches, in order', () => {
+    const matches = [match(3), match(1, { comp_level: 'sf', key: '2026test_sf1m1' }), match(1), match(2)]
+    expect(qualVideoRows(matches, 4096).map((r) => r.key)).toEqual(['2026test_qm1', '2026test_qm2', '2026test_qm3'])
+  })
+
+  it("finds the team's alliance and whether they won, lost or tied", () => {
+    expect(qualVideoRows([match(1)], 4096)[0]).toEqual({
+      key: '2026test_qm1', number: 1, alliance: 'red', result: 'Won', ourScore: 80, theirScore: 60, links: ['https://youtu.be/abc123'],
+    })
+    expect(qualVideoRows([match(1)], 9994)[0]).toMatchObject({ alliance: 'blue', result: 'Lost', ourScore: 60, theirScore: 80 })
+    expect(qualVideoRows([match(1, { alliances: scores(70, 70) })], 4096)[0].result).toBe('Tied')
+  })
+
+  it('tells a match not played yet from one played with no video yet', () => {
+    const notPlayed = qualVideoRows([match(1, { alliances: scores(-1, -1), winning_alliance: '', videos: [] })], 4096)[0]
+    expect(notPlayed).toMatchObject({ result: null, links: [] })
+    const noVideo = qualVideoRows([match(1, { videos: [] })], 4096)[0]
+    expect(noVideo).toMatchObject({ result: 'Won', links: [] })
+  })
+
+  it('gives a link for each video, leaving out ones that are not YouTube', () => {
+    const videos = [{ type: 'youtube', key: 'first' }, { type: 'tba', key: 'other' }, { type: 'youtube', key: 'second?t=12' }]
+    expect(qualVideoRows([match(1, { videos })], 4096)[0].links).toEqual(['https://youtu.be/first', 'https://youtu.be/second?t=12'])
+  })
+
+  it("works with the example data: 4096's four matches, with videos for the two played", async () => {
+    const result = await getTeamMatches(4096)
+    if (!result.ok) throw new Error(result.error)
+    const rows = qualVideoRows(result.value, 4096)
+    expect(rows.map((r) => r.number)).toEqual([1, 2, 3, 4])
+    expect(rows.map((r) => r.links.length > 0)).toEqual([true, true, false, false])
+    expect(rows.map((r) => r.result)).toEqual(['Won', 'Lost', null, null])
   })
 })
 
