@@ -14,7 +14,7 @@ import { tokenSubject } from './token.ts'
 export interface Member {
   id: string
   name: string
-  role: 'student' | 'mentor' | 'admin'
+  role: 'student' | 'leader' | 'mentor' | 'admin'
   /** Their Slack user ID, starting with U: messages to them go here. */
   slack_user_id: string
 }
