@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { shortDate } from '../../core/format'
 import { toast } from '../../core/toast'
 import { Panel, Pill } from '../../core/ui'
@@ -6,7 +7,8 @@ import { syncEntries, useSyncStatus } from './data'
 /** One entry in the list: what to call it, when it was saved, and whether it's reached the team. */
 export interface SavedRow {
   id: string
-  label: string
+  /** Text, or text with a link in it (like a team linked to its team page). */
+  label: ReactNode
   created_at: string
   synced: boolean
 }

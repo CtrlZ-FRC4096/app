@@ -21,7 +21,7 @@
  */
 import { use, useSyncExternalStore } from 'react'
 import type { RealtimePostgresChangesPayload, SupabaseClient } from '@supabase/supabase-js'
-import { createStore, useStore } from './store'
+import { createStore, useStore, type Store } from './store'
 import { supabase } from './supabase'
 import { demoUserId } from './demo'
 
@@ -89,12 +89,30 @@ export interface TableOptions<T extends Row> {
   version?: number
   /** The order rows come in. Leave it out for oldest first. */
   sort?: (a: T, b: T) => number
+  /**
+   * Keep a copy of the rows on this device, used when the team database
+   * can't be reached, so the app can open with no connection. Only for
+   * small lists everyone signed in can read, like members. Signing out
+   * removes the copies (forgetOfflineCopies).
+   */
+  keepOffline?: boolean
 }
 
 export const oldestFirst = (a: Row, b: Row) => a.created_at.localeCompare(b.created_at)
 export const newestFirst = (a: Row, b: Row) => b.created_at.localeCompare(a.created_at)
 
 const tables = new Map<string, Table<Row>>()
+const offlineCopies: Store<unknown[] | null>[] = []
+
+/** Remove every table's copy kept on this device (keepOffline). For signing out. */
+export function forgetOfflineCopies() {
+  offlineCopies.forEach((copy) => copy.set(null))
+}
+
+/** Whether a table that couldn't load should use its copy on this device: when there's no connection. */
+export function shouldUseCopy(error: Error, online: boolean): boolean {
+  return !online || /couldn't reach the team database/i.test(error.message)
+}
 
 /** Every table any module has made. The database tests check each one. */
 export function allTables(): Table<Row>[] {
@@ -208,11 +226,20 @@ function liveTable<T extends Row>(
   let state: LiveState<T> = { status: 'idle' }
   let listening = false
   const listeners = new Set<() => void>()
+  // The copy kept on this device for when the database can't be reached (keepOffline).
+  const copy = options.keepOffline ? createStore<T[] | null>(`offline:${name}`, options.version ?? 1, () => null, { keepOnReset: true }) : null
+  if (copy) offlineCopies.push(copy as Store<unknown[] | null>)
 
   const getState = () => state
   const setState = (next: LiveState<T>) => {
     state = next
+    if (copy && next.status === 'ready') copy.set(next.rows)
     listeners.forEach((listener) => listener())
+  }
+  // Couldn't load: with no connection, use the copy from last time if there is one.
+  const failed = (error: Error) => {
+    const saved = copy?.get()
+    setState(saved && shouldUseCopy(error, globalThis.navigator?.onLine !== false) ? { status: 'ready', rows: order(saved) } : { status: 'failed', error })
   }
   const subscribe = (listener: () => void) => {
     listeners.add(listener)
@@ -242,10 +269,15 @@ function liveTable<T extends Row>(
   function load() {
     if (state.status !== 'idle') return
     listen()
-    const ready = fetchRows().then(
-      (rows) => setState({ status: 'ready', rows }),
-      (error: Error) => setState({ status: 'failed', error }),
-    )
+    // No connection, and a copy on this device: use it straight away. Asking
+    // the database would first wait to check the sign-in, which can't be
+    // done offline. The 'online' listener loads fresh rows when it's back.
+    const saved = copy?.get()
+    if (saved && globalThis.navigator?.onLine === false) {
+      state = { status: 'ready', rows: order(saved) }
+      return
+    }
+    const ready = fetchRows().then((rows) => setState({ status: 'ready', rows }), failed)
     state = { status: 'loading', ready }
   }
 
@@ -261,6 +293,12 @@ function liveTable<T extends Row>(
         change((rows) => applyChange(rows, payload)),
       )
       .subscribe()
+    // A table kept on the device may be showing its copy: reload once the connection is back.
+    if (copy) {
+      window.addEventListener('online', () => {
+        fetchRows().then((rows) => setState({ status: 'ready', rows }), () => {})
+      })
+    }
     let hiddenAt: number | null = null
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
