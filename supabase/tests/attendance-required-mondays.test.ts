@@ -1,6 +1,7 @@
-// Permission rules for required Mondays: anyone says they can't make it for
-// their own attendance, only mentors and admins see everyone's, and only
-// mentors and admins mark a Monday not required.
+// Permission rules for required Mondays: students and student leaders say
+// they can't make it for their own attendance, mentors and admins see and
+// remove everyone's but don't send any, and only mentors and admins mark a
+// Monday not required.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
@@ -14,6 +15,10 @@ const MONDAY = '2026-01-12'
 
 const away = (who: string, person: string, day = MONDAY, reason = 'Doctor appointment') =>
   db.as<{ id: string }>(who, 'insert into public.attendance_absences (person_id, day, reason) values ($1, $2, $3) returning id', [person, day, reason])
+
+// Someone else's, put straight into the database (mentors can't send them).
+const theirAbsence = (person: string) =>
+  db.sql<{ id: string }>("insert into public.attendance_absences (person_id, day, reason) values ($1, $2, 'Away') returning id", [person, MONDAY])
 
 const notRequired = (who: string, day = MONDAY) =>
   db.as<{ id: string }>(who, "insert into public.attendance_not_required (day, reason) values ($1, 'MLK Day') returning id", [day])
@@ -35,9 +40,9 @@ describe("saying you can't make it", () => {
 
   it("doesn't let people send, see or take back anyone else's", async () => {
     await expect(away(student, theirs)).rejects.toThrow(PERMISSION_DENIED)
-    const [theirAbsence] = await away(mentor, theirs)
+    const [theirs1] = await theirAbsence(theirs)
     expect(await db.as(student, 'select id from public.attendance_absences')).toEqual([])
-    expect(await db.as(student, 'delete from public.attendance_absences where id = $1 returning id', [theirAbsence.id])).toEqual([])
+    expect(await db.as(student, 'delete from public.attendance_absences where id = $1 returning id', [theirs1.id])).toEqual([])
   })
 
   it("doesn't let anyone change one once it's sent", async () => {
@@ -52,11 +57,15 @@ describe("saying you can't make it", () => {
     await expect(away(student, mine, '2026-01-19', '   ')).rejects.toThrow('violates check constraint')
   })
 
-  it('shows mentors everyone, and lets them remove any', async () => {
+  it("shows mentors everyone's and lets them remove any, but not send one, even for their own attendance", async () => {
     await away(student, mine)
-    const [theirAbsence] = await away(mentor, theirs)
+    const [theirs1] = await theirAbsence(theirs)
     expect(await db.as(mentor, 'select count(*)::int as n from public.attendance_absences')).toEqual([{ n: 2 }])
-    expect(await db.as(mentor, 'delete from public.attendance_absences where id = $1 returning id', [theirAbsence.id])).toEqual([theirAbsence])
+    expect(await db.as(mentor, 'delete from public.attendance_absences where id = $1 returning id', [theirs1.id])).toEqual([theirs1])
+    await expect(away(mentor, theirs)).rejects.toThrow(PERMISSION_DENIED)
+    const [{ slack_user_id }] = await db.sql<{ slack_user_id: string }>('select slack_user_id from public.members where id = $1', [mentor])
+    const [{ id: mentorsOwn }] = await db.sql<{ id: string }>("insert into public.attendance_people (slack_user_id, name) values ($1, 'Pat Mentor') returning id", [slack_user_id])
+    await expect(away(mentor, mentorsOwn)).rejects.toThrow(PERMISSION_DENIED)
   })
 
   it("can't be done or seen by someone whose access is switched off", async () => {

@@ -118,8 +118,10 @@ replaces the absence Google Form and reading the Slack channel by hand.
   again. Those are kept in `attendance_not_required`.
 - **Coming** means checking in with Jibble that day (any check-in that
   isn't ignored), however long they stayed.
-- **"I can't make it":** under Your attendance, everyone sees the required
-  Mondays in the next 4 weeks and says they can't make one, with a reason.
+- **"I can't make it":** under Your attendance, students and student
+  leaders see the required Mondays in the next 4 weeks and say they can't
+  make one, with a reason. Mentors and admins don't: the Mondays aren't
+  required for them, and the database doesn't let them send absences.
   It counts as **excused** straight away: nobody approves it. They can take
   it back until the day. They can also say why they missed one afterwards;
   mentors see that marked **Sent after**. These are kept in

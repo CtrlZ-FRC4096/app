@@ -545,9 +545,12 @@ export function sentLate(absence: Pick<AttendanceAbsence, 'day' | 'created_at'>)
 /**
  * Say you can't make a required Monday, for `person` (your own attendance
  * row). It counts as excused straight away. `required` are the required
- * Mondays you can pick from.
+ * Mondays you can pick from. Students and student leaders only: mentors
+ * and admins don't send absences (the database refuses them too).
  */
 export async function sendAbsence(person: AttendancePerson, input: AbsenceInput, required: string[]): Promise<Result<AttendanceAbsence>> {
+  const me = currentUser()
+  if (me && isMentor(me.role)) return fail("Required Mondays are for students: mentors and admins don't send absences.")
   const problem = checkAbsence(input, required)
   if (problem) return fail(problem)
   if (absencesTable.rows().some((a) => a.person_id === person.id && a.day === input.day)) {

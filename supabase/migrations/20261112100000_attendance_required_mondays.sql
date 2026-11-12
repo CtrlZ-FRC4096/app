@@ -9,6 +9,7 @@
 --                            reason. Any absence sent counts as excused:
 --                            nobody approves it. Mentors see when it was
 --                            sent, so one sent after the meeting stands out.
+--                            Mentors and admins don't send them.
 --
 -- Whether someone came is their Jibble check-ins (attendance_checks), so
 -- nothing here changes hours or points.
@@ -68,10 +69,15 @@ grant insert (person_id, day, reason) on table public.attendance_absences to aut
 
 alter publication supabase_realtime add table public.attendance_absences;
 
-create policy "Mentors see and remove every absence"
-  on public.attendance_absences for all to authenticated
-  using ((select private.is_mentor()))
-  with check ((select private.is_mentor()));
+-- Mentors and admins see and remove everyone's, but don't send any: the
+-- Mondays are required for students, not for them.
+create policy "Mentors see every absence"
+  on public.attendance_absences for select to authenticated
+  using ((select private.is_mentor()));
+
+create policy "Mentors remove any absence"
+  on public.attendance_absences for delete to authenticated
+  using ((select private.is_mentor()));
 
 -- Everyone else: only their own (matched by Slack account, see
 -- private.my_attendance_people() in the own stats migration).
@@ -79,9 +85,9 @@ create policy "Members see their own absences"
   on public.attendance_absences for select to authenticated
   using (person_id in (select private.my_attendance_people()));
 
-create policy "Members say they can't make it"
+create policy "Students and student leaders say they can't make it"
   on public.attendance_absences for insert to authenticated
-  with check (person_id in (select private.my_attendance_people()));
+  with check (person_id in (select private.my_attendance_people()) and not (select private.is_mentor()));
 
 create policy "Members take back their own absences"
   on public.attendance_absences for delete to authenticated

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { toast } from '../../core/toast'
 import { Panel, Pill } from '../../core/ui'
 import { plural } from '../../core/format'
+import { isMentor, useSession } from '../../core/session'
 import {
   peopleTable, requiredDays, sendAbsence, sentLate, setMondayRequired, takeBackAbsence, toCsv, useAbsences, useMondayMeetings, useMyMondays,
   useRequiredReport, type AttendanceAbsence, type AttendancePerson,
@@ -218,15 +219,17 @@ function AbsencesList(props: { days: string[] }) {
 }
 
 /**
- * Everyone: your required Mondays for the dates being counted, and the
- * ones coming up, where you say you can't make it. That counts as excused
- * straight away.
+ * Students and student leaders: your required Mondays for the dates being
+ * counted, and the ones coming up, where you say you can't make it. That
+ * counts as excused straight away. Mentors and admins don't see this: the
+ * Mondays aren't required for them, and they see everyone's instead.
  */
 export function MyMondays(props: { range: Range }) {
+  const { role } = useSession()
   const { meetings, loading, error, reload } = useMondayMeetings(props.range)
   const { person, row, absences } = useMyMondays(meetings)
   const [asking, setAsking] = useState<string | null>(null)
-  if (!person) return null
+  if (!person || isMentor(role)) return null
 
   const required = requiredDays(meetings)
   const day = today()

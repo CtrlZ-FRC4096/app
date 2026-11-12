@@ -377,6 +377,9 @@ describe('required Mondays', () => {
     expect(await sendAbsence(alex, { day: '2026-01-26', reason: 'Again' }, required)).toMatchObject({ ok: false, error: /already said/ })
     expect(await sendAbsence(alex, { day: '2026-01-19', reason: 'Holiday' }, required)).toMatchObject({ ok: false, error: /isn't a required Monday/ })
     expect(sent.ok && (await takeBackAbsence(sent.value))).toEqual({ ok: true, value: null })
+    // Mentors and admins don't send them (the database refuses them too).
+    setDemoRole('mentor')
+    expect(await sendAbsence(alex, { day: '2026-01-26', reason: 'Away' }, required)).toMatchObject({ ok: false, error: /mentors and admins don't send/ })
   })
 
   it("shows mentors everyone's Mondays and the absences, and students the Mondays coming up", async () => {
@@ -396,6 +399,9 @@ describe('required Mondays', () => {
     const alex = text(renderToString(createElement(MyMondays, { range })))
     expect(alex).toContain('Came 1 · Excused 0 · Missed 0')
     expect(alex).toContain("I can't make it")
+    // Mentors and admins don't get the panel at all.
+    setDemoRole('mentor')
+    expect(renderToString(createElement(MyMondays, { range }))).toBe('')
   })
 
   it('lets only mentors and admins mark a Monday not required, and required again', async () => {
