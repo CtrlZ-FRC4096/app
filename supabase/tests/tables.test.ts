@@ -64,7 +64,10 @@ describe('every table the app uses', () => {
     }
   })
 
-  it('accepts its example rows', async () => {
+  // This goes through every table in one test, starting each from an empty
+  // database, so it gets slower with every table added. It needs longer than
+  // the usual 5 seconds on GitHub's machines.
+  it('accepts its example rows', { timeout: 10_000 }, async () => {
     const refused: string[] = []
     for (const table of tables) {
       // Start each table from an empty database, so one table's rows can't affect another's.
