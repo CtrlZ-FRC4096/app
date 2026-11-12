@@ -4,67 +4,77 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { setDemoRole } from '../../core/demo'
-import { membersTable } from '../../core/members'
+import { membersTable, type Member } from '../../core/members'
+import { peopleTable } from '../attendance/data'
 import {
-  activeRosterIds, addSubteam, MECHANICAL, removeSubteam, renameSubteam, rosterEntries, setActive, setMainSubteam, setOnSubteam, SOFTWARE,
-  STRATEGY, studentsTable, subteamMembersTable, subteamsTable, ELECTRICAL,
+  activeRosterIds, addSubteam, ELECTRICAL, MECHANICAL, removeSubteam, renameSubteam, rosterEntries, setActive, setMainSubteam, setOnSubteam,
+  SOFTWARE, STRATEGY, studentsTable, subteamMembersTable, subteamsTable,
 } from './data'
 
 beforeEach(() => {
   subteamsTable.reset()
   studentsTable.reset()
   subteamMembersTable.reset()
+  peopleTable.reset()
   setDemoRole('mentor')
 })
 afterEach(() => setDemoRole('student'))
 
-const roster = () => rosterEntries(membersTable.rows(), studentsTable.rows(), subteamMembersTable.rows())
-const entry = (name: string) => roster().find((e) => e.member.name === name)!
-const member = (name: string) => membersTable.rows().find((m) => m.name === name)!
+const roster = (members: Member[] = membersTable.rows()) => rosterEntries(peopleTable.rows(), members, studentsTable.rows(), subteamMembersTable.rows())
+const entry = (name: string) => roster().find((e) => e.name === name)!
+const activeNames = () => peopleTable.rows().filter((p) => activeRosterIds(studentsTable.rows()).has(p.id)).map((p) => p.name)
 
 describe('the roster', () => {
-  it('lists students and student leaders with access on, A to Z, with their subteams, main one first', () => {
-    // Pat is a mentor and Morgan an admin; Sam's access is switched off.
-    expect(roster().map((e) => [e.member.name, e.active, e.subteams, e.main])).toEqual([
-      ['Alex Rivera', true, [MECHANICAL, SOFTWARE], MECHANICAL],
-      ['Casey Nguyen', true, [SOFTWARE, STRATEGY], SOFTWARE],
-      ['Jordan Kim', true, [ELECTRICAL], ELECTRICAL],
+  it('lists everyone in attendance who is not hidden, with or without an app account, A to Z, main subteam first', () => {
+    // Pat is hidden in Attendance. Taylor and Quinn have no app account.
+    expect(roster().map((e) => [e.name, e.active, e.subteams, e.member?.name ?? null])).toEqual([
+      ['Alex Rivera', true, [MECHANICAL, SOFTWARE], 'Alex Rivera'],
+      ['Casey Nguyen', true, [SOFTWARE, STRATEGY], 'Casey Nguyen'],
+      ['Jordan Kim', true, [ELECTRICAL], 'Jordan Kim'],
+      ['Quinn Patel', true, [], null],
+      ['Sam Ortiz', false, [], 'Sam Ortiz'],
+      ['Taylor Brooks', true, [MECHANICAL], null],
     ])
+  })
+
+  it('also lists students who have signed in but are not in attendance yet, and adds them to attendance when they are set', async () => {
+    const newcomer: Member = { ...membersTable.rows()[0], id: 'new-member', slack_user_id: 'U0NEW00001', name: 'Robin Diaz', role: 'student', active: true }
+    const mentor: Member = { ...newcomer, id: 'new-mentor', slack_user_id: 'U0NEW00002', name: 'Lee Mentor', role: 'mentor' }
+    const robin = roster([...membersTable.rows(), newcomer, mentor]).find((e) => e.name === 'Robin Diaz')!
+    expect(robin).toMatchObject({ key: 'member:new-member', person: null, active: false })
+    expect(roster([...membersTable.rows(), newcomer, mentor]).some((e) => e.name === 'Lee Mentor')).toBe(false)
+    expect(await setActive(robin, true)).toEqual({ ok: true, value: null })
+    expect(peopleTable.rows().find((p) => p.slack_user_id === 'U0NEW00001')).toMatchObject({ name: 'Robin Diaz', hidden: false })
+    expect(activeNames()).toContain('Robin Diaz')
   })
 
   it('tells anyone but mentors and admins who can change it', async () => {
     // The database refuses them too (supabase/tests/roster.test.ts).
     setDemoRole('leader')
-    expect(await setActive(member('Jordan Kim'), false)).toMatchObject({ ok: false, error: /Only mentors and admins/ })
+    expect(await setActive(entry('Jordan Kim'), false)).toMatchObject({ ok: false, error: /Only mentors and admins/ })
   })
 
-  it('marks someone active or not, and counts only active members with access on as active', async () => {
-    const sam = member('Sam Ortiz')
-    expect(await setActive(member('Jordan Kim'), false)).toEqual({ ok: true, value: null })
-    // Sam has no roster row yet: this adds one. Sam's access is off, so Sam still doesn't count.
-    expect(await setActive(sam, true)).toEqual({ ok: true, value: null })
-    expect(studentsTable.rows().some((s) => s.member_id === sam.id && s.active)).toBe(true)
-    const active = activeRosterIds(membersTable.rows(), studentsTable.rows())
-    expect([...active].map((id) => membersTable.rows().find((m) => m.id === id)!.name).sort()).toEqual(['Alex Rivera', 'Casey Nguyen'])
+  it('marks someone active or not, adding their roster row the first time', async () => {
+    expect(await setActive(entry('Jordan Kim'), false)).toEqual({ ok: true, value: null })
+    expect(await setActive(entry('Sam Ortiz'), true)).toEqual({ ok: true, value: null })
+    expect(activeNames()).toEqual(['Alex Rivera', 'Casey Nguyen', 'Quinn Patel', 'Sam Ortiz', 'Taylor Brooks'])
   })
 
   it("makes someone's first subteam their main one, and the next one main when it's taken away", async () => {
-    const jordan = member('Jordan Kim')
-    await setOnSubteam(jordan, SOFTWARE, true)
+    await setOnSubteam(entry('Jordan Kim'), SOFTWARE, true)
     expect(entry('Jordan Kim')).toMatchObject({ subteams: [ELECTRICAL, SOFTWARE], main: ELECTRICAL })
-    await setOnSubteam(jordan, ELECTRICAL, false)
+    await setOnSubteam(entry('Jordan Kim'), ELECTRICAL, false)
     expect(entry('Jordan Kim')).toMatchObject({ subteams: [SOFTWARE], main: SOFTWARE })
-    await setOnSubteam(jordan, SOFTWARE, false)
-    await setOnSubteam(jordan, STRATEGY, true)
-    expect(entry('Jordan Kim')).toMatchObject({ subteams: [STRATEGY], main: STRATEGY })
+    // Quinn has no app account and no subteam yet.
+    await setOnSubteam(entry('Quinn Patel'), STRATEGY, true)
+    expect(entry('Quinn Patel')).toMatchObject({ subteams: [STRATEGY], main: STRATEGY })
   })
 
   it('switches the main subteam, only to one they are on', async () => {
-    const alex = member('Alex Rivera')
-    expect(await setMainSubteam(alex, STRATEGY)).toMatchObject({ ok: false, error: /isn't on that subteam/ })
-    expect(await setMainSubteam(alex, SOFTWARE)).toEqual({ ok: true, value: null })
+    expect(await setMainSubteam(entry('Alex Rivera'), STRATEGY)).toMatchObject({ ok: false, error: /isn't on that subteam/ })
+    expect(await setMainSubteam(entry('Alex Rivera'), SOFTWARE)).toEqual({ ok: true, value: null })
     expect(entry('Alex Rivera')).toMatchObject({ subteams: [SOFTWARE, MECHANICAL], main: SOFTWARE })
-    expect(subteamMembersTable.rows().filter((s) => s.member_id === alex.id && s.main)).toHaveLength(1)
+    expect(subteamMembersTable.rows().filter((s) => s.person_id === entry('Alex Rivera').person!.id && s.main)).toHaveLength(1)
   })
 
   it('adds, renames and removes subteams, with a name no other subteam has', async () => {
@@ -84,9 +94,10 @@ describe('the roster', () => {
   it('shows mentors everyone on the roster, with the subteams', async () => {
     const { default: RosterPage } = await import('./RosterPage')
     const page = renderToString(createElement(RosterPage)).replace(/<[^>]*>/g, '')
-    for (const text of ['Alex Rivera', 'Casey Nguyen', 'Student leader', 'Jordan Kim', 'Electrical', 'Mechanical', 'Software', 'Strategy', '3active of 3']) {
+    for (const text of ['Alex Rivera', 'Student leader', 'Taylor Brooks', 'No app account', 'Sam Ortiz', 'Access off', 'Electrical', 'Strategy', '5active of 6']) {
       expect(page, text).toContain(text)
     }
-    expect(page).not.toContain('Sam Ortiz')
+    // Pat is hidden in Attendance.
+    expect(page).not.toContain('Pat Chen')
   })
 })

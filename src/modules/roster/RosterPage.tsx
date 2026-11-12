@@ -26,7 +26,7 @@ export default function RosterPage() {
   const wanted = search.trim().toLowerCase()
   const shown = roster.filter(
     (e) =>
-      e.member.name.toLowerCase().includes(wanted) &&
+      e.name.toLowerCase().includes(wanted) &&
       (show === 'Everyone' || e.active === (show === 'Active')) &&
       (subteam === ALL || (subteam === NONE ? e.subteams.length === 0 : e.subteams.includes(subteam))),
   )
@@ -35,8 +35,9 @@ export default function RosterPage() {
   return (
     <>
       <PageHead title="Roster">
-        Who's active this season, and their subteams. Active students and student leaders have to come to the required Monday meetings
-        (see Attendance). Everyone with the Student or Student leader role and access on is listed here.
+        Who's active this season, and their subteams. Active people have to come to the required Monday meetings (see Attendance).
+        Everyone in attendance (from the Slack channel and Jibble) is listed, with or without an app account, plus students who have
+        signed in but aren't in attendance yet. People hidden in Attendance aren't.
       </PageHead>
 
       <Panel title="This season">
@@ -64,16 +65,16 @@ export default function RosterPage() {
       </div>
       <Pick label="Show" options={[...SHOW]} value={show} onChange={setShow} />
 
-      <Panel title="Students" aside={<span className="note">{plural(shown.length, 'person', 'people')} shown</span>}>
+      <Panel title="People" aside={<span className="note">{plural(shown.length, 'person', 'people')} shown</span>}>
         {shown.length === 0 ? (
           <p className="panel-body muted">
             {roster.length === 0
-              ? 'Nobody yet. Students show up here once they sign in, with the Student or Student leader role (Members page).'
+              ? 'Nobody yet. People show up here once they check in with Jibble, answer the attendance poll, or sign in to the app.'
               : 'Nobody matches. Change the search or filters.'}
           </p>
         ) : (
           <div className="row-list">
-            {shown.map((entry) => <StudentRow key={entry.member.id} entry={entry} subteams={subteams} />)}
+            {shown.map((entry) => <StudentRow key={entry.key} entry={entry} subteams={subteams} />)}
           </div>
         )}
       </Panel>
@@ -87,7 +88,7 @@ export default function RosterPage() {
 function StudentRow(props: { entry: RosterEntry; subteams: Subteam[] }) {
   const { entry, subteams } = props
   const [busy, setBusy] = useState(false)
-  const name = entry.member.name
+  const { name, member } = entry
 
   async function run(change: Promise<{ ok: true } | { ok: false; error: string }>) {
     setBusy(true)
@@ -100,10 +101,12 @@ function StudentRow(props: { entry: RosterEntry; subteams: Subteam[] }) {
     <div style={{ flexWrap: 'wrap', alignItems: 'flex-start' }}>
       <span style={{ minWidth: 0, flex: '1 1 180px', overflowWrap: 'anywhere' }}>
         <strong>{name}</strong>
-        {entry.member.role !== 'student' && <> <Pill tone="info">{roleName(entry.member.role)}</Pill></>}
+        {member && member.role !== 'student' && <> <Pill tone="info">{roleName(member.role)}</Pill></>}
+        {member && !member.active && <> <Pill tone="warn">Access off</Pill></>}
+        {!member && <span className="note"> · No app account</span>}
         <br />
         <label className="check">
-          <input type="checkbox" checked={entry.active} disabled={busy} onChange={(e) => void run(setActive(entry.member, e.target.checked))} />
+          <input type="checkbox" checked={entry.active} disabled={busy} onChange={(e) => void run(setActive(entry, e.target.checked))} />
           Active this season
         </label>
       </span>
@@ -112,21 +115,21 @@ function StudentRow(props: { entry: RosterEntry; subteams: Subteam[] }) {
           {subteams.map((s) => {
             const on = entry.subteams.includes(s.id)
             return (
-              <button key={s.id} type="button" aria-pressed={on} disabled={busy} onClick={() => void run(setOnSubteam(entry.member, s.id, !on))}>
+              <button key={s.id} type="button" aria-pressed={on} disabled={busy} onClick={() => void run(setOnSubteam(entry, s.id, !on))}>
                 {s.name}
               </button>
             )
           })}
         </div>
         {entry.subteams.length > 1 && (
-          <label className="field" htmlFor={`main-${entry.member.id}`}>
+          <label className="field" htmlFor={`main-${entry.key}`}>
             Main subteam
             <select
-              id={`main-${entry.member.id}`}
+              id={`main-${entry.key}`}
               className="input"
               value={entry.main ?? ''}
               disabled={busy}
-              onChange={(e) => void run(setMainSubteam(entry.member, e.target.value))}
+              onChange={(e) => void run(setMainSubteam(entry, e.target.value))}
             >
               {entry.subteams.map((id) => <option key={id} value={id}>{subteams.find((s) => s.id === id)?.name ?? 'Removed subteam'}</option>)}
             </select>

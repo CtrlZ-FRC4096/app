@@ -1,11 +1,16 @@
 /**
- * Roster module data: which students and student leaders are active this
- * season, and their subteams. Mentors and admins see and change it; the
- * database gives everyone else only their own entry (see
- * supabase/migrations/..._roster.sql).
+ * Roster module data: who's active this season, and their subteams.
+ * Mentors and admins see and change it; the database gives everyone else
+ * only their own entry (see supabase/migrations/..._roster.sql and
+ * ..._roster_attendance_people.sql).
+ *
+ * The roster is everyone in attendance (from the Slack channel and Jibble,
+ * src/modules/attendance/), whether or not they've signed in to the app,
+ * plus students who have signed in but aren't in attendance yet. Roster
+ * rows point at attendance people.
  *
  * Other modules read it from here: Attendance's required Mondays are for
- * active students (activeRosterIds below).
+ * active people (activeRosterIds below).
  */
 import { useMemo } from 'react'
 import { createTable, fail, ok, type Result, type Row } from '../../core/table'
@@ -15,6 +20,7 @@ import { isMentor, type Role } from '../../core/roles'
 import { currentUser } from '../../core/session'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
+import { peopleTable, type AttendancePerson } from '../attendance/data'
 
 /** A subteam, like Mechanical. */
 export interface Subteam extends Row {
@@ -24,33 +30,42 @@ export interface Subteam extends Row {
   created_by: string | null
 }
 
-/** Whether a student is active this season. A student with no row isn't. */
+/** Whether someone is active this season. Someone with no row isn't. */
 export interface RosterStudent extends Row {
-  member_id: string
+  /** Their attendance row (attendance_people). */
+  person_id: string
   active: boolean
   created_by: string | null
 }
 
 /** Someone on a subteam. */
 export interface SubteamMember extends Row {
-  member_id: string
+  person_id: string
   subteam_id: string
   /** Their main subteam. At most one each. */
   main: boolean
   created_by: string | null
 }
 
-/** The roles on the roster. Mentors and admins aren't. */
+/** App roles that are listed even before they're in attendance. */
 export const ROSTER_ROLES: Role[] = ['student', 'leader']
 
 /** The database allows the same: see the check on roster_subteams.name. */
 export const MAX_SUBTEAM_NAME = 40
 
 // ---------------------------------------------------------------------------
-// Example data. The subteams' ids match the ones the migration starts with.
+// Example data. The subteams' ids match the ones the first roster migration
+// adds; the people are Attendance's example people.
 
 const subteamId = (n: number) => `00000000-0000-4000-8000-00b1${n.toString(16).padStart(8, '0')}`
 const rowId = (table: number, n: number) => `00000000-0000-4000-8000-00b${table}${n.toString(16).padStart(8, '0')}`
+/** Attendance's example people, by their order there (Alex is 1). */
+const person = (n: number) => `00000000-0000-4000-8000-00a1${n.toString(16).padStart(8, '0')}`
+const ALEX = person(1)
+const JORDAN = person(2)
+const CASEY = person(4)
+const TAYLOR = person(5)
+const QUINN = person(6)
 const CREATED = '2026-09-05T18:00:00Z'
 
 export const ELECTRICAL = subteamId(1)
@@ -68,33 +83,41 @@ export const subteamsTable = createTable<Subteam>('roster_subteams', {
   sort: (a, b) => a.position - b.position || a.name.localeCompare(b.name),
 })
 
-// Alex, Jordan and Casey are active. Sam's access is switched off, so Sam
-// isn't on the roster at all.
+// Alex, Jordan, Casey, Taylor and Quinn are active (Taylor and Quinn have no
+// app account). Sam isn't: Sam's access is switched off.
 export const studentsTable = createTable<RosterStudent>('roster_students', {
-  demo: [
-    { id: rowId(2, 1), member_id: DEMO_PEOPLE.alex, active: true, created_at: CREATED, created_by: DEMO_PEOPLE.pat },
-    { id: rowId(2, 2), member_id: DEMO_PEOPLE.jordan, active: true, created_at: CREATED, created_by: DEMO_PEOPLE.pat },
-    { id: rowId(2, 3), member_id: DEMO_PEOPLE.casey, active: true, created_at: CREATED, created_by: DEMO_PEOPLE.pat },
-  ],
+  version: 2,
+  demo: [ALEX, JORDAN, CASEY, TAYLOR, QUINN].map((id, i) => ({ id: rowId(2, i + 1), person_id: id, active: true, created_at: CREATED, created_by: DEMO_PEOPLE.pat })),
 })
 
-// Alex: Mechanical (main) and Software. Jordan: Electrical. Casey: Software (main) and Strategy.
+// Alex: Mechanical (main) and Software. Jordan: Electrical. Casey: Software
+// (main) and Strategy. Taylor: Mechanical. Quinn has no subteam yet.
 export const subteamMembersTable = createTable<SubteamMember>('roster_subteam_members', {
-  demo: [
-    { id: rowId(3, 1), member_id: DEMO_PEOPLE.alex, subteam_id: MECHANICAL, main: true, created_at: CREATED, created_by: DEMO_PEOPLE.pat },
-    { id: rowId(3, 2), member_id: DEMO_PEOPLE.alex, subteam_id: SOFTWARE, main: false, created_at: CREATED, created_by: DEMO_PEOPLE.pat },
-    { id: rowId(3, 3), member_id: DEMO_PEOPLE.jordan, subteam_id: ELECTRICAL, main: true, created_at: CREATED, created_by: DEMO_PEOPLE.pat },
-    { id: rowId(3, 4), member_id: DEMO_PEOPLE.casey, subteam_id: SOFTWARE, main: true, created_at: CREATED, created_by: DEMO_PEOPLE.pat },
-    { id: rowId(3, 5), member_id: DEMO_PEOPLE.casey, subteam_id: STRATEGY, main: false, created_at: CREATED, created_by: DEMO_PEOPLE.pat },
-  ],
+  version: 2,
+  demo: (
+    [
+      [ALEX, MECHANICAL, true],
+      [ALEX, SOFTWARE, false],
+      [JORDAN, ELECTRICAL, true],
+      [CASEY, SOFTWARE, true],
+      [CASEY, STRATEGY, false],
+      [TAYLOR, MECHANICAL, true],
+    ] as const
+  ).map(([person_id, subteam_id, main], i) => ({ id: rowId(3, i + 1), person_id, subteam_id, main, created_at: CREATED, created_by: DEMO_PEOPLE.pat })),
 })
 
 // ---------------------------------------------------------------------------
 // Reading.
 
-/** One student or student leader on the roster, with their subteams. */
+/** One person on the roster, with their subteams. */
 export interface RosterEntry {
-  member: Member
+  /** Their attendance row's id, or `member:<id>` for a student not in attendance yet. */
+  key: string
+  name: string
+  /** Their attendance row, or null if they've signed in to the app but aren't in attendance yet. */
+  person: AttendancePerson | null
+  /** Their app account, matched by Slack account, or null if they've never signed in. */
+  member: Member | null
   active: boolean
   /** Their subteams' ids, main one first. */
   subteams: string[]
@@ -103,58 +126,63 @@ export interface RosterEntry {
 }
 
 /**
- * Everyone who can be on the roster: students and student leaders whose
- * access is on (Members page), A to Z, each with whether they're active and
+ * Everyone on the roster, A to Z: everyone in attendance who isn't hidden
+ * (Attendance's "Hide"), plus students and student leaders whose access is
+ * on but who aren't in attendance yet, each with whether they're active and
  * their subteams.
  */
-export function rosterEntries(members: Member[], students: RosterStudent[], subteamMembers: SubteamMember[]): RosterEntry[] {
-  return members
-    .filter((m) => m.active && ROSTER_ROLES.includes(m.role))
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((member) => {
-      const mine = subteamMembers.filter((s) => s.member_id === member.id).sort((a, b) => Number(b.main) - Number(a.main))
+export function rosterEntries(people: AttendancePerson[], members: Member[], students: RosterStudent[], subteamMembers: SubteamMember[]): RosterEntry[] {
+  const memberBySlack = new Map(members.map((m) => [m.slack_user_id, m]))
+  const inAttendance = new Set(people.map((p) => p.slack_user_id).filter(Boolean))
+  const fromAttendance = people
+    .filter((p) => !p.hidden)
+    .map((p): RosterEntry => {
+      const mine = subteamMembers.filter((s) => s.person_id === p.id).sort((a, b) => Number(b.main) - Number(a.main))
       return {
-        member,
-        active: students.some((s) => s.member_id === member.id && s.active),
+        key: p.id,
+        name: p.name,
+        person: p,
+        member: (p.slack_user_id && memberBySlack.get(p.slack_user_id)) || null,
+        active: students.some((s) => s.person_id === p.id && s.active),
         subteams: mine.map((s) => s.subteam_id),
         main: mine.find((s) => s.main)?.subteam_id ?? null,
       }
     })
+  const notYet = members
+    .filter((m) => m.active && ROSTER_ROLES.includes(m.role) && !inAttendance.has(m.slack_user_id))
+    .map((m): RosterEntry => ({ key: `member:${m.id}`, name: m.name, person: null, member: m, active: false, subteams: [], main: null }))
+  return [...fromAttendance, ...notYet].sort((a, b) => a.name.localeCompare(b.name))
 }
 
 export function useRoster(): RosterEntry[] {
+  const people = peopleTable.useRows()
   const members = membersTable.useRows()
   const students = studentsTable.useRows()
   const subteamMembers = subteamMembersTable.useRows()
-  return useMemo(() => rosterEntries(members, students, subteamMembers), [members, students, subteamMembers])
+  return useMemo(() => rosterEntries(people, members, students, subteamMembers), [people, members, students, subteamMembers])
 }
 
 export function useSubteams(): Subteam[] {
   return subteamsTable.useRows()
 }
 
-/**
- * The members who are active on the roster: students and student leaders,
- * with access on, that a mentor marked active. For other modules, like
- * Attendance's required Mondays.
- */
-export function activeRosterIds(members: Member[], students: RosterStudent[]): Set<string> {
-  return new Set(rosterEntries(members, students, []).filter((e) => e.active).map((e) => e.member.id))
+/** The attendance people who are active this season. For other modules, like Attendance's required Mondays. */
+export function activeRosterIds(students: RosterStudent[]): Set<string> {
+  return new Set(students.filter((s) => s.active).map((s) => s.person_id))
 }
 
-/** The active members' ids (see activeRosterIds). Students only get their own row, so for them it's just themselves, if active. */
+/** The active attendance people's ids (see activeRosterIds). Students only get their own row, so for them it's just themselves, if active. */
 export function useActiveRosterIds(): Set<string> {
-  const members = membersTable.useRows()
   const students = studentsTable.useRows()
-  return useMemo(() => activeRosterIds(members, students), [members, students])
+  return useMemo(() => activeRosterIds(students), [students])
 }
 
 /** The home page tile: how many are active this season. */
 export function useRosterSummary(): Notice {
   const roster = useRoster()
   const active = roster.filter((e) => e.active).length
-  if (roster.length === 0) return { tone: 'plain', text: 'No students yet' }
-  return { tone: 'info', text: `${plural(active, 'active student', 'active students')} of ${roster.length}` }
+  if (roster.length === 0) return { tone: 'plain', text: 'Nobody yet' }
+  return { tone: 'info', text: `${plural(active, 'active', 'active')} of ${plural(roster.length, 'person', 'people')}` }
 }
 
 // ---------------------------------------------------------------------------
@@ -165,12 +193,26 @@ function mentorsOnly(): string | null {
   return me && isMentor(me.role) ? null : 'Only mentors and admins can change the roster.'
 }
 
+/**
+ * Their attendance row, adding one for a student who has signed in but
+ * isn't in attendance yet (as the nightly pull from Slack would).
+ */
+async function personFor(entry: RosterEntry): Promise<Result<AttendancePerson>> {
+  if (entry.person) return ok(entry.person)
+  const member = entry.member!
+  const existing = peopleTable.rows().find((p) => p.slack_user_id === member.slack_user_id)
+  if (existing) return ok(existing)
+  return peopleTable.insert({ slack_user_id: member.slack_user_id, name: member.name, hidden: false })
+}
+
 /** Mark someone active this season, or not. */
-export async function setActive(member: Member, active: boolean): Promise<Result> {
+export async function setActive(entry: RosterEntry, active: boolean): Promise<Result> {
   const problem = mentorsOnly()
   if (problem) return fail(problem)
-  const row = studentsTable.rows().find((s) => s.member_id === member.id)
-  const result = row ? await studentsTable.update(row.id, { active }) : await studentsTable.insert({ member_id: member.id, active })
+  const found = await personFor(entry)
+  if (!found.ok) return found
+  const row = studentsTable.rows().find((s) => s.person_id === found.value.id)
+  const result = row ? await studentsTable.update(row.id, { active }) : await studentsTable.insert({ person_id: found.value.id, active })
   return result.ok ? ok(null) : result
 }
 
@@ -178,14 +220,20 @@ export async function setActive(member: Member, active: boolean): Promise<Result
  * Put someone on a subteam, or take them off. Their first subteam becomes
  * their main one; taking them off their main one makes the next one main.
  */
-export async function setOnSubteam(member: Member, subteamId: string, on: boolean): Promise<Result> {
+export async function setOnSubteam(entry: RosterEntry, subteamId: string, on: boolean): Promise<Result> {
   const problem = mentorsOnly()
   if (problem) return fail(problem)
-  const mine = subteamMembersTable.rows().filter((s) => s.member_id === member.id)
+  const found = await personFor(entry)
+  if (!found.ok) return found
+  return changeSubteam(found.value.id, subteamId, on)
+}
+
+async function changeSubteam(personId: string, subteamId: string, on: boolean): Promise<Result> {
+  const mine = subteamMembersTable.rows().filter((s) => s.person_id === personId)
   const row = mine.find((s) => s.subteam_id === subteamId)
   if (on) {
     if (row) return ok(null)
-    const added = await subteamMembersTable.insert({ member_id: member.id, subteam_id: subteamId, main: mine.length === 0 })
+    const added = await subteamMembersTable.insert({ person_id: personId, subteam_id: subteamId, main: mine.length === 0 })
     return added.ok ? ok(null) : added
   }
   if (!row) return ok(null)
@@ -198,12 +246,12 @@ export async function setOnSubteam(member: Member, subteamId: string, on: boolea
 }
 
 /** Make one of someone's subteams their main one. */
-export async function setMainSubteam(member: Member, subteamId: string): Promise<Result> {
+export async function setMainSubteam(entry: RosterEntry, subteamId: string): Promise<Result> {
   const problem = mentorsOnly()
   if (problem) return fail(problem)
-  const mine = subteamMembersTable.rows().filter((s) => s.member_id === member.id)
+  const mine = entry.person ? subteamMembersTable.rows().filter((s) => s.person_id === entry.person!.id) : []
   const target = mine.find((s) => s.subteam_id === subteamId)
-  if (!target) return fail(`${member.name} isn't on that subteam. Add them to it first.`)
+  if (!target) return fail(`${entry.name} isn't on that subteam. Add them to it first.`)
   if (target.main) return ok(null)
   // Only one can be main: clear the old one first.
   for (const old of mine.filter((s) => s.main)) {
@@ -241,11 +289,8 @@ export async function renameSubteam(subteam: Subteam, name: string): Promise<Res
 export async function removeSubteam(subteam: Subteam): Promise<Result> {
   const problem = mentorsOnly()
   if (problem) return fail(problem)
-  const on = subteamMembersTable.rows().filter((s) => s.subteam_id === subteam.id)
-  for (const row of on) {
-    const member = membersTable.rows().find((m) => m.id === row.member_id)
-    if (!member) continue
-    const off = await setOnSubteam(member, subteam.id, false)
+  for (const row of subteamMembersTable.rows().filter((s) => s.subteam_id === subteam.id)) {
+    const off = await changeSubteam(row.person_id, subteam.id, false)
     if (!off.ok) return off
   }
   return subteamsTable.remove(subteam.id)
