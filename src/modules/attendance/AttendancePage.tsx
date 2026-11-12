@@ -175,11 +175,14 @@ function TeamAttendance({ range }: { range: ReturnType<typeof useCountRange> }) 
         <>
           <div className="toolbar">
             <label className="field" htmlFor="att-search">Find someone<input id="att-search" className="input" type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Name" /></label>
-            <label className="check"><input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} /> Show hidden people</label>
+            {/* Required Mondays are only for active students, so there's nobody hidden to show. */}
+            {tab !== 'Required Mondays' && (
+              <label className="check"><input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} /> Show hidden people</label>
+            )}
           </div>
 
           {tab === 'Required Mondays' ? (
-            <RequiredMondaysPanel range={range} search={search} showHidden={showHidden} />
+            <RequiredMondaysPanel range={range} search={search} />
           ) : (
             <>
               {person && <PersonPanel row={person} days={report.days} onClose={() => setSelected(null)} />}

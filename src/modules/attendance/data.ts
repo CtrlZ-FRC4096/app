@@ -30,6 +30,7 @@ import {
 } from './required'
 import { ago, dayLabel, teamClock, teamDay, teamInstant, today } from './time'
 import { nameKey, resolve, slackKey, type ParsedDay, type SlackUser } from './slack-export'
+import { useActiveRosterIds } from '../roster/data'
 
 export interface AttendancePerson extends Row {
   slack_user_id: string | null
@@ -116,9 +117,9 @@ const DEMO_CREATED = '2026-01-20T00:00:00Z'
 // For each person: per meeting day, their poll answer (y, n or -) and sessions ("18:05-20:30", or "18:10-" if they never checked out).
 const DEMO_PATTERN: [name: string, slack: string, hidden: boolean, days: [string, string[]][]][] = [
   ['Alex Rivera', 'U0DEMO0001', false, [['y', ['18:05-20:30']], ['y', ['18:00-20:45']], ['n', []], ['y', ['18:02-20:15']], ['y', ['18:10-']], ['y', ['18:00-20:30']], ['y', ['18:00-20:00']]]],
-  ['Jordan Kim', 'U0DEMO0004', false, [['y', ['18:01-20:40']], ['y', ['18:00-19:00']], ['y', []], ['-', ['18:20-20:30']], ['n', ['18:00-20:00']], ['y', ['18:05-20:30']], ['-', ['18:30-19:30']]]],
+  ['Jordan Kim', 'U0DEMO0004', false, [['y', ['18:01-20:40']], ['y', ['18:00-19:00']], ['y', []], ['-', ['18:20-20:30']], ['n', ['18:00-20:00']], ['y', []], ['-', ['18:30-19:30']]]],
   ['Sam Ortiz', 'U0DEMO0005', false, [['n', []], ['n', []], ['-', []], ['y', ['18:00-20:30']], ['y', ['18:05-20:35']], ['n', []], ['y', ['18:00-20:30']]]],
-  ['Casey Nguyen', 'U0DEMO0006', false, [['-', ['18:00-20:00']], ['-', ['18:15-20:30']], ['y', ['10:00-12:00', '13:00-15:30']], ['y', ['18:00-21:00']], ['y', ['18:00-20:50']], ['y', ['18:00-20:30']], ['y', ['18:00-20:45']]]],
+  ['Casey Nguyen', 'U0DEMO0006', false, [['-', ['18:00-20:00']], ['-', ['18:15-20:30']], ['y', ['10:00-12:00', '13:00-15:30']], ['y', ['18:00-21:00']], ['y', ['18:00-20:50']], ['y', []], ['y', ['18:00-20:45']]]],
   ['Taylor Brooks', 'U0DEMO0007', false, [['y', []], ['y', []], ['n', []], ['y', ['18:30-19:15']], ['-', []], ['y', []], ['n', []]]],
   ['Quinn Patel', 'U0DEMO0008', false, [['-', []], ['-', []], ['-', []], ['-', ['18:00-20:00']], ['-', ['18:00-20:10']], ['-', []], ['-', []]]],
   ['Pat Chen', 'U0DEMO0002', true, [['-', ['17:45-21:00']], ['-', ['17:50-21:00']], ['-', ['09:45-15:45']], ['-', ['17:45-21:00']], ['-', ['17:45-21:00']], ['-', ['17:45-21:00']], ['-', ['17:45-21:00']]]],
@@ -183,13 +184,15 @@ export const requestsTable = createTable<AttendanceRequest>('attendance_requests
   ],
 })
 
-// Required Mondays. Sam said ahead of time they'd miss Jan 5, and Quinn sent
-// one for Jan 12 the day after. Taylor missed both, and Quinn missed Jan 5.
-// Jan 19 is MLK Day: still on the calendar, but a mentor marked it not required.
+// Required Mondays, for students active on the Roster only (Alex, Jordan and
+// Casey here: Sam's access is switched off, and Taylor and Quinn have no
+// member account). Jordan missed Jan 5. Casey missed it too, and
+// said why the day after. Sam's is left out of the mentors' view. Jan 19 is
+// MLK Day: still on the calendar, but a mentor marked it not required.
 export const absencesTable = createTable<AttendanceAbsence>('attendance_absences', {
   demo: [
     { id: demoId(0xa7, 1), person_id: demoId(0xa1, 3), day: '2026-01-05', reason: 'Family trip over winter break', created_at: '2026-01-02T16:00:00Z', created_by: DEMO_PEOPLE.sam },
-    { id: demoId(0xa7, 2), person_id: demoId(0xa1, 6), day: '2026-01-12', reason: 'Was sick', created_at: '2026-01-13T15:00:00Z', created_by: null },
+    { id: demoId(0xa7, 2), person_id: demoId(0xa1, 4), day: '2026-01-05', reason: 'Was sick', created_at: '2026-01-06T15:00:00Z', created_by: DEMO_PEOPLE.casey },
   ],
   sort: (a, b) => a.day.localeCompare(b.day) || a.created_at.localeCompare(b.created_at),
 })
@@ -499,17 +502,38 @@ export function requiredDays(meetings: Meeting[]): string[] {
 }
 
 /**
- * Mentors and admins: everyone's required Mondays, most missed first.
- * Hidden people (mentors, parents) are left out unless asked for.
+ * Who required Mondays are for: the students and student leaders a mentor
+ * marked active on the Roster (`active`, from activeRosterIds() in the
+ * Roster module), matched to their attendance by Slack account. Anyone else
+ * in attendance (mentors, parents, people who've left, or a Jibble name that
+ * matched no Slack account) is left out.
  */
-export function useRequiredReport(meetings: Meeting[], showHidden = false): RequiredRow<AttendancePerson>[] {
-  const { people, checks } = useAttendance()
+export function requiredPeople(people: AttendancePerson[], members: Member[], active: Set<string>): AttendancePerson[] {
+  const slack = new Set(members.filter((m) => active.has(m.id)).map((m) => m.slack_user_id))
+  return people.filter((p) => p.slack_user_id !== null && slack.has(p.slack_user_id))
+}
+
+/** The active students, as attendance people (see requiredPeople). */
+export function useRequiredPeople(): AttendancePerson[] {
+  const people = peopleTable.useRows()
+  const members = membersTable.useRows()
+  const active = useActiveRosterIds()
+  return useMemo(() => requiredPeople(people, members, active), [people, members, active])
+}
+
+/** Whether required Mondays are for you: you're active on the Roster. */
+export function useRequiredForMe(): boolean {
+  const { id } = useSession()
+  return useActiveRosterIds().has(id)
+}
+
+/** Mentors and admins: every active student's required Mondays, most missed first. */
+export function useRequiredReport(meetings: Meeting[]): RequiredRow<AttendancePerson>[] {
+  const people = useRequiredPeople()
+  const checks = checksTable.useRows()
   const absences = absencesTable.useRows()
   const [day] = useState(today)
-  return useMemo(
-    () => requiredReport(showHidden ? people : people.filter((p) => !p.hidden), checks, absences, requiredDays(meetings), day),
-    [people, checks, absences, meetings, day, showHidden],
-  )
+  return useMemo(() => requiredReport(people, checks, absences, requiredDays(meetings), day), [people, checks, absences, meetings, day])
 }
 
 /** Your own required Mondays, and the absences you've sent, newest Monday first. */
@@ -528,13 +552,17 @@ export function useMyMondays(meetings: Meeting[]): { person: AttendancePerson | 
   }, [person, checks, absences, meetings, day])
 }
 
-/** Every absence sent for these days, newest Monday first. */
+/** The absences active students sent for these days, newest Monday first. */
 export function useAbsences(days: string[]): AttendanceAbsence[] {
   const absences = absencesTable.useRows()
+  const people = useRequiredPeople()
   return useMemo(() => {
     const wanted = new Set(days)
-    return absences.filter((a) => wanted.has(a.day)).sort((a, b) => b.day.localeCompare(a.day) || a.created_at.localeCompare(b.created_at))
-  }, [absences, days])
+    const required = new Set(people.map((p) => p.id))
+    return absences
+      .filter((a) => wanted.has(a.day) && required.has(a.person_id))
+      .sort((a, b) => b.day.localeCompare(a.day) || a.created_at.localeCompare(b.created_at))
+  }, [absences, days, people])
 }
 
 /** Whether an absence was sent after its Monday: the day after or later, in Central time. */

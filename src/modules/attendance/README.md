@@ -109,6 +109,13 @@ can use, so pull requests can't read it. Never put it in the code.
 Students have to come to the Monday meetings on the team calendar. This
 replaces the absence Google Form and reading the Slack channel by hand.
 
+- **Who it's for:** the students and student leaders a mentor marked
+  **active this season** on the Roster (Team menu), matched to their
+  attendance by Slack account (`requiredPeople()` in `data.ts`, reading
+  `activeRosterIds()` from `src/modules/roster/data.ts`). Mentors, admins,
+  people not marked active, people whose access is switched off, and Jibble
+  names that matched no Slack account are left out. Students who aren't
+  active don't see the Required Mondays panel.
 - **Which Mondays:** every Monday with a meeting on the team Google
   Calendar (an event with a start time; all-day events like competitions
   don't count). They're read through `src/core/calendar.ts` for the dates

@@ -13,6 +13,7 @@ import {
   loadMondayMeetings,
   notRequiredTable,
   requiredDays,
+  requiredPeople,
   sendAbsence,
   sentLate,
   setMondayRequired,
@@ -43,6 +44,7 @@ import {
 import { buildReport } from './points'
 import { countRange } from './periods'
 import { mondayMeetings, requiredReport } from './required'
+import { activeRosterIds, setActive, studentsTable } from '../roster/data'
 import { dayLabel, teamInstant } from './time'
 import type { ParsedDay, SlackUser } from './slack-export'
 
@@ -54,6 +56,7 @@ beforeEach(() => {
   requestsTable.reset()
   absencesTable.reset()
   notRequiredTable.reset()
+  studentsTable.reset()
 })
 
 const existing = () => ({ people: peopleTable.rows(), checks: checksTable.rows(), rsvps: rsvpsTable.rows() })
@@ -213,10 +216,10 @@ describe('sorting', () => {
       for (let i = 1; i < sorted.length; i++) expect(value(sorted[i - 1])).toBeGreaterThanOrEqual(value(sorted[i]))
     }
     expect(names('name')).toEqual([...names('name')].sort((a, b) => a.localeCompare(b)))
-    // Without hidden people, as the sheets open. Casey has the most of both; Sam
-    // is third on points (15) but behind Jordan on hours (7.5 to 11.2).
+    // Without hidden people, as the sheets open. Alex has the most points (18) but
+    // Casey the most hours (17.3); Sam is third on points (15) but behind Jordan on hours (7.5 to 8.8).
     const shown = buildReport(peopleTable.rows().filter((p) => !p.hidden), checksTable.rows(), rsvpsTable.rows()).rows
-    expect(sortRows(shown, 'points').slice(0, 3).map((r) => r.person.name)).toEqual(['Casey Nguyen', 'Alex Rivera', 'Sam Ortiz'])
+    expect(sortRows(shown, 'points').slice(0, 3).map((r) => r.person.name)).toEqual(['Alex Rivera', 'Casey Nguyen', 'Sam Ortiz'])
     expect(sortRows(shown, 'hours').slice(0, 3).map((r) => r.person.name)).toEqual(['Casey Nguyen', 'Alex Rivera', 'Jordan Kim'])
   })
 })
@@ -355,18 +358,26 @@ describe('required Mondays', () => {
       ['2026-01-19', false],
       ['2026-01-26', true],
     ])
-    const rows = requiredReport(peopleTable.rows().filter((p) => !p.hidden), checksTable.rows(), absencesTable.rows(), requiredDays(january()), '2026-01-20')
+    const people = requiredPeople(peopleTable.rows(), membersTable.rows(), activeRosterIds(membersTable.rows(), studentsTable.rows()))
+    const rows = requiredReport(people, checksTable.rows(), absencesTable.rows(), requiredDays(january()), '2026-01-20')
     const statuses = Object.fromEntries(rows.map((r) => [r.person.name, [...r.days.values()].join(' ')]))
     expect(statuses).toEqual({
-      'Taylor Brooks': 'missed missed upcoming',
-      'Quinn Patel': 'missed excused upcoming',
-      'Sam Ortiz': 'excused came upcoming',
+      'Jordan Kim': 'missed came upcoming',
       'Alex Rivera': 'came came upcoming',
-      'Casey Nguyen': 'came came upcoming',
-      'Jordan Kim': 'came came upcoming',
+      'Casey Nguyen': 'excused came upcoming',
     })
-    // Quinn's was sent the day after; Sam's ahead of time.
+    // Sam's was sent ahead of time; Casey's the day after.
     expect(absencesTable.rows().map((a) => sentLate(a))).toEqual([false, true])
+  })
+
+  it('is only for the students marked active on the Roster', async () => {
+    const required = () => requiredPeople(peopleTable.rows(), membersTable.rows(), activeRosterIds(membersTable.rows(), studentsTable.rows())).map((p) => p.name)
+    // Pat is a mentor, Sam's access is switched off, and Taylor and Quinn have no member account.
+    expect(required()).toEqual(['Alex Rivera', 'Casey Nguyen', 'Jordan Kim'])
+    setDemoRole('mentor')
+    const jordan = membersTable.rows().find((m) => m.name === 'Jordan Kim')!
+    expect(await setActive(jordan, false)).toEqual({ ok: true, value: null })
+    expect(required()).toEqual(['Alex Rivera', 'Casey Nguyen'])
   })
 
   it("lets people say they can't make a required Monday, once, and take it back", async () => {
@@ -384,20 +395,20 @@ describe('required Mondays', () => {
 
   it("shows mentors everyone's Mondays and the absences, and students the Mondays coming up", async () => {
     const { MyMondays, RequiredMondaysPanel } = await import('./RequiredMondays')
-    const range = { from: '2026-01-10' }
+    const range = { from: '2026-01-01' }
     await loadMondayMeetings(range)
     // The words on the page, without the HTML.
     const text = (html: string) => html.replace(/<[^>]*>/g, '').replace(/&#x27;/g, "'")
-    const mentors = text(renderToString(createElement(RequiredMondaysPanel, { range, search: '', showHidden: false })))
-    // Jan 12 is the one required Monday so far this season; Jan 19 is marked not required.
-    for (const text of ['Mon, Jan 12', 'Taylor Brooks', 'Missed', 'Excused', 'MLK Day, no meeting', 'Make required', 'Was sick', 'Sent after']) {
+    const mentors = text(renderToString(createElement(RequiredMondaysPanel, { range, search: '' })))
+    // Jan 5 and 12 are required; Jan 19 is marked not required.
+    for (const text of ['Mon, Jan 5', 'Mon, Jan 12', 'Jordan Kim', 'Missed', 'Excused', 'MLK Day, no meeting', 'Make required', 'Was sick', 'Sent after']) {
       expect(mentors, text).toContain(text)
     }
-    // Sam's absence is for Jan 5, before the season.
-    expect(mentors).not.toContain('Family trip')
+    // Only active students and student leaders: not Sam (switched off) or Taylor (no member account), or Sam's absence.
+    for (const text of ['Sam Ortiz', 'Taylor Brooks', 'Family trip']) expect(mentors, text).not.toContain(text)
     setDemoRole('student')
     const alex = text(renderToString(createElement(MyMondays, { range })))
-    expect(alex).toContain('Came 1 · Excused 0 · Missed 0')
+    expect(alex).toContain('Came 2 · Excused 0 · Missed 0')
     expect(alex).toContain("I can't make it")
     // Mentors and admins don't get the panel at all.
     setDemoRole('mentor')

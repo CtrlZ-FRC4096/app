@@ -4,7 +4,7 @@ import { Panel, Pill } from '../../core/ui'
 import { plural } from '../../core/format'
 import { isMentor, useSession } from '../../core/session'
 import {
-  peopleTable, requiredDays, sendAbsence, sentLate, setMondayRequired, takeBackAbsence, toCsv, useAbsences, useMondayMeetings, useMyMondays,
+  peopleTable, requiredDays, sendAbsence, useRequiredForMe, sentLate, setMondayRequired, takeBackAbsence, toCsv, useAbsences, useMondayMeetings, useMyMondays,
   useRequiredReport, type AttendanceAbsence, type AttendancePerson,
 } from './data'
 import { MAX_ABSENCE_REASON, MAX_NOT_REQUIRED_REASON, MONDAY_LABEL, MONDAY_TONE, type Meeting, type MondayStatus, type RequiredRow } from './required'
@@ -38,9 +38,9 @@ function Loading(props: { loading: boolean; error: string | null; reload: () => 
  * required, and the absences people sent. Coming means checking in with
  * Jibble that day; an absence sent counts as excused.
  */
-export function RequiredMondaysPanel(props: { range: Range; search: string; showHidden: boolean }) {
+export function RequiredMondaysPanel(props: { range: Range; search: string }) {
   const { meetings, loading, error, reload } = useMondayMeetings(props.range)
-  const report = useRequiredReport(meetings, props.showHidden)
+  const report = useRequiredReport(meetings)
   const days = requiredDays(meetings)
   const wanted = props.search.trim().toLowerCase()
   const rows = report.filter((row) => row.person.name.toLowerCase().includes(wanted))
@@ -67,14 +67,18 @@ export function RequiredMondaysPanel(props: { range: Range; search: string; show
         aside={rows.length > 0 && shown.length > 0 && <button type="button" className="btn btn-sm" onClick={download}>Download CSV</button>}
       >
         <p className="panel-body note">
-          Every Monday meeting on the team calendar is required, unless it's marked not required below. Checking in with Jibble counts as
-          coming. An absence someone sends counts as excused. None of this changes points.
+          Every Monday meeting on the team calendar is required for the students marked active on the Roster, unless it's marked not
+          required below. Checking in with Jibble counts as coming. An absence someone sends counts as excused. None of
+          this changes points.
         </p>
         <Loading loading={loading} error={error} reload={reload} />
         {!loading && !error && (shown.length === 0 ? (
           <p className="panel-body muted">No required Mondays in these dates. Monday meetings come from the team calendar.</p>
         ) : rows.length === 0 ? (
-          <p className="panel-body muted">Nobody to show. Change the dates or search.</p>
+          <p className="panel-body muted">
+            Nobody to show. Required Mondays are for the students marked active on the Roster, matched by Slack account. Change the search,
+            or check the Roster.
+          </p>
         ) : (
           <MondayGrid rows={rows} days={shown} />
         ))}
@@ -102,10 +106,7 @@ function MondayGrid(props: { rows: RequiredRow<AttendancePerson>[]; days: string
         <tbody>
           {props.rows.map((row) => (
             <tr key={row.person.id}>
-              <td>
-                {row.person.name}
-                {row.person.hidden && <span className="note"> (hidden)</span>}
-              </td>
+              <td>{row.person.name}</td>
               <td className={'num cell' + (row.missed > 0 ? ' cell-bad' : '')}>{row.missed}</td>
               <td className="num cell">{row.excused}</td>
               <td className="num cell">{row.came}</td>
@@ -228,8 +229,10 @@ export function MyMondays(props: { range: Range }) {
   const { role } = useSession()
   const { meetings, loading, error, reload } = useMondayMeetings(props.range)
   const { person, row, absences } = useMyMondays(meetings)
+  const forMe = useRequiredForMe()
   const [asking, setAsking] = useState<string | null>(null)
-  if (!person || isMentor(role)) return null
+  // Only for students a mentor marked active on the Roster.
+  if (!person || isMentor(role) || !forMe) return null
 
   const required = requiredDays(meetings)
   const day = today()
