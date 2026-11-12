@@ -10,7 +10,8 @@
  * instead of in code: add a missed check-out, change an RSVP, ignore a
  * wrong check-in. Hours and points are worked out in points.ts.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { getCalendarEvents } from '../../core/calendar'
 import { createTable, fail, ok, type Fields, type Result, type Row } from '../../core/table'
 import { createStore, useStore } from '../../core/store'
 import { DEMO_PEOPLE } from '../../core/demo'
@@ -23,6 +24,10 @@ import type { Notice } from '../../core/registry'
 import { BASE_POINTS, buildReport, type DayRecord, type PersonReport, type Report } from './points'
 import { countRange, type CountRange, type Counting, type Period } from './periods'
 import { checkRequest, type HoursRequestInput, type RequestStatus } from './requests'
+import {
+  addDays, calendarWindow, checkAbsence, DAYS_AHEAD, isRequiredWeekday, MAX_NOT_REQUIRED_REASON, mondayMeetings, requiredReport,
+  type AbsenceInput, type Meeting, type MeetingEvent, type RequiredRow,
+} from './required'
 import { ago, dayLabel, teamClock, teamDay, teamInstant, today } from './time'
 import { nameKey, resolve, slackKey, type ParsedDay, type SlackUser } from './slack-export'
 
@@ -75,6 +80,23 @@ export interface AttendanceRequest extends Row {
   decided_by: string | null
 }
 
+/** Someone saying they can't make a required Monday. It counts as excused straight away (see required.ts). */
+export interface AttendanceAbsence extends Row {
+  person_id: string
+  /** The Monday, like "2026-01-12". */
+  day: string
+  reason: string
+  /** Who sent it. */
+  created_by: string | null
+}
+
+/** A Monday a mentor said isn't required, like a holiday that's still on the calendar. */
+export interface AttendanceNotRequired extends Row {
+  day: string
+  reason: string
+  created_by: string | null
+}
+
 /** One automatic pull from the Slack channel (see sync.ts). */
 export interface AttendanceSync extends Row {
   newest_message_at: string | null
@@ -86,18 +108,20 @@ export interface AttendanceSync extends Row {
 // ---------------------------------------------------------------------------
 // Example data: made-up people and five meetings, covering each kind of day.
 
-const DEMO_DAYS = ['2026-01-06', '2026-01-08', '2026-01-10', '2026-01-13', '2026-01-15']
+// The last two are the required Monday meetings on Jan 5 and Jan 12 (see
+// DEMO_MONDAYS below). They're last so the rows before them keep their ids.
+const DEMO_DAYS = ['2026-01-06', '2026-01-08', '2026-01-10', '2026-01-13', '2026-01-15', '2026-01-05', '2026-01-12']
 const DEMO_CREATED = '2026-01-20T00:00:00Z'
 
 // For each person: per meeting day, their poll answer (y, n or -) and sessions ("18:05-20:30", or "18:10-" if they never checked out).
 const DEMO_PATTERN: [name: string, slack: string, hidden: boolean, days: [string, string[]][]][] = [
-  ['Alex Rivera', 'U0DEMO0001', false, [['y', ['18:05-20:30']], ['y', ['18:00-20:45']], ['n', []], ['y', ['18:02-20:15']], ['y', ['18:10-']]]],
-  ['Jordan Kim', 'U0DEMO0004', false, [['y', ['18:01-20:40']], ['y', ['18:00-19:00']], ['y', []], ['-', ['18:20-20:30']], ['n', ['18:00-20:00']]]],
-  ['Sam Ortiz', 'U0DEMO0005', false, [['n', []], ['n', []], ['-', []], ['y', ['18:00-20:30']], ['y', ['18:05-20:35']]]],
-  ['Casey Nguyen', 'U0DEMO0006', false, [['-', ['18:00-20:00']], ['-', ['18:15-20:30']], ['y', ['10:00-12:00', '13:00-15:30']], ['y', ['18:00-21:00']], ['y', ['18:00-20:50']]]],
-  ['Taylor Brooks', 'U0DEMO0007', false, [['y', []], ['y', []], ['n', []], ['y', ['18:30-19:15']], ['-', []]]],
-  ['Quinn Patel', 'U0DEMO0008', false, [['-', []], ['-', []], ['-', []], ['-', ['18:00-20:00']], ['-', ['18:00-20:10']]]],
-  ['Pat Chen', 'U0DEMO0002', true, [['-', ['17:45-21:00']], ['-', ['17:50-21:00']], ['-', ['09:45-15:45']], ['-', ['17:45-21:00']], ['-', ['17:45-21:00']]]],
+  ['Alex Rivera', 'U0DEMO0001', false, [['y', ['18:05-20:30']], ['y', ['18:00-20:45']], ['n', []], ['y', ['18:02-20:15']], ['y', ['18:10-']], ['y', ['18:00-20:30']], ['y', ['18:00-20:00']]]],
+  ['Jordan Kim', 'U0DEMO0004', false, [['y', ['18:01-20:40']], ['y', ['18:00-19:00']], ['y', []], ['-', ['18:20-20:30']], ['n', ['18:00-20:00']], ['y', ['18:05-20:30']], ['-', ['18:30-19:30']]]],
+  ['Sam Ortiz', 'U0DEMO0005', false, [['n', []], ['n', []], ['-', []], ['y', ['18:00-20:30']], ['y', ['18:05-20:35']], ['n', []], ['y', ['18:00-20:30']]]],
+  ['Casey Nguyen', 'U0DEMO0006', false, [['-', ['18:00-20:00']], ['-', ['18:15-20:30']], ['y', ['10:00-12:00', '13:00-15:30']], ['y', ['18:00-21:00']], ['y', ['18:00-20:50']], ['y', ['18:00-20:30']], ['y', ['18:00-20:45']]]],
+  ['Taylor Brooks', 'U0DEMO0007', false, [['y', []], ['y', []], ['n', []], ['y', ['18:30-19:15']], ['-', []], ['y', []], ['n', []]]],
+  ['Quinn Patel', 'U0DEMO0008', false, [['-', []], ['-', []], ['-', []], ['-', ['18:00-20:00']], ['-', ['18:00-20:10']], ['-', []], ['-', []]]],
+  ['Pat Chen', 'U0DEMO0002', true, [['-', ['17:45-21:00']], ['-', ['17:50-21:00']], ['-', ['09:45-15:45']], ['-', ['17:45-21:00']], ['-', ['17:45-21:00']], ['-', ['17:45-21:00']], ['-', ['17:45-21:00']]]],
 ]
 
 const demoId = (table: number, n: number) => `00000000-0000-4000-8000-${table.toString(16).padStart(4, '0')}${n.toString(16).padStart(8, '0')}`
@@ -157,6 +181,21 @@ export const requestsTable = createTable<AttendanceRequest>('attendance_requests
       decided_at: null, decided_by: null,
     },
   ],
+})
+
+// Required Mondays. Sam said ahead of time they'd miss Jan 5, and Quinn sent
+// one for Jan 12 the day after. Taylor missed both, and Quinn missed Jan 5.
+// Jan 19 is MLK Day: still on the calendar, but a mentor marked it not required.
+export const absencesTable = createTable<AttendanceAbsence>('attendance_absences', {
+  demo: [
+    { id: demoId(0xa7, 1), person_id: demoId(0xa1, 3), day: '2026-01-05', reason: 'Family trip over winter break', created_at: '2026-01-02T16:00:00Z', created_by: DEMO_PEOPLE.sam },
+    { id: demoId(0xa7, 2), person_id: demoId(0xa1, 6), day: '2026-01-12', reason: 'Was sick', created_at: '2026-01-13T15:00:00Z', created_by: null },
+  ],
+  sort: (a, b) => a.day.localeCompare(b.day) || a.created_at.localeCompare(b.created_at),
+})
+export const notRequiredTable = createTable<AttendanceNotRequired>('attendance_not_required', {
+  demo: [{ id: demoId(0xa8, 1), day: '2026-01-19', reason: 'MLK Day, no meeting', created_at: DEMO_CREATED, created_by: DEMO_PEOPLE.pat }],
+  sort: (a, b) => a.day.localeCompare(b.day),
 })
 
 /** The latest automatic pull from Slack, or null if it has never run. */
@@ -381,6 +420,162 @@ export async function decideRequest(request: AttendanceRequest, approve: boolean
     if (!added.ok) return added
   }
   return result
+}
+
+// ---------------------------------------------------------------------------
+// Required Mondays (required.ts). The meetings come from the team calendar;
+// mentors mark the ones that aren't required, and anyone says they can't
+// make one. None of this changes hours or points.
+
+/**
+ * Example Monday meetings for demo mode, which has no team calendar: Jan 5,
+ * 12 and 19 (the example check-ins' weeks), and the next few Mondays from
+ * today, so the "can't make it" form has something to pick.
+ */
+export function demoMondayEvents(from: string, to: string, day = today()): MeetingEvent[] {
+  const days = ['2026-01-05', '2026-01-12', '2026-01-19']
+  let next = day
+  while (!isRequiredWeekday(next)) next = addDays(next, 1)
+  for (; next <= addDays(day, DAYS_AHEAD); next = addDays(next, 7)) days.push(next)
+  return days.filter((d) => d >= from && d <= to).map((d) => ({ title: 'Team meeting', start: teamInstant(d, '18:00'), allDay: false }))
+}
+
+interface MeetingsState {
+  /** Which dates these are for, like "2026-01-10 2026-02-17". */
+  key: string
+  events: MeetingEvent[]
+  loading: boolean
+  error: string | null
+}
+
+// The calendar's events for the dates being looked at. Kept while the app is
+// open, so going to another tab and back doesn't ask Google again.
+const meetingsStore = createStore<MeetingsState>('attendance-mondays', 1, () => ({ key: '', events: [], loading: false, error: null }), { persist: false })
+const NO_EVENTS: MeetingEvent[] = []
+
+async function loadMeetings(window: { from: string; to: string }) {
+  const key = `${window.from} ${window.to}`
+  meetingsStore.set((now) => ({ key, events: now.key === key ? now.events : NO_EVENTS, loading: true, error: null }))
+  const result = isLive
+    ? await getCalendarEvents(new Date(teamInstant(window.from, '00:00')), new Date(teamInstant(addDays(window.to, 1), '00:00')))
+    : ok(demoMondayEvents(window.from, window.to))
+  // Someone switched dates while this was loading: keep theirs.
+  if (meetingsStore.get().key !== key) return
+  meetingsStore.set(result.ok ? { key, events: result.value, loading: false, error: null } : { key, events: NO_EVENTS, loading: false, error: result.error })
+}
+
+/** Load the Monday meetings for these dates now, as useMondayMeetings does when the dates change. */
+export function loadMondayMeetings(range: { from?: string; to?: string }): Promise<void> {
+  return loadMeetings(calendarWindow(range, today()))
+}
+
+/**
+ * The Monday meetings on the team calendar for the dates being counted,
+ * plus the next 4 weeks, each required or not. Loads from Google Calendar
+ * when the dates change; `reload` asks again.
+ */
+export function useMondayMeetings(range: { from?: string; to?: string }): { meetings: Meeting[]; loading: boolean; error: string | null; reload: () => void } {
+  const [day] = useState(today)
+  const { from, to } = calendarWindow(range, day)
+  const key = `${from} ${to}`
+  const state = useStore(meetingsStore)
+  const notRequired = notRequiredTable.useRows()
+  useEffect(() => {
+    if (meetingsStore.get().key !== key) void loadMeetings({ from, to })
+  }, [key, from, to])
+  const events = state.key === key ? state.events : NO_EVENTS
+  const meetings = useMemo(() => mondayMeetings(events, notRequired, { from, to }), [events, notRequired, from, to])
+  return {
+    meetings,
+    loading: state.key !== key || state.loading,
+    error: state.key === key ? state.error : null,
+    reload: () => void loadMeetings({ from, to }),
+  }
+}
+
+/** The required Mondays among these meetings, as days. */
+export function requiredDays(meetings: Meeting[]): string[] {
+  return meetings.filter((m) => m.required).map((m) => m.day)
+}
+
+/**
+ * Mentors and admins: everyone's required Mondays, most missed first.
+ * Hidden people (mentors, parents) are left out unless asked for.
+ */
+export function useRequiredReport(meetings: Meeting[], showHidden = false): RequiredRow<AttendancePerson>[] {
+  const { people, checks } = useAttendance()
+  const absences = absencesTable.useRows()
+  const [day] = useState(today)
+  return useMemo(
+    () => requiredReport(showHidden ? people : people.filter((p) => !p.hidden), checks, absences, requiredDays(meetings), day),
+    [people, checks, absences, meetings, day, showHidden],
+  )
+}
+
+/** Your own required Mondays, and the absences you've sent, newest Monday first. */
+export function useMyMondays(meetings: Meeting[]): { person: AttendancePerson | null; row: RequiredRow<AttendancePerson> | null; absences: AttendanceAbsence[] } {
+  const { id } = useSession()
+  const { people, checks } = useAttendance()
+  const members = membersTable.useRows()
+  const absences = absencesTable.useRows()
+  const [day] = useState(today)
+  const person = findMyPerson(people, members, id)
+  return useMemo(() => {
+    if (!person) return { person: null, row: null, absences: [] }
+    const mine = absences.filter((a) => a.person_id === person.id)
+    const row = requiredReport([person], checks.filter((c) => c.person_id === person.id), mine, requiredDays(meetings), day)[0]
+    return { person, row, absences: [...mine].sort((a, b) => b.day.localeCompare(a.day)) }
+  }, [person, checks, absences, meetings, day])
+}
+
+/** Every absence sent for these days, newest Monday first. */
+export function useAbsences(days: string[]): AttendanceAbsence[] {
+  const absences = absencesTable.useRows()
+  return useMemo(() => {
+    const wanted = new Set(days)
+    return absences.filter((a) => wanted.has(a.day)).sort((a, b) => b.day.localeCompare(a.day) || a.created_at.localeCompare(b.created_at))
+  }, [absences, days])
+}
+
+/** Whether an absence was sent after its Monday: the day after or later, in Central time. */
+export function sentLate(absence: Pick<AttendanceAbsence, 'day' | 'created_at'>): boolean {
+  return teamDay(absence.created_at) > absence.day
+}
+
+/**
+ * Say you can't make a required Monday, for `person` (your own attendance
+ * row). It counts as excused straight away. `required` are the required
+ * Mondays you can pick from. Students and student leaders only: mentors
+ * and admins don't send absences (the database refuses them too).
+ */
+export async function sendAbsence(person: AttendancePerson, input: AbsenceInput, required: string[]): Promise<Result<AttendanceAbsence>> {
+  const me = currentUser()
+  if (me && isMentor(me.role)) return fail("Required Mondays are for students: mentors and admins don't send absences.")
+  const problem = checkAbsence(input, required)
+  if (problem) return fail(problem)
+  if (absencesTable.rows().some((a) => a.person_id === person.id && a.day === input.day)) {
+    return fail(`You already said you can't make ${dayLabel(input.day)}. Take that back first to change the reason.`)
+  }
+  return absencesTable.insert({ person_id: person.id, day: input.day, reason: input.reason.trim() })
+}
+
+/** Take back an absence you sent, or (mentors) remove anyone's. */
+export function takeBackAbsence(absence: AttendanceAbsence): Promise<Result> {
+  return absencesTable.remove(absence.id)
+}
+
+/** Mark a Monday required again, or not required with an optional reason, like "MLK Day". Mentors and admins. */
+export async function setMondayRequired(day: string, required: boolean, reason = ''): Promise<Result> {
+  const me = currentUser()
+  if (!me || !isMentor(me.role)) return fail('Only mentors and admins can change which Mondays are required.')
+  const marked = notRequiredTable.rows().find((n) => n.day === day)
+  if (required) return marked ? notRequiredTable.remove(marked.id) : ok(null)
+  if (marked) return ok(null)
+  if (!DAY.test(day) || !isRequiredWeekday(day)) return fail('Pick a Monday.')
+  const text = reason.trim()
+  if (text.length > MAX_NOT_REQUIRED_REASON) return fail(`Keep the reason under ${MAX_NOT_REQUIRED_REASON} characters.`)
+  const result = await notRequiredTable.insert({ day, reason: text })
+  return result.ok ? ok(null) : result
 }
 
 // ---------------------------------------------------------------------------

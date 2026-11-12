@@ -6,8 +6,17 @@ import { renderToString } from 'react-dom/server'
 import { setDemoRole } from '../../core/demo'
 import { membersTable } from '../../core/members'
 import {
+  absencesTable,
   addCheck,
   cancelRequest,
+  demoMondayEvents,
+  loadMondayMeetings,
+  notRequiredTable,
+  requiredDays,
+  sendAbsence,
+  sentLate,
+  setMondayRequired,
+  takeBackAbsence,
   decideRequest,
   findMyPerson,
   requestHours,
@@ -33,6 +42,7 @@ import {
 } from './data'
 import { buildReport } from './points'
 import { countRange } from './periods'
+import { mondayMeetings, requiredReport } from './required'
 import { dayLabel, teamInstant } from './time'
 import type { ParsedDay, SlackUser } from './slack-export'
 
@@ -42,6 +52,8 @@ beforeEach(() => {
   rsvpsTable.reset()
   periodsTable.reset()
   requestsTable.reset()
+  absencesTable.reset()
+  notRequiredTable.reset()
 })
 
 const existing = () => ({ people: peopleTable.rows(), checks: checksTable.rows(), rsvps: rsvpsTable.rows() })
@@ -51,9 +63,9 @@ const report = () => buildReport(peopleTable.rows(), checksTable.rows(), rsvpsTa
 describe('the example data', () => {
   it('scores each example person the way the old spreadsheet would', () => {
     const points = Object.fromEntries(report().rows.map((r) => [r.person.name, r.points]))
-    // Alex: 3 + 3 + 1 + 3, then −1 on Jan 15 (said yes, checked in, never out: no hours yet), + base 3.
-    expect(points['Alex Rivera']).toBe(12)
-    // Taylor: −1 − 1 + 1 + 1 + 0 + base 3.
+    // Alex: 3 on each Monday (Jan 5 and 12), 3 + 3 + 1 + 3, then −1 on Jan 15 (said yes, checked in, never out: no hours yet), + base 3.
+    expect(points['Alex Rivera']).toBe(18)
+    // Taylor: −1 on Jan 5 (said yes, didn't come), +1 on Jan 12 (said no), −1 − 1 + 1 + 1 + 0, + base 3.
     expect(points['Taylor Brooks']).toBe(3)
   })
 })
@@ -143,9 +155,9 @@ describe('importing a Slack export', () => {
 describe('downloads', () => {
   it('makes a points sheet with a row per person and a column per meeting day', () => {
     const rows = sheetRows(report(), 'points')
-    expect(rows[0]).toEqual(['Name', 'Points', 'Hours', 'Days here', '2026-01-06', '2026-01-08', '2026-01-10', '2026-01-13', '2026-01-15'])
-    // Alex: 12 points; 2.42 + 2.75 + 2.22 hours over the 3 days with a check-out.
-    expect(rows.find((r) => r[0] === 'Alex Rivera')).toEqual(['Alex Rivera', '12', '7.38', '3', '3', '3', '1', '3', '-1'])
+    expect(rows[0]).toEqual(['Name', 'Points', 'Hours', 'Days here', '2026-01-05', '2026-01-06', '2026-01-08', '2026-01-10', '2026-01-12', '2026-01-13', '2026-01-15'])
+    // Alex: 18 points; 2.5 + 2.42 + 2.75 + 2 + 2.22 hours over the 5 days with a check-out.
+    expect(rows.find((r) => r[0] === 'Alex Rivera')).toEqual(['Alex Rivera', '18', '11.88', '5', '3', '3', '3', '1', '3', '3', '-1'])
   })
 
   it('writes CSV that spreadsheets open safely', () => {
@@ -160,9 +172,9 @@ describe('points periods', () => {
     const build = period('2026 build season')
     const { from, to } = countRange({ kind: 'period', id: build.id }, periodsTable.rows(), '2026-02-01')
     const season = buildReport(peopleTable.rows(), checksTable.rows(), rsvpsTable.rows(), { from, to })
-    expect(season.days).toEqual(['2026-01-10', '2026-01-13', '2026-01-15'])
-    // Alex: +1 on Jan 10 (said no, didn't come), +3, then −1 on Jan 15 (never checked out), + base 3. Jan 6 and 8 don't count.
-    expect(season.rows.find((r) => r.person.name === 'Alex Rivera')?.points).toBe(6)
+    expect(season.days).toEqual(['2026-01-10', '2026-01-12', '2026-01-13', '2026-01-15'])
+    // Alex: +1 on Jan 10 (said no, didn't come), +3, +3, then −1 on Jan 15 (never checked out), + base 3. Jan 5, 6 and 8 don't count.
+    expect(season.rows.find((r) => r.person.name === 'Alex Rivera')?.points).toBe(9)
   })
 
   it('saves, changes and removes a period', async () => {
@@ -201,11 +213,11 @@ describe('sorting', () => {
       for (let i = 1; i < sorted.length; i++) expect(value(sorted[i - 1])).toBeGreaterThanOrEqual(value(sorted[i]))
     }
     expect(names('name')).toEqual([...names('name')].sort((a, b) => a.localeCompare(b)))
-    // Without hidden people, as the sheets open. Casey has the most of both; Jordan
-    // is fourth on points (9) but second on hours (7.8).
+    // Without hidden people, as the sheets open. Casey has the most of both; Sam
+    // is third on points (15) but behind Jordan on hours (7.5 to 11.2).
     const shown = buildReport(peopleTable.rows().filter((p) => !p.hidden), checksTable.rows(), rsvpsTable.rows()).rows
     expect(sortRows(shown, 'points').slice(0, 3).map((r) => r.person.name)).toEqual(['Casey Nguyen', 'Alex Rivera', 'Sam Ortiz'])
-    expect(sortRows(shown, 'hours').slice(0, 3).map((r) => r.person.name)).toEqual(['Casey Nguyen', 'Jordan Kim', 'Alex Rivera'])
+    expect(sortRows(shown, 'hours').slice(0, 3).map((r) => r.person.name)).toEqual(['Casey Nguyen', 'Alex Rivera', 'Jordan Kim'])
   })
 })
 
@@ -241,8 +253,8 @@ describe('your own attendance', () => {
 
   it("shows students their own points and hours this period on the home page, and nobody else's, and mentors how many came to the last meeting", () => {
     setDemoRole('student')
-    // Alex, in the 2026 build season: 6 points, and 2.2 hours (Jan 13; Jan 15 has no check-out).
-    expect(home(() => useAttendanceSummary('student').text)).toBe('<p>You: 6 points · 2.2 hours</p>')
+    // Alex, in the 2026 build season: 9 points, and 4.2 hours (Jan 12 and 13; Jan 15 has no check-out).
+    expect(home(() => useAttendanceSummary('student').text)).toBe('<p>You: 9 points · 4.2 hours</p>')
     setDemoRole('mentor')
     expect(home(() => useAttendanceSummary('mentor').text)).toMatch(/^<p>\d+ at /)
   })
@@ -271,17 +283,17 @@ describe('requests for missing hours', () => {
   })
 
   it("only lets a mentor approve, which adds the hours, so the person's points update", async () => {
-    // Alex forgot to check out on Jan 15: −1 that day, so 6 points this season.
-    expect(season('Alex Rivera').points).toBe(6)
+    // Alex forgot to check out on Jan 15: −1 that day, so 9 points this season.
+    expect(season('Alex Rivera').points).toBe(9)
     // The database refuses a student too (supabase/tests/attendance-requests.test.ts). Here, they're told who can.
     expect(await decideRequest(request('Alex Rivera'), true)).toMatchObject({ ok: false, error: /Only mentors and admins/ })
-    expect(season('Alex Rivera').points).toBe(6)
+    expect(season('Alex Rivera').points).toBe(9)
     setDemoRole('mentor')
     const approved = await decideRequest(request('Alex Rivera'), true)
     expect(approved.ok && approved.value).toMatchObject({ status: 'approved', decided_by: expect.any(String) })
     // 18:10 to 20:40 is a full session: 3 points instead of −1.
-    expect(season('Alex Rivera').points).toBe(10)
-    expect(season('Alex Rivera').hours).toBeCloseTo(2.2167 + 2.5, 3)
+    expect(season('Alex Rivera').points).toBe(13)
+    expect(season('Alex Rivera').hours).toBeCloseTo(2 + 2.2167 + 2.5, 3)
   })
 
   it('adds nothing when a mentor declines, and decides only once', async () => {
@@ -328,5 +340,78 @@ describe('what Attendance puts on the home page', () => {
     expect(pullIsLate(pulledHoursAgo(35), now)).toBe(false)
     expect(pullIsLate(pulledHoursAgo(40), now)).toBe(true)
     expect(pullIsLate(null, now)).toBe(false)
+  })
+})
+
+describe('required Mondays', () => {
+  afterEach(() => setDemoRole('student'))
+  // January 2026's Monday meetings in demo mode, looked at on Jan 20: Jan 26 is still to come.
+  const january = () => mondayMeetings(demoMondayEvents('2026-01-01', '2026-01-31', '2026-01-20'), notRequiredTable.rows(), {})
+
+  it("shows who came, who sent an absence and who missed each required Monday, leaving out the one a mentor marked", () => {
+    expect(january().map((m) => [m.day, m.required])).toEqual([
+      ['2026-01-05', true],
+      ['2026-01-12', true],
+      ['2026-01-19', false],
+      ['2026-01-26', true],
+    ])
+    const rows = requiredReport(peopleTable.rows().filter((p) => !p.hidden), checksTable.rows(), absencesTable.rows(), requiredDays(january()), '2026-01-20')
+    const statuses = Object.fromEntries(rows.map((r) => [r.person.name, [...r.days.values()].join(' ')]))
+    expect(statuses).toEqual({
+      'Taylor Brooks': 'missed missed upcoming',
+      'Quinn Patel': 'missed excused upcoming',
+      'Sam Ortiz': 'excused came upcoming',
+      'Alex Rivera': 'came came upcoming',
+      'Casey Nguyen': 'came came upcoming',
+      'Jordan Kim': 'came came upcoming',
+    })
+    // Quinn's was sent the day after; Sam's ahead of time.
+    expect(absencesTable.rows().map((a) => sentLate(a))).toEqual([false, true])
+  })
+
+  it("lets people say they can't make a required Monday, once, and take it back", async () => {
+    const alex = person('Alex Rivera')
+    const required = requiredDays(january())
+    const sent = await sendAbsence(alex, { day: '2026-01-26', reason: ' Robotics camp ' }, required)
+    expect(sent.ok && sent.value).toMatchObject({ person_id: alex.id, day: '2026-01-26', reason: 'Robotics camp' })
+    expect(await sendAbsence(alex, { day: '2026-01-26', reason: 'Again' }, required)).toMatchObject({ ok: false, error: /already said/ })
+    expect(await sendAbsence(alex, { day: '2026-01-19', reason: 'Holiday' }, required)).toMatchObject({ ok: false, error: /isn't a required Monday/ })
+    expect(sent.ok && (await takeBackAbsence(sent.value))).toEqual({ ok: true, value: null })
+    // Mentors and admins don't send them (the database refuses them too).
+    setDemoRole('mentor')
+    expect(await sendAbsence(alex, { day: '2026-01-26', reason: 'Away' }, required)).toMatchObject({ ok: false, error: /mentors and admins don't send/ })
+  })
+
+  it("shows mentors everyone's Mondays and the absences, and students the Mondays coming up", async () => {
+    const { MyMondays, RequiredMondaysPanel } = await import('./RequiredMondays')
+    const range = { from: '2026-01-10' }
+    await loadMondayMeetings(range)
+    // The words on the page, without the HTML.
+    const text = (html: string) => html.replace(/<[^>]*>/g, '').replace(/&#x27;/g, "'")
+    const mentors = text(renderToString(createElement(RequiredMondaysPanel, { range, search: '', showHidden: false })))
+    // Jan 12 is the one required Monday so far this season; Jan 19 is marked not required.
+    for (const text of ['Mon, Jan 12', 'Taylor Brooks', 'Missed', 'Excused', 'MLK Day, no meeting', 'Make required', 'Was sick', 'Sent after']) {
+      expect(mentors, text).toContain(text)
+    }
+    // Sam's absence is for Jan 5, before the season.
+    expect(mentors).not.toContain('Family trip')
+    setDemoRole('student')
+    const alex = text(renderToString(createElement(MyMondays, { range })))
+    expect(alex).toContain('Came 1 · Excused 0 · Missed 0')
+    expect(alex).toContain("I can't make it")
+    // Mentors and admins don't get the panel at all.
+    setDemoRole('mentor')
+    expect(renderToString(createElement(MyMondays, { range }))).toBe('')
+  })
+
+  it('lets only mentors and admins mark a Monday not required, and required again', async () => {
+    // The database refuses a student too (supabase/tests/attendance-required-mondays.test.ts). Here, they're told who can.
+    expect(await setMondayRequired('2026-01-26', false, 'Snow day')).toMatchObject({ ok: false, error: /Only mentors and admins/ })
+    setDemoRole('mentor')
+    expect(await setMondayRequired('2026-01-27', false)).toMatchObject({ ok: false, error: /Pick a Monday/ })
+    expect(await setMondayRequired('2026-01-26', false, ' Snow day ')).toEqual({ ok: true, value: null })
+    expect(january().find((m) => m.day === '2026-01-26')).toMatchObject({ required: false, reason: 'Snow day' })
+    expect(await setMondayRequired('2026-01-19', true)).toEqual({ ok: true, value: null })
+    expect(january().map((m) => m.required)).toEqual([true, true, true, false])
   })
 })
