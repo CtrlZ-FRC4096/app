@@ -104,6 +104,42 @@ The bot token can only read the channels the app is invited to, and the
 member list. It lives only in the `database` environment, which only `main`
 can use, so pull requests can't read it. Never put it in the code.
 
+## Required Mondays
+
+Students have to come to the Monday meetings on the team calendar. This
+replaces the absence Google Form and reading the Slack channel by hand.
+
+- **Which Mondays:** every Monday with a meeting on the team Google
+  Calendar (an event with a start time; all-day events like competitions
+  don't count). They're read through `src/core/calendar.ts` for the dates
+  being counted plus the next 4 weeks, so nothing is copied into the
+  database. Mentors and admins can mark one **not required** (a holiday
+  still on the calendar, say) with an optional reason, and make it required
+  again. Those are kept in `attendance_not_required`.
+- **Coming** means checking in with Jibble that day (any check-in that
+  isn't ignored), however long they stayed.
+- **"I can't make it":** under Your attendance, everyone sees the required
+  Mondays in the next 4 weeks and says they can't make one, with a reason.
+  It counts as **excused** straight away: nobody approves it. They can take
+  it back until the day. They can also say why they missed one afterwards;
+  mentors see that marked **Sent after**. These are kept in
+  `attendance_absences`.
+- **Missed** is a required Monday with no check-in and no absence. Today
+  counts as coming up until the night's pull from Slack.
+- **None of this changes hours or points.**
+- **Mentors and admins** pick **Required Mondays** under View: a row per
+  person with how many they missed, were excused from and came to, and a
+  column per required Monday (most missed first, with a CSV download), the
+  Monday meetings with the switch for required or not, and every absence
+  with its reason. They can remove an absence, which makes that Monday
+  missed again unless the person checked in.
+
+The rules are in `required.ts` (tested in `required.test.ts`); the tables,
+loading the calendar and sending absences are in `data.ts`; the screens are
+`RequiredMondays.tsx`. Demo mode has no team calendar, so `data.ts` makes
+up Monday meetings on Jan 5, 12 and 19, 2026 (the example check-ins' weeks;
+Jan 19 is marked not required) and the next few Mondays from today.
+
 ## Files
 
 | File | What it does |
@@ -114,14 +150,18 @@ can use, so pull requests can't read it. Never put it in the code.
 | `points.ts` | Sessions, hours and points (the rules above) |
 | `periods.ts` | Points periods: which one includes today, and what dates to count |
 | `time.ts` | Central-time days and times |
-| `data.ts` | The tables, importing, fixes, periods and CSV |
-| `AttendancePage.tsx`, `AttendanceGrid.tsx`, `PersonPanel.tsx`, `PeriodsPanel.tsx`, `ImportPanel.tsx` | The tab |
+| `required.ts` | Required Mondays: which Mondays count, and who came, was excused or missed |
+| `data.ts` | The tables, importing, fixes, periods, required Mondays and CSV |
+| `AttendancePage.tsx`, `AttendanceGrid.tsx`, `PersonPanel.tsx`, `PeriodsPanel.tsx`, `ImportPanel.tsx`, `RequiredMondays.tsx` | The tab |
 
 Tables: `attendance_people`, `attendance_checks`, `attendance_rsvps`
 (`supabase/migrations/..._attendance.sql`), and `attendance_syncs` with the
 function the pull calls (`..._attendance_slack_pull.sql`), and
-`attendance_periods` (`..._attendance_periods.sql`). Permission tests:
-`supabase/tests/attendance.test.ts` and `attendance-pull.test.ts`.
+`attendance_periods` (`..._attendance_periods.sql`), and
+`attendance_absences` and `attendance_not_required`
+(`..._attendance_required_mondays.sql`). Permission tests:
+`supabase/tests/attendance.test.ts`, `attendance-pull.test.ts` and
+`attendance-required-mondays.test.ts`.
 
 Changes to this folder and `scripts/` need a mentor's approval, because the
 daily pull runs this code with the database password and the Slack token.

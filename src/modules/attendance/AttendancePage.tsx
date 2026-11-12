@@ -8,6 +8,7 @@ import { MyAttendance } from './MyAttendance'
 import { PeriodsPanel } from './PeriodsPanel'
 import { PersonPanel } from './PersonPanel'
 import { RequestsPanel } from './RequestsPanel'
+import { MyMondays, RequiredMondaysPanel } from './RequiredMondays'
 import { BASE_POINTS, FULL_SESSION_HOURS, POINTS } from './points'
 import { rangeText } from './periods'
 import { periodsTable, SHEET_SORT, sheetRows, sortRows, toCsv, useCountRange, useLastPull, useMyAttendance, useReport, type Sheet, type SortBy } from './data'
@@ -15,9 +16,9 @@ import { ago, dayLabel, today } from './time'
 
 const SETUP = 'https://github.com/CtrlZ-FRC4096/app/blob/main/src/modules/attendance/README.md#pulling-from-slack-automatically'
 
-const TABS = ['All', 'Check-ins', 'RSVPs', 'Periods', 'Import'] as const
+const TABS = ['All', 'Check-ins', 'RSVPs', 'Required Mondays', 'Periods', 'Import'] as const
 type Tab = (typeof TABS)[number]
-const SHEET: Record<Exclude<Tab, 'All' | 'Periods' | 'Import'>, Sheet> = { 'Check-ins': 'checks', RSVPs: 'rsvps' }
+const SHEET: Record<Exclude<Tab, 'All' | 'Required Mondays' | 'Periods' | 'Import'>, Sheet> = { 'Check-ins': 'checks', RSVPs: 'rsvps' }
 
 const fileName = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
@@ -47,6 +48,7 @@ export default function AttendancePage() {
       <RangePicker range={range} />
       <RangeNote range={range} />
       <MyAttendance range={range} rangeName={rangeName} asking={asking} onAsk={setAsking} jumps={jumps} />
+      <MyMondays range={range} />
       {isMentor(role) && <TeamAttendance range={range} />}
       {/* No link for someone with no attendance yet: there's no form to open. */}
       <PointsRules onRequest={person ? request : undefined} />
@@ -130,7 +132,7 @@ function TeamAttendance({ range }: { range: ReturnType<typeof useCountRange> }) 
   // points or hours choice when sorting by Name or Days here.
   function choose(next: Tab) {
     setTab(next)
-    if (next !== 'All' && next !== 'Periods' && next !== 'Import') setSortBy(SHEET_SORT[SHEET[next]])
+    if (next !== 'All' && next !== 'Required Mondays' && next !== 'Periods' && next !== 'Import') setSortBy(SHEET_SORT[SHEET[next]])
   }
 
   function download(sheet: Sheet) {
@@ -176,17 +178,23 @@ function TeamAttendance({ range }: { range: ReturnType<typeof useCountRange> }) 
             <label className="check"><input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} /> Show hidden people</label>
           </div>
 
-          {person && <PersonPanel row={person} days={report.days} onClose={() => setSelected(null)} />}
+          {tab === 'Required Mondays' ? (
+            <RequiredMondaysPanel range={range} search={search} showHidden={showHidden} />
+          ) : (
+            <>
+              {person && <PersonPanel row={person} days={report.days} onClose={() => setSelected(null)} />}
 
-          <Panel
-            title={tab === 'All' ? 'Attendance' : tab}
-            aside={<button type="button" className="btn btn-sm" onClick={() => download(tab === 'All' ? displaySheet : SHEET[tab])}>Download CSV</button>}
-          >
-            <AttendanceGrid report={report} rows={rows} sheet={tab === 'All' ? displaySheet : SHEET[tab]} sortBy={sortBy} onSort={(by) => {
-              setSortBy(by)
-              if (by === 'points' || by === 'hours') setDisplaySheet(by)
-            }} selected={selected} onSelect={setSelected} />
-          </Panel>
+              <Panel
+                title={tab === 'All' ? 'Attendance' : tab}
+                aside={<button type="button" className="btn btn-sm" onClick={() => download(tab === 'All' ? displaySheet : SHEET[tab])}>Download CSV</button>}
+              >
+                <AttendanceGrid report={report} rows={rows} sheet={tab === 'All' ? displaySheet : SHEET[tab]} sortBy={sortBy} onSort={(by) => {
+                  setSortBy(by)
+                  if (by === 'points' || by === 'hours') setDisplaySheet(by)
+                }} selected={selected} onSelect={setSelected} />
+              </Panel>
+            </>
+          )}
         </>
       )}
     </>
