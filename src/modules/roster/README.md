@@ -5,12 +5,15 @@ mentors and admins only.
 
 ## What it does
 
-- **Who's listed:** everyone on the Members page with the **Student** or
-  **Student leader** role whose access is on, A to Z. Students show up
-  once they've signed in. Switching someone's access off on the Members
-  page takes them off the roster; changing their role to mentor does too.
-- **Active this season:** a mentor ticks it for each student. Attendance's
-  **required Mondays** are for active students only (see
+- **Who's listed:** everyone in Attendance (from the Slack channel's poll
+  and Jibble) who isn't hidden there, A to Z, **whether or not they have
+  an app account**, plus students and student leaders who have signed in
+  but aren't in Attendance yet. Each shows **No app account**, **Access
+  off** or their role when it isn't Student. To take someone off the list
+  (a mentor or parent), hide them in Attendance. Setting someone who isn't
+  in Attendance yet adds them there, as the nightly pull from Slack would.
+- **Active this season:** a mentor ticks it for each person. Attendance's
+  **required Mondays** are for active people only (see
   [Attendance](../attendance/README.md#required-mondays)). Students who
   aren't active don't see the Required Mondays panel.
 - **Subteams:** each student can be on any number. Their first one is
@@ -23,7 +26,7 @@ mentors and admins only.
   second press.
 - **Filters:** find someone by name, show everyone, only active or only
   not active, and pick a subteam (or "No subteam yet").
-- The home page tile says "3 active students of 5".
+- The home page tile says "5 active of 6 people".
 
 ## Who can do what
 
@@ -31,10 +34,11 @@ mentors and admins only.
 |:--|:--|:--|
 | Open the Roster page | Yes | No (`roles` in `index.ts`) |
 | See everyone's entry, and the subteams | Yes | No |
-| See their own entry (active, and which subteams) | Yes | Yes, so Attendance knows whether Mondays are required for them |
+| See their own entry (active, and which subteams) | Yes | Yes (matched by Slack account), so Attendance knows whether Mondays are required for them |
 | Change anything | Yes | No |
 
-The rules are in `supabase/migrations/..._roster.sql`, tested in
+The rules are in `supabase/migrations/..._roster.sql` and
+`..._roster_attendance_people.sql`, tested in
 `supabase/tests/roster.test.ts`. In the app, `mentorsOnly()` in `data.ts`
 tells anyone else who can.
 
@@ -47,9 +51,10 @@ tells anyone else who can.
 | `RosterPage.tsx` | The page |
 | `index.ts` | Tells the app about the module |
 
-Tables: `roster_subteams`, `roster_students` (one row per student a mentor
+Tables: `roster_subteams`, `roster_students` (one row per person a mentor
 has set; no row means not active) and `roster_subteam_members` (who's on
-which subteam, and their main one).
+which subteam, and their main one). Both point at `attendance_people`, so
+removing someone from Attendance takes them off the roster.
 
 ## Other modules
 

@@ -184,11 +184,12 @@ export const requestsTable = createTable<AttendanceRequest>('attendance_requests
   ],
 })
 
-// Required Mondays, for students active on the Roster only (Alex, Jordan and
-// Casey here: Sam's access is switched off, and Taylor and Quinn have no
-// member account). Jordan missed Jan 5. Casey missed it too, and
-// said why the day after. Sam's is left out of the mentors' view. Jan 19 is
-// MLK Day: still on the calendar, but a mentor marked it not required.
+// Required Mondays, for people active on the Roster only (everyone here
+// but Sam, whose access is switched off). Jordan, Taylor and Quinn missed
+// Jan 5, and Casey missed it too but said why the day after. Taylor and
+// Quinn missed Jan 12 as well. Sam's absence is left out of the mentors'
+// view. Jan 19 is MLK Day: still on the calendar, but a mentor marked it
+// not required.
 export const absencesTable = createTable<AttendanceAbsence>('attendance_absences', {
   demo: [
     { id: demoId(0xa7, 1), person_id: demoId(0xa1, 3), day: '2026-01-05', reason: 'Family trip over winter break', created_at: '2026-01-02T16:00:00Z', created_by: DEMO_PEOPLE.sam },
@@ -502,29 +503,29 @@ export function requiredDays(meetings: Meeting[]): string[] {
 }
 
 /**
- * Who required Mondays are for: the students and student leaders a mentor
- * marked active on the Roster (`active`, from activeRosterIds() in the
- * Roster module), matched to their attendance by Slack account. Anyone else
- * in attendance (mentors, parents, people who've left, or a Jibble name that
- * matched no Slack account) is left out.
+ * Who required Mondays are for: the people a mentor marked active on the
+ * Roster (`active`, attendance people's ids from activeRosterIds() in the
+ * Roster module), with or without an app account.
  */
-export function requiredPeople(people: AttendancePerson[], members: Member[], active: Set<string>): AttendancePerson[] {
-  const slack = new Set(members.filter((m) => active.has(m.id)).map((m) => m.slack_user_id))
-  return people.filter((p) => p.slack_user_id !== null && slack.has(p.slack_user_id))
+export function requiredPeople(people: AttendancePerson[], active: Set<string>): AttendancePerson[] {
+  return people.filter((p) => active.has(p.id))
 }
 
-/** The active students, as attendance people (see requiredPeople). */
+/** The active people, as attendance people (see requiredPeople). */
 export function useRequiredPeople(): AttendancePerson[] {
+  const people = peopleTable.useRows()
+  const active = useActiveRosterIds()
+  return useMemo(() => requiredPeople(people, active), [people, active])
+}
+
+/** Whether required Mondays are for you: your attendance row is active on the Roster. */
+export function useRequiredForMe(): boolean {
+  const { id } = useSession()
   const people = peopleTable.useRows()
   const members = membersTable.useRows()
   const active = useActiveRosterIds()
-  return useMemo(() => requiredPeople(people, members, active), [people, members, active])
-}
-
-/** Whether required Mondays are for you: you're active on the Roster. */
-export function useRequiredForMe(): boolean {
-  const { id } = useSession()
-  return useActiveRosterIds().has(id)
+  const me = findMyPerson(people, members, id)
+  return me !== null && active.has(me.id)
 }
 
 /** Mentors and admins: every active student's required Mondays, most missed first. */
