@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { plural, shortDate } from '../../core/format'
 import { useMemberNames, useMembers } from '../../core/members'
 import { useSession } from '../../core/session'
@@ -123,39 +123,56 @@ export default function BomPage() {
         <button type="button" className="btn btn-sm" onClick={() => setEditing({ form: 'system', system: null })}>Add a system</button>
       </div>
 
+      {/* Each form scrolls into view when it opens (InView), because it's drawn up here, above the parts list. */}
       {editing?.form === 'robot' && (
-        <RobotForm
-          key={editing.robot?.id ?? 'new'}
-          robot={editing.robot}
-          onDone={(saved) => {
-            if (saved && !editing.robot) {
-              setRobotId(saved.id)
-              setSystemId(undefined)
-            }
-            close()
-          }}
-        />
+        <InView key={editing.robot?.id ?? 'new'}>
+          <RobotForm
+            robot={editing.robot}
+            onDone={(saved) => {
+              if (saved && !editing.robot) {
+                setRobotId(saved.id)
+                setSystemId(undefined)
+              }
+              close()
+            }}
+          />
+        </InView>
       )}
       {(editing?.form === 'system' || (!system && !editing)) && (
-        <SystemForm
-          key={editing?.form === 'system' ? (editing.system?.id ?? 'new') : 'first'}
-          robot={robot}
-          system={editing?.form === 'system' ? editing.system : null}
-          partCount={editing?.form === 'system' && editing.system ? parts.length : 0}
-          canCancel={editing?.form === 'system'}
-          canDelete={leader}
-          onDone={(saved) => {
-            if (saved) setSystemId(saved.id)
-            close()
-          }}
-        />
+        <InView key={editing?.form === 'system' ? (editing.system?.id ?? 'new') : 'first'}>
+          <SystemForm
+            robot={robot}
+            system={editing?.form === 'system' ? editing.system : null}
+            partCount={editing?.form === 'system' && editing.system ? parts.length : 0}
+            canCancel={editing?.form === 'system'}
+            canDelete={leader}
+            onDone={(saved) => {
+              if (saved) setSystemId(saved.id)
+              close()
+            }}
+          />
+        </InView>
       )}
       {editing?.form === 'part' && system && (
-        <PartForm key={editing.part?.id ?? `new-${system.id}`} system={system} parts={parts} part={editing.part} onDone={close} />
+        <InView key={editing.part?.id ?? `new-${system.id}`}>
+          <PartForm system={system} parts={parts} part={editing.part} onDone={close} />
+        </InView>
       )}
-      {editing?.form === 'cnc' && <CncForm key={editing.part.id} part={editing.part} onDone={close} />}
-      {editing?.form === 'stages' && <StagesForm key={editing.part.id} part={editing.part} steps={stepsFor(editing.part, steps)} onDone={close} />}
-      {editing?.form === 'assign' && <AssignForm key={editing.step.id} part={editing.part} step={editing.step} onDone={close} />}
+      {editing?.form === 'cnc' && (
+        <InView key={editing.part.id}>
+          <CncForm part={editing.part} onDone={close} />
+        </InView>
+      )}
+      {editing?.form === 'stages' && (
+        <InView key={editing.part.id}>
+          <StagesForm part={editing.part} steps={stepsFor(editing.part, steps)} onDone={close} />
+        </InView>
+      )}
+      {editing?.form === 'assign' && (
+        <InView key={editing.step.id}>
+          <AssignForm part={editing.part} step={editing.step} onDone={close} />
+        </InView>
+      )}
       {importing && importing.system.id === system?.id && (
         <ImportPreview system={importing.system} plan={importing.plan} onDone={() => setImporting(null)} />
       )}
@@ -412,11 +429,26 @@ function ImportPreview(props: { system: BomSystem; plan: OnshapeImportPlan; onDo
   )
 }
 
-/** Put the cursor in a form's first box when it opens, which also scrolls it into view. */
+/**
+ * Scroll a form to the top of the screen when it opens, clear of the top bar.
+ * The forms open above the parts list, so one opened from a part further down
+ * would otherwise be out of sight (#170). Give it a `key` so it scrolls again
+ * when it opens for another part. A copy of Purchasing's InView: moving it into
+ * src/core/ui.tsx for both modules needs a mentor.
+ */
+function InView(props: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    ref.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }, [])
+  return <div ref={ref} style={{ scrollMarginTop: 160 }}>{props.children}</div>
+}
+
+/** Put the cursor in a form's first box when it opens. InView does the scrolling. */
 function useFocusOnOpen() {
   const ref = useRef<HTMLFormElement>(null)
   useEffect(() => {
-    ref.current?.querySelector<HTMLInputElement>('input')?.focus()
+    ref.current?.querySelector<HTMLInputElement>('input')?.focus({ preventScroll: true })
   }, [])
   return ref
 }

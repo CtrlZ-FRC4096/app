@@ -28,6 +28,8 @@ The tables are made by `supabase/migrations/20261027150000_bom.sql`, and their p
 
 The rules are in `supabase/migrations/20261110130000_bom_student_leaders.sql` (using `private.is_leader()`), and tested in `supabase/tests/bom.test.ts` and `bom-steps.test.ts`. In the app, `canEditRobotsAndParts()` in `data.ts` decides which buttons a student sees, and the functions in `data.ts` explain who to ask.
 
+Every form (a part, Ready to CAM, stages, assigning a stage) opens near the top of the page, above the parts list, and scrolls itself into view when it opens (`InView` in `BomPage.tsx`, a copy of Purchasing's), so it's never out of sight (#170).
+
 **Custom and COTS.** Custom parts are made in our shop; COTS parts are bought. The page calls them Custom, but the database still stores them as `made`, so no migration was needed for the name.
 
 **Part numbers.** Every part gets a team number like `4096-26-INT-001`: team, year, system code, then a number. Custom parts also have a material, such as "6061 aluminum, 1/4 in plate". COTS (bought) parts have a vendor and the vendor's part number.
