@@ -4,7 +4,8 @@ import { useMemberNames } from '../../core/members'
 import { href, navigate } from '../../core/router'
 import { toast } from '../../core/toast'
 import { Bar, PageHead, Panel, Pill } from '../../core/ui'
-import { MIN_MATCHES, pointsRange, useScoutedTeams, useTeamPoints, useTeamSummary, type Tally, type TeamSummary } from './data'
+import { MIN_MATCHES, pointsRange, useCurrentEvent, useScoutedTeams, useTeamPoints, useTeamSummary, type Tally, type TeamSummary } from './data'
+import { PRESCOUT_QUESTIONS, prescoutHref, usePrescoutFor } from '../prescouting/data'
 import TeamPhotos from './TeamPhotos'
 import TeamRank from './TeamRank'
 import TeamVideos from './TeamVideos'
@@ -96,6 +97,7 @@ function TeamDetails(props: { team: number }) {
       <TeamRatings team={props.team} />
       {summary.matchCount + summary.pitCount > 0 && <HowOften summary={summary} />}
       {summary.written.length > 0 && <WrittenAnswers summary={summary} />}
+      <Prescouting team={props.team} />
       <TeamVideos team={props.team} />
     </>
   )
@@ -121,6 +123,36 @@ function AveragePoints(props: { team: number }) {
           <span className="note">Not scouted in a match yet.</span>
         )}
       </p>
+    </Panel>
+  )
+}
+
+// What we expected from the team before the event (#119), from Prescouting,
+// with a link to their full prescouting page. The team page is what we saw
+// in matches; this puts the two one tap apart.
+const PRESCOUT_SHOWN = ['key_task', 'strengths', 'weaknesses', 'auto_paths'] as const
+
+function Prescouting(props: { team: number }) {
+  const event = useCurrentEvent().key
+  const notes = usePrescoutFor(event, props.team)
+  const link = <a href={prescoutHref(event, props.team)}>{notes ? 'Full prescouting page →' : 'Prescout them →'}</a>
+  return (
+    <Panel title="Prescouting" aside={link}>
+      {notes ? (
+        <div className="row-list">
+          {PRESCOUT_QUESTIONS.filter((q) => (PRESCOUT_SHOWN as readonly string[]).includes(q.key) && notes[q.key].trim()).map((q) => (
+            <div key={q.key}>
+              <span style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-line' }}>
+                <span className="note">{q.label}</span>
+                <br />
+                {notes[q.key].trim()}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="panel-body muted" style={{ margin: 0 }}>Not prescouted yet</p>
+      )}
     </Panel>
   )
 }

@@ -5,7 +5,7 @@ import { PageHead, Panel, Pick } from '../../core/ui'
 import type { Result } from '../../core/table'
 import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../scouting/data'
 import {
-  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, firstLine, isEventKey, prescoutOverview, reloadPrescoutTeams, savePrescout,
+  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, firstLine, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout,
   setPrescoutEvent, toggleMark, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams,
   type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutTeam,
 } from './data'
@@ -14,9 +14,7 @@ import {
 const BOX = { minHeight: 46, fontSize: 16 }
 
 /** The address of a team's prescouting page. */
-function teamHref(event: string, team: number): string {
-  return href('prescouting', event, String(team))
-}
+const teamHref = prescoutHref
 
 // Prescouting. #/prescouting is the overview of every team at the event
 // (#116, #118); #/prescouting/<event>/<team> is one team's
@@ -221,6 +219,10 @@ export function TeamPage(props: { event: string; team: number }) {
         <MarkButton event={event} team={team} marked={notes?.marked ?? false} />
         <a className="btn" style={{ minHeight: 44 }} href={details?.tbaUrl ?? tbaTeamUrl(team, event)} target="_blank" rel="noreferrer">
           The Blue Alliance
+        </a>
+        {/* #119: what we saw in matches, one tap away. */}
+        <a className="btn" style={{ minHeight: 44 }} href={href('scouting', 'team', String(team))}>
+          Scouting team page →
         </a>
       </div>
       <RobotPhotos event={event} team={team} />

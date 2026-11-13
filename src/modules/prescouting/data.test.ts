@@ -6,7 +6,7 @@ import { resetAllStores } from '../../core/store'
 import { EVENT_KEY, tbaTeamUrl } from '../scouting/data'
 import {
   MAX_PRESCOUT_ANSWER, NO_ANSWERS, cleanEventKey, firstLine, hasAnswers, isEventKey, loadPrescoutTeams, prescoutEventStore, prescoutList, prescoutOverview,
-  prescoutTable, savePrescout, setPrescoutEvent, toggleMark,
+  prescoutFor, prescoutHref, prescoutTable, savePrescout, setPrescoutEvent, toggleMark, type PrescoutNotes,
 } from './data'
 
 describe('prescouting: the teams at an event', () => {
@@ -166,5 +166,26 @@ describe('the prescouting overview', () => {
     expect(firstLine('  Fast cycles\nNever broke down ')).toBe('Fast cycles …')
     expect(firstLine('x'.repeat(120))).toBe('x'.repeat(100) + '…')
     expect(firstLine('')).toBe('')
+  })
+})
+
+describe('one team’s prescouting, for the Scouting team page (#119)', () => {
+  const row = (fields: Partial<PrescoutNotes>): PrescoutNotes => ({
+    id: 'p1', event_key: '2026ilch', team_number: 9991, ...NO_ANSWERS, marked: false, created_at: '2026-11-05T19:00:00Z', created_by: null, ...fields,
+  })
+
+  it("finds the team's notes at the event", () => {
+    const notes = row({ key_task: 'Defense' })
+    expect(prescoutFor([notes, row({ id: 'p2', team_number: 9992, key_task: 'Scoring' })], '2026ilch', 9991)).toBe(notes)
+  })
+
+  it('gives nothing for a team nobody prescouted, one at another event, or one with only a mark', () => {
+    expect(prescoutFor([], '2026ilch', 9991)).toBeNull()
+    expect(prescoutFor([row({ event_key: '2026mndu', key_task: 'Defense' })], '2026ilch', 9991)).toBeNull()
+    expect(prescoutFor([row({ marked: true })], '2026ilch', 9991)).toBeNull()
+  })
+
+  it("links to the team's prescouting page", () => {
+    expect(prescoutHref('2026ilch', 9991)).toBe('#/prescouting/2026ilch/9991')
   })
 })

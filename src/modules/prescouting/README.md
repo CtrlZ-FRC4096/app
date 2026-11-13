@@ -13,9 +13,10 @@
 
 `prescouting_notes`, one row per team per event (`supabase/migrations/..._prescouting_notes.sql`, rules tested in `supabase/tests/prescouting-notes.test.ts`). Signed-in members read every row, add one, and change the answers and mark of any; only mentors delete them. Prescouting happens before the event, with Wi-Fi, so it saves straight to the table, not on the phone first like match entries.
 
+- **Linked to Scouting's team page** (#119): a team's prescouting page has a **Scouting team page →** button, and Scouting's team page has a Prescouting panel with the key task, strengths, weaknesses and expected auto paths, and a link back (or "Not prescouted yet"). Other modules read one team's prescouting with `prescoutFor()` / `usePrescoutFor()`, and link to it with `prescoutHref()`, never the table itself. Scouting's team page uses the event Scouting is on, so the prescouting it shows is for that event.
+
 ## What it needs next
 
-- Link each team's prescouting page and their Scouting team page both ways (#119), once the team page (#36) is built.
 
 ## Rules
 

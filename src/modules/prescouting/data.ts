@@ -10,6 +10,7 @@
  * functions. Our notes are in the prescouting_notes table.
  */
 import { useEffect } from 'react'
+import { href } from '../../core/router'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore } from '../../core/store'
 import { createTable, fail, ok, type Result, type Row } from '../../core/table'
@@ -162,6 +163,27 @@ export function usePrescoutNotes(event: string): PrescoutNotes[] {
 
 function findNotes(event: string, team: number): PrescoutNotes | undefined {
   return prescoutTable.rows().find((row) => row.event_key === event && row.team_number === team)
+}
+
+/**
+ * One team's prescouting at an event (#119), or null if nobody has
+ * prescouted them, so other pages (like Scouting's team page) never read
+ * the table themselves. A row with only a mark and no answers counts as not
+ * prescouted.
+ */
+export function prescoutFor(rows: PrescoutNotes[], event: string, team: number): PrescoutNotes | null {
+  const found = rows.find((row) => row.event_key === event && row.team_number === team) ?? null
+  return hasAnswers(found) ? found : null
+}
+
+/** One team's prescouting at an event, for a page. */
+export function usePrescoutFor(event: string, team: number): PrescoutNotes | null {
+  return prescoutFor(prescoutTable.useRows(), event, team)
+}
+
+/** The address of a team's prescouting page, like #/prescouting/2026ilch/9991. */
+export function prescoutHref(event: string, team: number): string {
+  return href('prescouting', event, String(team))
 }
 
 /** Whether anyone has written any answers for this team yet. A mark alone doesn't count. */
