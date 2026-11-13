@@ -1,5 +1,5 @@
 import type { ModuleDefinition } from '../../core/registry'
-import { useEntrySummary } from './data'
+import { useEntrySummary, useHiddenScoutingPages } from './data'
 
 export const scouting: ModuleDefinition = {
   id: 'scouting',
@@ -9,13 +9,20 @@ export const scouting: ModuleDefinition = {
   load: () => import('./ScoutingPage'),
   // In the Competition menu, under Scouting. ScoutingPage reads which is open.
   pages: [
-    { name: 'Match', path: '' },
+    { name: 'Overview', path: '' },
+    { name: 'Match', path: 'match' },
     { name: 'Pit', path: 'pit' },
     { name: 'Schedule', path: 'schedule' },
     { name: 'Rankings', path: 'rankings' },
     { name: 'Teams', path: 'team' },
     { name: 'Picklist', path: 'picklist' },
+    { name: 'My picklist', path: 'my-picklist' },
+    { name: 'Team picklist', path: 'team-picklist' },
     { name: 'Final picklist', path: 'shared-picklist' },
+    { name: 'Simulator', path: 'simulate' },
+    { name: 'Stats', path: 'stats' },
   ],
   useSummary: useEntrySummary,
+  // Strategy-only pages (#167) aren't in the menu for anyone else.
+  useHiddenPages: useHiddenScoutingPages,
 }

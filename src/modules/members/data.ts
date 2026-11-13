@@ -154,5 +154,14 @@ export async function checkServerFunctions(): Promise<FunctionCheck[]> {
         : { name: 'Phone notifications', ok: false, text: push.error },
     )
   }
+
+  // Nexus (#165) has no harmless request to try, so this only checks the key is set.
+  const noNexus = missing(['NEXUS_KEY'])
+  checks.push(
+    noNexus
+      ? { name: 'Nexus', ok: false, text: noNexus }
+      : { name: 'Nexus', ok: true, text: 'The key is set. The Scouting overview shows live status at events that use Nexus.' },
+  )
+
   return checks
 }

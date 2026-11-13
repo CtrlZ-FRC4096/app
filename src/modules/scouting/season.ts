@@ -14,24 +14,49 @@ export interface Counter {
   label: string
   /** True if fewer is better, like fuel missed. The picklist ranks these the other way round. */
   lowerIsBetter?: boolean
+  /** Points the alliance gets for each one, for a team's average points (APS) and the simulator. Leave out for none. */
+  points?: number
 }
 
+// Points: check them against this season's game manual with the scouting lead.
 export const COUNTERS: Counter[] = [
-  { key: 'autoFuel', label: 'Auto fuel scored' },
-  { key: 'teleopFuel', label: 'Teleop fuel scored' },
+  { key: 'autoFuel', label: 'Auto fuel scored', points: 1 },
+  { key: 'teleopFuel', label: 'Teleop fuel scored', points: 1 },
   { key: 'fuelMissed', label: 'Fuel missed', lowerIsBetter: true },
 ]
 
 /** How the robot finished the match. The first is the starting choice. */
 export const ENDGAME: string[] = ['None', 'Level 1', 'Level 2', 'Level 3']
 
+/** Points for each ENDGAME choice. A choice left out scores 0. */
+export const ENDGAME_POINTS: Record<string, number> = { 'Level 1': 10, 'Level 2': 20, 'Level 3': 30 }
+
 /** What the robot spent the match doing. Scouts can choose more than one, or none. */
 export const ROLES: string[] = ['Scorer', 'Defender', 'Feeder']
 
-/** Pit form: the drivetrain choices. */
-export const DRIVETRAINS: string[] = ['Swerve', 'Tank', 'Mecanum', 'H-drive', 'Other omni/holonomic']
+/** Match form: the parts a robot can break, asked when Broke down is ticked. Scouts can choose more than one. */
+export const BREAKDOWN_PARTS: string[] = ['Drivetrain', 'Intake', 'Shooter', 'Climber', 'Other']
 
-/** Pit form: which side of the field a robot starts its auto on. */
+/**
+ * Match form: this season's bonus ranking points, so the scout can tick the
+ * ones the robot's alliance earned. Check the names with the scouting lead.
+ */
+export const RANKING_POINTS: string[] = ['Energized', 'Supercharged', 'Traversal']
+
+/**
+ * Pit form: the drivetrain choices, the common ones first. Keep 'Other' last:
+ * choosing it shows a box to type the drivetrain, and the team page counts
+ * anything typed, or no longer on this list, as Other.
+ */
+export const DRIVETRAINS: string[] = ['Swerve', 'Tank', 'Mecanum', 'H-drive', 'Other']
+
+/**
+ * Pit form: "What can their robot see?" Scouts can choose more than one.
+ * The requirements mark this as a maybe: check it with the scouting lead.
+ */
+export const VISION: string[] = ['AprilTags', 'Game piece detection', 'None']
+
+/** Pit form, and the match form's observed auto: which side of the field a robot starts its auto on. */
 export const AUTO_SIDES: string[] = ['Left', 'Center', 'Right']
 
 /**

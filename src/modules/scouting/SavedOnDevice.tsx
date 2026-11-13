@@ -19,7 +19,7 @@ export interface SavedRow {
  * why any haven't yet, and has a Send now button for the impatient. Used by
  * the match form and the pit form.
  */
-export default function SavedOnDevice(props: { rows: SavedRow[]; emptyText: string }) {
+export default function SavedOnDevice(props: { rows: SavedRow[]; emptyText: string; title?: string }) {
   const sync = useSyncStatus()
   const waiting = props.rows.filter((row) => !row.synced).length
 
@@ -33,7 +33,7 @@ export default function SavedOnDevice(props: { rows: SavedRow[]; emptyText: stri
     // Space between the form and the list, so they don't run together.
     <div style={{ marginTop: 28 }}>
       <Panel
-        title="Saved on this device"
+        title={props.title ?? 'Saved on this device'}
         aside={<span className="note">{waiting > 0 ? `${waiting} waiting` : props.rows.length > 0 ? 'All synced' : '0 saved'}</span>}
       >
         {waiting > 0 && (

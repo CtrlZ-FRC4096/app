@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { plural, shortDate } from '../../core/format'
 import { useMemberNames } from '../../core/members'
+import { href } from '../../core/router'
 import { isMentor, useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pill, Stepper } from '../../core/ui'
@@ -66,14 +67,14 @@ export default function InventoryPage() {
         ) : shown.length === 0 ? (
           <p className="panel-body muted">No parts are low right now.</p>
         ) : (
-          // table-wrap lets the table scroll sideways inside its box on a phone, so the page doesn't.
+          // Three columns, so the table fits on a phone: the location, vendor, part number and
+          // product link sit under the name, and the buttons wrap. table-wrap still lets it
+          // scroll inside its box if it ever has to.
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Part number</th>
-                  <th>Location</th>
+                  <th>Part</th>
                   <th className="num">Qty</th>
                   <th aria-label="Change" />
                 </tr>
@@ -81,11 +82,10 @@ export default function InventoryPage() {
               <tbody>
                 {shown.map((item) => (
                   <tr key={item.id}>
-                    <td>{item.name} {isLow(item) && <Pill tone="warn">Low</Pill>}</td>
                     <td>
-                      <span className="note">{item.vendor}</span>
+                      {item.name} {isLow(item) && <Pill tone="warn">Low</Pill>}
                       <br />
-                      {item.vendor_part_number}
+                      <span className="note">{item.location} · {item.vendor} · {item.vendor_part_number}</span>
                       {/* The database only accepts https:// links here, so it's safe to open. */}
                       {item.link && (
                         <>
@@ -94,11 +94,13 @@ export default function InventoryPage() {
                         </>
                       )}
                     </td>
-                    <td>{item.location}</td>
                     <td className="num">{item.quantity}</td>
                     <td className="num">
-                      <span style={{ display: 'inline-flex', gap: 6 }}>
+                      {/* The buttons wrap onto a second line on a phone, rather than widening the table. */}
+                      <span style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 6, whiteSpace: 'nowrap' }}>
                         <button type="button" className="btn btn-sm" aria-label={`Take or add ${item.name}`} onClick={() => openStock(item.id)}>Take / add</button>
+                        {/* Opens Purchasing's Add new item, filled in from this part (#194). Anyone can ask for things there. */}
+                        <a className="btn btn-sm" aria-label={`Order more ${item.name}`} href={href('purchasing', 'from-inventory', item.id)}>Order more</a>
                         {mentor && (
                           <button type="button" className="btn btn-sm" aria-label={`Edit ${item.name}`} onClick={() => openEdit(item.id)}>Edit</button>
                         )}

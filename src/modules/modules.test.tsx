@@ -45,6 +45,19 @@ describe('the module list', () => {
       }
     }
   })
+
+  it('gives every kind of notification a key starting with its module id, used once, with a name and a description', () => {
+    const keys = modules.flatMap((m) => (m.notifications ?? []).map((kind) => kind.key))
+    expect(new Set(keys).size, 'two kinds of notification share a key').toBe(keys.length)
+    for (const m of modules) {
+      for (const kind of m.notifications ?? []) {
+        // The database checks the same shape (..._notification_settings.sql).
+        expect.soft(kind.key, `a key like "${m.id}.request_updates"`).toMatch(new RegExp(`^${m.id}\\.[a-z][a-z0-9_]*$`))
+        expect.soft(kind.name.trim(), `${kind.key}'s name`).not.toBe('')
+        expect.soft(kind.description.trim(), `${kind.key}'s description`).not.toBe('')
+      }
+    }
+  })
 })
 
 /** Do `check` signed in as each role, and say which role it was if it fails. */

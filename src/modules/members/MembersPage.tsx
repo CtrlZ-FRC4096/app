@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ROLES, isAdmin, roleName, useSession, type Role } from '../../core/session'
+import { ROLES, isAdmin, isLeader, isMentor, roleName, useSession, type Role } from '../../core/session'
 import { initials, useMembers, type Member } from '../../core/members'
 import { isLive } from '../../core/supabase'
 import { toast } from '../../core/toast'
@@ -8,6 +8,8 @@ import { Callout, PageHead, Panel, Pill } from '../../core/ui'
 import { changeRole, checkServerFunctions, search, setAccess, type FunctionCheck } from './data'
 // Purchasers are Purchasing's: read and change them through its data.ts (#144).
 import { canBeBuyer, canChooseBuyers, setBuyer, useBuyers } from '../purchasing/data'
+// The scouting strategy team is Scouting's: read and change it through its data.ts (#167).
+import { addStrategyMember, removeStrategyMember, strategyTable } from '../scouting/data'
 
 export default function MembersPage() {
   const { id: myId, role: myRole } = useSession()
@@ -19,6 +21,7 @@ export default function MembersPage() {
   const canChange = isAdmin(myRole)
   const buyers = useBuyers()
   const isBuyer = (m: Member) => buyers.some((b) => b.member_id === m.id)
+  const strategy = new Set(strategyTable.useRows().map((s) => s.member_id))
 
   async function role(member: Member, next: Role) {
     const result = await changeRole(member, next)
@@ -30,6 +33,11 @@ export default function MembersPage() {
     toast(result.ok ? `${member.name} ${on ? 'is now a purchaser' : 'is no longer a purchaser'}.` : result.error)
   }
 
+  async function setStrategy(member: Member, on: boolean) {
+    const result = on ? await addStrategyMember(member.id) : await removeStrategyMember(member.id)
+    toast(result.ok ? `${member.name} is ${on ? 'now on' : 'off'} the strategy team.` : result.error)
+  }
+
   async function access(member: Member, on: boolean) {
     const result = await setAccess(member, on)
     toast(result.ok ? `${member.name}'s access is ${on ? 'back on' : 'switched off'}.` : result.error)
@@ -39,7 +47,7 @@ export default function MembersPage() {
     <>
       <PageHead title="Members">
         Everyone who has signed in. Admins set roles, and switch off access for anyone who has left. Mentors and admins choose
-        the purchasers, who place orders in Purchasing along with them.
+        the purchasers, who place orders in Purchasing along with them, and the scouting strategy team, who see the scouting analysis and Prescouting.
       </PageHead>
       {!isLive && (
         <Callout title="Demo mode">
@@ -60,7 +68,7 @@ export default function MembersPage() {
           <div className="table-wrap">
             {/*
               Two columns, so the table fits on a phone: when each person joined, and the
-              admins' Switch off button, sit under their name; the Purchaser tick under their role.
+              admins' Switch off button, sit under their name; the Purchaser and Strategy team ticks under their role.
             */}
             <table>
               <thead>
@@ -94,6 +102,15 @@ export default function MembersPage() {
                         </label>
                       ) : (
                         isBuyer(m) && <> <Pill tone="info">Purchaser</Pill></>
+                      ))}
+                      {/* Student leaders, mentors and admins always count as strategy (#167). */}
+                      {!isLeader(m.role) && (isMentor(myRole) ? (
+                        <label className="check" style={{ display: 'flex', minHeight: 40 }}>
+                          <input type="checkbox" aria-label={`${m.name} is on the strategy team`} checked={strategy.has(m.id)} onChange={(e) => void setStrategy(m, e.target.checked)} />
+                          Strategy team
+                        </label>
+                      ) : (
+                        strategy.has(m.id) && <> <Pill tone="info">Strategy team</Pill></>
                       ))}
                     </td>
                   </tr>

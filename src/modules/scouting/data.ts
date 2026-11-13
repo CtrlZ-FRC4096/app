@@ -32,16 +32,20 @@ import { TEAM_TIME_ZONE } from '../../core/calendar'
 import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
-import { isLeader } from '../../core/roles'
+import { isLeader, isMentor, type Role } from '../../core/roles'
 import { currentUser, onSignedIn } from '../../core/session'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore, type Store } from '../../core/store'
+import { supabase } from '../../core/supabase'
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row, type Table } from '../../core/table'
 import { toCsv } from '../attendance/data'
-import { COUNTERS, DRIVETRAINS, ENDGAME, EVENT_KEY, ROLES, type Counter } from './season'
+import { forgetFile, keepFile, readFile } from './photoFiles'
+import { AUTO_SIDES, BREAKDOWN_PARTS, COUNTERS, DRIVETRAINS, ENDGAME, ENDGAME_POINTS, EVENT_KEY, RANKING_POINTS, ROLES, type Counter } from './season'
 
 /** The event we're at until someone picks one in the app, from season.ts, for other modules. */
 export { EVENT_KEY }
+/** This season's counters, endgame choices and roles, for other modules (like Prescouting's video scouting, #153). */
+export { COUNTERS, ENDGAME, ROLES, type Counter }
 
 // ---------------------------------------------------------------------------
 // The event the team is scouting.
@@ -137,6 +141,21 @@ export async function getOurEvents(year: number): Promise<Result<TbaEvent[]>> {
   return result.ok ? ok(byDate(result.value ?? [])) : result
 }
 
+/**
+ * Any team's events in a season, newest first (#153, for prescouting). The
+ * tba function already allows a team's events, so this needs no server
+ * change. In demo mode every team has the made-up events.
+ */
+export async function getTeamEvents(team: number, year: number): Promise<Result<TbaEvent[]>> {
+  const result = await callFunction<TbaEvent[] | null>('tba', { kind: 'team-events', team, year }, () => demoEvents(year).slice(0, 3))
+  return result.ok ? ok(byDate(result.value ?? []).reverse()) : result
+}
+
+/** An event's page on The Blue Alliance. */
+export function tbaEventUrl(event: string): string {
+  return `https://www.thebluealliance.com/event/${encodeURIComponent(event)}`
+}
+
 /** Every event in a season, soonest first. A few hundred, so search them with searchEvents(). */
 export async function getAllEvents(year: number): Promise<Result<TbaEvent[]>> {
   const result = await callFunction<TbaEvent[] | null>('tba', { kind: 'events', year }, () => demoEvents(year))
@@ -187,10 +206,83 @@ function demoEvents(year: number): (TbaEvent & { ours: boolean })[] {
 }
 
 // ---------------------------------------------------------------------------
+// The strategy team (#167). From the scouting requirements: only strategy
+// people and mentors see the analysis. Like purchasers, being on it is an
+// extra permission on top of someone's role; mentors and admins always count.
+//
+// Strategy only: the overview, team pages, the picklists, the simulator,
+// stats and Prescouting. Everyone: the match and pit forms, the schedule and
+// the rankings, so any scout can do their job. Hiding pages is only
+// tidiness: the read rules in supabase/migrations/..._scouting_strategy_team.sql
+// (and the strategy tables' own migrations) keep the data safe.
+
+/** One person on the strategy team. */
+export interface StrategyMember extends Row {
+  member_id: string
+  /** Which mentor added them. */
+  created_by: string | null
+}
+
+// Made up, for demo mode: Jordan and Sam are on it. Alex (the demo student)
+// isn't, so viewing as a student shows what someone off the team sees;
+// viewing as a student leader, mentor or admin shows every page.
+const EXAMPLE_STRATEGY: StrategyMember[] = [
+  { id: '00000000-0000-4000-8000-0000000d0401', member_id: DEMO_PEOPLE.sam, created_at: '2026-11-01T18:00:00Z', created_by: DEMO_PEOPLE.pat },
+  { id: '00000000-0000-4000-8000-0000000d0402', member_id: DEMO_PEOPLE.jordan, created_at: '2026-11-01T18:00:00Z', created_by: DEMO_PEOPLE.pat },
+]
+
+// keepOffline: a phone with no Wi-Fi still knows which pages to show.
+export const strategyTable = createTable<StrategyMember>('scouting_strategy_team', { demo: EXAMPLE_STRATEGY, keepOffline: true })
+
+/**
+ * True for strategy team members, student leaders, mentors and admins.
+ * Student leaders have the same Scouting permissions as mentors
+ * (..._scouting_student_leaders.sql), so they always count too.
+ */
+export function isStrategy(user: { id: string; role: Role } | null | undefined, members: StrategyMember[]): boolean {
+  if (!user) return false
+  return isLeader(user.role) || members.some((m) => m.member_id === user.id)
+}
+
+/** Whether the signed-in person is on the strategy team (or a student leader, mentor or admin), for a page. */
+export function useIsStrategy(): boolean {
+  const members = strategyTable.useRows()
+  return isStrategy(currentUser(), members)
+}
+
+/** The Scouting pages only the strategy team sees, by their address after #/scouting/. '' is the overview. */
+export const STRATEGY_PATHS = ['', 'team', 'picklist', 'my-picklist', 'team-picklist', 'shared-picklist', 'simulate', 'stats']
+
+/** What a page off limits says. */
+export const STRATEGY_ONLY = 'Only the strategy team and mentors can see this.'
+
+/** The Scouting pages to hide from the signed-in person in the Competition menu. */
+export function useHiddenScoutingPages(): string[] {
+  return useIsStrategy() ? [] : STRATEGY_PATHS
+}
+
+/** Put someone on the strategy team. Mentors and admins only: the database checks too. */
+export async function addStrategyMember(memberId: string): Promise<Result<StrategyMember>> {
+  const user = currentUser()
+  if (!user || !isMentor(user.role)) return fail('Only mentors choose the strategy team.')
+  if (strategyTable.rows().some((m) => m.member_id === memberId)) return fail("They're already on the strategy team.")
+  return strategyTable.insert({ member_id: memberId })
+}
+
+/** Take someone off the strategy team. Mentors and admins only. */
+export async function removeStrategyMember(memberId: string): Promise<Result> {
+  const user = currentUser()
+  if (!user || !isMentor(user.role)) return fail('Only mentors choose the strategy team.')
+  const row = strategyTable.rows().find((m) => m.member_id === memberId)
+  if (!row) return fail("They're not on the strategy team.")
+  return strategyTable.remove(row.id)
+}
+
+// ---------------------------------------------------------------------------
 // Entries, saved on this device.
 
 /** Whether the robot was stopped during the match. These are FRC rules, so they don't change with the game. */
-export const STOPS = ['None', 'A-stop', 'E-stop'] as const
+export const STOPS = ['None', 'A-stop', 'E-stop', 'Both'] as const
 export type Stop = (typeof STOPS)[number]
 
 /** Driver skill, from 1 (struggles to drive) to 5 (smooth and quick). */
@@ -200,8 +292,10 @@ export const DRIVER_SKILLS = [1, 2, 3, 4, 5]
  * What a scout recorded for one robot in one match.
  *
  * Entries saved before roles, broke_down, stop and driver_skill were added
- * don't have them, and have a defense field instead. Syncing must fill in
- * the missing ones rather than assume every entry has them.
+ * don't have them, and have a defense field instead. Entries saved before
+ * #162 don't have role_notes, broke_parts, broke_other, browned_out,
+ * auto_side, auto_notes or ranking_points. Syncing must fill in the missing
+ * ones rather than assume every entry has them.
  */
 export interface Entry {
   /** Made on the device, so sending an entry twice can't make two rows. */
@@ -223,11 +317,25 @@ export interface Entry {
   endgame: string
   /** Any of ROLES in season.ts. Empty if the scout chose none. */
   roles: string[]
+  /** "How well does it do its role?", like "fast cycles, missed a few shots". '' if left blank. */
+  role_notes: string
   /** The robot stopped working or lost a mechanism. */
   broke_down: boolean
+  /** Any of BREAKDOWN_PARTS in season.ts. Only when broke_down. */
+  broke_parts: string[]
+  /** Anything else that broke, typed. '' if left blank. Only when broke_down. */
+  broke_other: string
+  /** The robot lost power or visibly browned out (stuttering, lights flickering). */
+  browned_out: boolean
   stop: Stop
   /** One of DRIVER_SKILLS. */
   driver_skill: number
+  /** Where it started its auto: one of AUTO_SIDES in season.ts, or '' if the scout didn't see. */
+  auto_side: string
+  /** What its auto did. '' if left blank. */
+  auto_notes: string
+  /** Any of RANKING_POINTS in season.ts: the bonus ranking points its alliance earned. */
+  ranking_points: string[]
   notes: string
   /** Who scouted it. Show their name with useMemberNames(). */
   scouted_by: string | null
@@ -236,7 +344,11 @@ export interface Entry {
 }
 
 /** What the scout fills in on the form. saveEntry() adds the rest. */
-export type EntryFields = Pick<Entry, 'match' | 'team' | 'counts' | 'endgame' | 'roles' | 'broke_down' | 'stop' | 'driver_skill' | 'notes'>
+export type EntryFields = Pick<
+  Entry,
+  | 'match' | 'team' | 'counts' | 'endgame' | 'roles' | 'role_notes' | 'broke_down' | 'broke_parts' | 'broke_other'
+  | 'browned_out' | 'stop' | 'driver_skill' | 'auto_side' | 'auto_notes' | 'ranking_points' | 'notes'
+>
 
 // Newest first. keepOnReset: "Reset example data" must never delete real
 // scouting. Don't raise the version while entries are waiting on people's
@@ -248,12 +360,16 @@ export function useEntries(): Entry[] {
   return useStore(entryStore)
 }
 
-/** The home page tile's status. Pit entries count too. */
+/** The home page tile's status, like "3 entries waiting · Rank 6". Pit entries count too. The rank is from the rankings saved on this phone. */
 export function useEntrySummary(): Notice {
   const entries = [...useEntries(), ...usePitEntries()]
+  const event = useCurrentEvent().key
+  const rankings = useStore(rankingsStore)
+  const ours = rankings?.event === event ? rankOf(rankings.rankings, OUR_TEAM) : null
+  const rank = ours ? ` · Rank ${ours.rank}` : ''
   const waiting = entries.filter((e) => !e.synced).length
-  if (waiting > 0) return { tone: 'info', text: plural(waiting, 'entry waiting', 'entries waiting') }
-  return { tone: 'plain', text: entries.length === 0 ? 'No entries on this device' : `${plural(entries.length, 'entry', 'entries')} saved` }
+  if (waiting > 0) return { tone: 'info', text: plural(waiting, 'entry waiting', 'entries waiting') + rank }
+  return { tone: 'plain', text: (entries.length === 0 ? 'No entries on this device' : `${plural(entries.length, 'entry', 'entries')} saved`) + rank }
 }
 
 const isCount = (value: number) => Number.isInteger(value) && value > 0
@@ -263,6 +379,8 @@ const isCount = (value: number) => Number.isInteger(value) && value > 0
 export const MAX_MATCH = 1000
 export const MAX_TEAM = 99999
 export const MAX_NOTES_LENGTH = 1000
+/** For the short answers: how well it does its role, what else broke, and what its auto did. */
+export const MAX_SHORT_LENGTH = 300
 
 /** Why an entry can't be saved, or null if it can. */
 export function checkEntry(fields: EntryFields): string | null {
@@ -271,6 +389,10 @@ export function checkEntry(fields: EntryFields): string | null {
   if (!isCount(fields.match)) return 'Enter the match number first.'
   if (fields.match > MAX_MATCH) return `Check the match number: ${fields.match} is too big.`
   if (!DRIVER_SKILLS.includes(fields.driver_skill)) return 'Choose a driver skill first.'
+  for (const [name, text] of [['how well it does its role', fields.role_notes], ['what else broke', fields.broke_other], ['auto answer', fields.auto_notes]] as const) {
+    const length = text.trim().length
+    if (length > MAX_SHORT_LENGTH) return `Keep ${name} under ${MAX_SHORT_LENGTH} characters. It's ${length}.`
+  }
   const notes = fields.notes.trim().length
   if (notes > MAX_NOTES_LENGTH) return `Keep the notes under ${MAX_NOTES_LENGTH} characters. These are ${notes}.`
   return null
@@ -282,6 +404,11 @@ export function saveEntry(fields: EntryFields): Result<Entry> {
   if (problem) return fail(problem)
   const entry: Entry = {
     ...fields,
+    role_notes: fields.role_notes.trim(),
+    // What broke only means something if it broke down.
+    broke_parts: fields.broke_down ? fields.broke_parts : [],
+    broke_other: fields.broke_down ? fields.broke_other.trim() : '',
+    auto_notes: fields.auto_notes.trim(),
     notes: fields.notes.trim(),
     id: newId(),
     created_at: new Date().toISOString(),
@@ -307,10 +434,22 @@ export interface ScoutingEntry extends Row {
   endgame: string
   /** Any of ROLES in season.ts. */
   roles: string[]
+  /** "How well does it do its role?" Empty if left blank, or saved before #162. */
+  role_notes: string | null
   broke_down: boolean
+  /** Any of BREAKDOWN_PARTS in season.ts. Empty for entries saved before #162. */
+  broke_parts: string[]
+  broke_other: string | null
+  /** False for entries saved before #162. */
+  browned_out: boolean
   stop: Stop
   /** 1 to 5. Empty for entries saved before driver skill was on the form. */
   driver_skill: number | null
+  /** One of AUTO_SIDES in season.ts. Empty if the scout didn't see, or saved before #162. */
+  auto_side: string | null
+  auto_notes: string | null
+  /** Any of RANKING_POINTS in season.ts. Empty for entries saved before #162. */
+  ranking_points: string[]
   notes: string | null
   /** Who scouted it, and when, on their phone. */
   scouted_by: string | null
@@ -321,24 +460,28 @@ export interface ScoutingEntry extends Row {
 
 // Made up, for demo mode. Team numbers in the 9990s, so nobody mistakes them for real scouting.
 const EXAMPLE_ENTRIES: ScoutingEntry[] = [
-  { id: '00000000-0000-4000-8000-0000000d0001', event_key: EVENT_KEY, match_number: 1, team_number: 9991, counts: { autoFuel: 3, teleopFuel: 12, fuelMissed: 4 }, endgame: 'Level 2', roles: ['Scorer'], broke_down: false, stop: 'None', driver_skill: 4, notes: 'Fast intake', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-07T15:02:00Z', created_at: '2026-11-07T15:03:00Z', created_by: DEMO_PEOPLE.jordan },
-  { id: '00000000-0000-4000-8000-0000000d0002', event_key: EVENT_KEY, match_number: 1, team_number: 9992, counts: { autoFuel: 0, teleopFuel: 5, fuelMissed: 1 }, endgame: 'None', roles: ['Defender'], broke_down: true, stop: 'A-stop', driver_skill: 2, notes: null, scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-07T15:02:30Z', created_at: '2026-11-07T15:04:00Z', created_by: DEMO_PEOPLE.alex },
+  { id: '00000000-0000-4000-8000-0000000d0001', event_key: EVENT_KEY, match_number: 1, team_number: 9991, counts: { autoFuel: 3, teleopFuel: 12, fuelMissed: 4 }, endgame: 'Level 2', roles: ['Scorer'], role_notes: 'Quick cycles, missed a few long shots', broke_down: false, broke_parts: [], broke_other: null, browned_out: false, stop: 'None', driver_skill: 4, auto_side: 'Center', auto_notes: 'Scored preload and 2 more', ranking_points: ['Energized'], notes: 'Fast intake', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-07T15:02:00Z', created_at: '2026-11-07T15:03:00Z', created_by: DEMO_PEOPLE.jordan },
+  { id: '00000000-0000-4000-8000-0000000d0002', event_key: EVENT_KEY, match_number: 1, team_number: 9992, counts: { autoFuel: 0, teleopFuel: 5, fuelMissed: 1 }, endgame: 'None', roles: ['Defender'], role_notes: null, broke_down: true, broke_parts: ['Intake'], broke_other: null, browned_out: true, stop: 'A-stop', driver_skill: 2, auto_side: 'Left', auto_notes: null, ranking_points: [], notes: null, scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-07T15:02:30Z', created_at: '2026-11-07T15:04:00Z', created_by: DEMO_PEOPLE.alex },
 ]
 
-export const entriesTable = createTable<ScoutingEntry>('scouting_entries', { demo: EXAMPLE_ENTRIES, sort: newestFirst })
+// Version 2: the questions from #162 were added to the rows.
+export const entriesTable = createTable<ScoutingEntry>('scouting_entries', { demo: EXAMPLE_ENTRIES, sort: newestFirst, version: 2 })
 
-/** An entry saved on a phone before roles, broke down, stop and driver skill were on the form (#28). */
-type OlderEntry = Omit<Entry, 'roles' | 'broke_down' | 'stop' | 'driver_skill'> &
-  Partial<Pick<Entry, 'roles' | 'broke_down' | 'stop' | 'driver_skill'>> & { defense?: boolean }
+/** Fields added to the form after the first entries were saved on phones: #28's, then #162's. */
+type AddedLater = 'roles' | 'broke_down' | 'stop' | 'driver_skill' | 'role_notes' | 'broke_parts' | 'broke_other' | 'browned_out' | 'auto_side' | 'auto_notes' | 'ranking_points'
+
+/** An entry saved on a phone by an older version of the app, before some questions were on the form. */
+type OlderEntry = Omit<Entry, AddedLater> & Partial<Pick<Entry, AddedLater>> & { defense?: boolean }
 
 /**
  * An entry from this device, as a row for the team database. Entries saved
  * before #28 have "played defense" instead of roles: it becomes the
- * Defender role, the way the form treats it now. Their other new fields are
- * left at "no", "None" and empty.
+ * Defender role, the way the form treats it now. Fields an older entry
+ * doesn't have are left at "no", "None" and empty.
  */
 export function toRow(saved: Entry | OlderEntry): Omit<ScoutingEntry, 'created_at' | 'created_by'> {
   const entry = saved as OlderEntry
+  const text = (value: string | undefined) => value?.trim() || null
   return {
     id: entry.id,
     event_key: entry.event_key ?? currentEvent(),
@@ -347,9 +490,16 @@ export function toRow(saved: Entry | OlderEntry): Omit<ScoutingEntry, 'created_a
     counts: entry.counts,
     endgame: entry.endgame,
     roles: entry.roles ?? (entry.defense ? ['Defender'] : []),
+    role_notes: text(entry.role_notes),
     broke_down: entry.broke_down ?? false,
+    broke_parts: entry.broke_parts ?? [],
+    broke_other: text(entry.broke_other),
+    browned_out: entry.browned_out ?? false,
     stop: entry.stop ?? 'None',
     driver_skill: entry.driver_skill ?? null,
+    auto_side: text(entry.auto_side),
+    auto_notes: text(entry.auto_notes),
+    ranking_points: entry.ranking_points ?? [],
     notes: entry.notes.trim() || null,
     scouted_by: entry.scouted_by,
     scouted_at: entry.created_at,
@@ -390,9 +540,9 @@ export function syncEntries(): Promise<Result<number>> {
   return inFlight
 }
 
-/** Whether any match or pit entry on this device is Waiting. */
+/** Whether any match or pit entry, or robot photo, on this device is Waiting. */
 function hasWaiting(): boolean {
-  return entryStore.get().some((e) => !e.synced) || pitStore.get().some((e) => !e.synced)
+  return [entryStore, pitStore, photoStore].some((store) => store.get().some((e) => !e.synced))
 }
 
 /** Stop sending, and show why on the page. */
@@ -401,7 +551,7 @@ function stopSending(problem: string): Result<number> {
   return fail(problem)
 }
 
-// Sends match entries, then pit entries.
+// Sends match entries, then pit entries, then robot photos.
 async function send(): Promise<Result<number>> {
   if (!hasWaiting()) return ok(0)
   if (globalThis.navigator?.onLine === false) return stopSending(NO_CONNECTION)
@@ -412,8 +562,10 @@ async function send(): Promise<Result<number>> {
   if (!matches.ok) return stopSending(matches.error)
   const pits = await sendWaiting(pitStore, pitTable, pitToRow)
   if (!pits.ok) return stopSending(pits.error)
+  const photos = await sendPhotos()
+  if (!photos.ok) return stopSending(photos.error)
   syncStatus.set({ sending: false, problem: null })
-  return ok(matches.value + pits.value)
+  return ok(matches.value + pits.value + photos.value)
 }
 
 /**
@@ -485,6 +637,12 @@ export interface PitEntry {
   match?: number | null
   /** One of DRIVETRAINS in season.ts, or '' if not chosen. */
   drivetrain: string
+  /** The drivetrain typed when it's Other, like "West coast with butterfly modules". '' otherwise. */
+  drivetrain_other: string
+  /** "What can their robot see?": any of VISION in season.ts. */
+  vision: string[]
+  /** More about what it can see, typed. '' if left blank. */
+  vision_notes: string
   /** Pounds. */
   weight: number | null
   /** Inches. */
@@ -528,8 +686,13 @@ export function checkPitEntry(fields: PitFields): string | null {
     const length = text.trim().length
     if (length > MAX_NOTES_LENGTH) return `Keep the ${name} under ${MAX_NOTES_LENGTH} characters. This one is ${length}.`
   }
+  if (fields.drivetrain === 'Other' && fields.drivetrain_other.trim().length > MAX_DRIVETRAIN_LENGTH) return `Keep the drivetrain under ${MAX_DRIVETRAIN_LENGTH} characters.`
+  if (fields.vision_notes.trim().length > MAX_SHORT_LENGTH) return `Keep what it can see under ${MAX_SHORT_LENGTH} characters.`
   return null
 }
+
+/** The longest a typed Other drivetrain can be, the same as the team database. */
+export const MAX_DRIVETRAIN_LENGTH = 100
 
 /** Weights and sizes must be under this. Nothing real comes close: it only stops a typo like 1155 for 115.5 from getting much worse. */
 export const MAX_PIT_NUMBER = 10000
@@ -542,6 +705,9 @@ export function savePitEntry(fields: PitFields): Result<PitEntry> {
   const entry: PitEntry = {
     ...fields,
     motors: trim(fields.motors),
+    // The typed drivetrain only means something when Other is chosen.
+    drivetrain_other: fields.drivetrain === 'Other' ? trim(fields.drivetrain_other) : '',
+    vision_notes: trim(fields.vision_notes),
     auto_path: trim(fields.auto_path),
     partners_do: trim(fields.partners_do),
     they_do: trim(fields.they_do),
@@ -563,6 +729,11 @@ export interface ScoutingPitEntry extends Row {
   team_number: number
   match_number: number | null
   drivetrain: string | null
+  /** The drivetrain typed when it's Other. Empty otherwise, or for entries saved before #163. */
+  drivetrain_other: string | null
+  /** Any of VISION in season.ts. Empty for entries saved before #163. */
+  vision: string[]
+  vision_notes: string | null
   weight: number | null
   length: number | null
   width: number | null
@@ -581,21 +752,35 @@ export interface ScoutingPitEntry extends Row {
 
 // Made up, for demo mode. Team numbers in the 9990s, so nobody mistakes them for real scouting.
 const EXAMPLE_PIT_ENTRIES: ScoutingPitEntry[] = [
-  { id: '00000000-0000-4000-8000-0000000d0101', event_key: EVENT_KEY, team_number: 9991, match_number: null, drivetrain: 'Swerve', weight: 118.5, length: 28, width: 28, height: 22, motors: '8 Kraken X60 on swerve, 2 on the shooter', auto_side: 'Center', auto_path: 'Scores preload, picks up 2 from the middle', partners_do: 'Feed us fuel', they_do: 'Score from the hub', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-06T22:10:00Z', created_at: '2026-11-06T22:11:00Z', created_by: DEMO_PEOPLE.jordan },
-  { id: '00000000-0000-4000-8000-0000000d0102', event_key: EVENT_KEY, team_number: 9992, match_number: null, drivetrain: 'Tank', weight: null, length: null, width: null, height: null, motors: null, auto_side: 'Left', auto_path: null, partners_do: null, they_do: 'Play defense', scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-06T22:20:00Z', created_at: '2026-11-06T22:21:00Z', created_by: DEMO_PEOPLE.alex },
+  { id: '00000000-0000-4000-8000-0000000d0101', event_key: EVENT_KEY, team_number: 9991, match_number: null, drivetrain: 'Swerve', drivetrain_other: null, vision: ['AprilTags', 'Game piece detection'], vision_notes: 'Two cameras on the shooter', weight: 118.5, length: 28, width: 28, height: 22, motors: '8 Kraken X60 on swerve, 2 on the shooter', auto_side: 'Center', auto_path: 'Scores preload, picks up 2 from the middle', partners_do: 'Feed us fuel', they_do: 'Score from the hub', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-06T22:10:00Z', created_at: '2026-11-06T22:11:00Z', created_by: DEMO_PEOPLE.jordan },
+  { id: '00000000-0000-4000-8000-0000000d0102', event_key: EVENT_KEY, team_number: 9992, match_number: null, drivetrain: 'Other', drivetrain_other: 'West coast with butterfly modules', vision: [], vision_notes: null, weight: null, length: null, width: null, height: null, motors: null, auto_side: 'Left', auto_path: null, partners_do: null, they_do: 'Play defense', scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-06T22:20:00Z', created_at: '2026-11-06T22:21:00Z', created_by: DEMO_PEOPLE.alex },
 ]
 
-export const pitTable = createTable<ScoutingPitEntry>('scouting_pit_entries', { demo: EXAMPLE_PIT_ENTRIES, sort: newestFirst })
+// Version 2: the drivetrain typed for Other, and vision, were added to the rows (#163).
+export const pitTable = createTable<ScoutingPitEntry>('scouting_pit_entries', { demo: EXAMPLE_PIT_ENTRIES, sort: newestFirst, version: 2 })
 
-/** A pit entry from this device, as a row for the team database. Blank choices and boxes are sent as empty (null). */
-export function pitToRow(entry: PitEntry): Omit<ScoutingPitEntry, 'created_at' | 'created_by'> {
-  const text = (value: string) => value.trim() || null
+/** Fields added to the pit form after the first pit entries were saved on phones (#163). */
+type PitAddedLater = 'drivetrain_other' | 'vision' | 'vision_notes'
+
+/** A pit entry saved on a phone by an older version of the app, before some questions were on the form. */
+type OlderPitEntry = Omit<PitEntry, PitAddedLater> & Partial<Pick<PitEntry, PitAddedLater>>
+
+/**
+ * A pit entry from this device, as a row for the team database. Blank
+ * choices and boxes are sent as empty (null), and so are questions an
+ * older entry doesn't have.
+ */
+export function pitToRow(entry: PitEntry | OlderPitEntry): Omit<ScoutingPitEntry, 'created_at' | 'created_by'> {
+  const text = (value: string | undefined) => value?.trim() || null
   return {
     id: entry.id,
     event_key: entry.event_key ?? currentEvent(),
     team_number: entry.team,
     match_number: entry.match ?? null,
     drivetrain: text(entry.drivetrain),
+    drivetrain_other: text(entry.drivetrain_other),
+    vision: entry.vision ?? [],
+    vision_notes: text(entry.vision_notes),
     weight: entry.weight,
     length: entry.length,
     width: entry.width,
@@ -623,6 +808,222 @@ export function blankOrNumber(text: string): number | null {
 export function numberOnly(text: string): string {
   const [whole, ...rest] = text.replace(/[^0-9.]/g, '').split('.')
   return rest.length === 0 ? whole : `${whole}.${rest.join('')}`
+}
+
+// ---------------------------------------------------------------------------
+// Robot photos (#164): taken from the pit form, shown on the team page.
+//
+// Like entries, a photo is saved on this phone first and marked Waiting,
+// then sent by syncEntries() when there's a connection: the file goes to
+// the private robot-photos bucket, then a row goes in scouting_robot_photos
+// (supabase/migrations/..._scouting_robot_photos.sql). The files wait in
+// IndexedDB (photoFiles.ts), since localStorage is too small for photos;
+// photoStore only lists them. Each photo is shrunk to a JPEG first, so it
+// uploads quickly on venue Wi-Fi. Demo mode has no file storage: photos
+// still show on the phone that took them.
+
+/** One robot photo taken on this phone. The file itself is in photoFiles.ts. */
+export interface PhotoEntry {
+  /** Made on the phone, so sending a photo twice can't make two rows. */
+  id: string
+  /** ISO date and time it was taken. */
+  created_at: string
+  event_key: string
+  team: number
+  size_bytes: number
+  /** Who took it. Show their name with useMemberNames(). */
+  taken_by: string | null
+  /** False while it's only on this phone (Waiting). */
+  synced: boolean
+}
+
+// Newest first. keepOnReset and the version: see entryStore above.
+export const photoStore = createStore<PhotoEntry[]>('scouting-photos', 1, () => [], { keepOnReset: true })
+
+/** Every robot photo taken on this phone, newest first. */
+export function usePhotoEntries(): PhotoEntry[] {
+  return useStore(photoStore)
+}
+
+/** One row of scouting_robot_photos: a photo that reached the team database. */
+export interface RobotPhoto extends Row {
+  event_key: string
+  team_number: number
+  /** Where the file is in the robot-photos bucket: see photoPath(). */
+  path: string
+  size_bytes: number
+  /** Who took it, and when, on their phone. */
+  taken_by: string | null
+  taken_at: string
+  /** Who sent it. */
+  created_by: string | null
+}
+
+// No example rows: demo mode has no files to show for them.
+export const photosTable = createTable<RobotPhoto>('scouting_robot_photos', { demo: [], sort: newestFirst })
+
+const PHOTO_BUCKET = 'robot-photos'
+/** Photos are shrunk so their longest side is at most this many pixels. */
+export const PHOTO_MAX_SIDE = 1280
+/** The bucket takes files up to 5 MB. A shrunk photo is far smaller. */
+export const MAX_PHOTO_BYTES = 5 * 1024 * 1024
+/** How long a link to a photo works, in seconds. */
+const PHOTO_LINK_SECONDS = 60 * 60
+
+/** Where a photo goes in the bucket: event, team, then its id. The database checks it's exactly this. */
+export function photoPath(event: string, team: number, id: string): string {
+  return `${event}/${team}/${id}.jpg`
+}
+
+/** A photo's size once shrunk: its longest side at most `max`, the same shape. Small photos stay as they are. */
+export function shrunkSize(width: number, height: number, max = PHOTO_MAX_SIDE): { width: number; height: number } {
+  const scale = Math.min(1, max / Math.max(width, height))
+  return { width: Math.round(width * scale), height: Math.round(height * scale) }
+}
+
+/** Shrink a photo from the camera to a JPEG (see shrunkSize()). Only works in a browser. */
+export async function shrinkPhoto(file: Blob): Promise<Result<Blob>> {
+  try {
+    const bitmap = await createImageBitmap(file)
+    const { width, height } = shrunkSize(bitmap.width, bitmap.height)
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    canvas.getContext('2d')?.drawImage(bitmap, 0, 0, width, height)
+    bitmap.close()
+    const jpeg = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.8))
+    return jpeg ? ok(jpeg) : fail("Couldn't shrink that photo. Try taking it again.")
+  } catch {
+    return fail("Couldn't read that photo. Try taking it again.")
+  }
+}
+
+/**
+ * Save a photo of team `team`'s robot on this phone, marked Waiting, and
+ * send it if there's a connection. `shrink` is for tests, which can't draw
+ * pictures.
+ */
+export async function addPhoto(team: number, file: Blob, shrink: (file: Blob) => Promise<Result<Blob>> = shrinkPhoto): Promise<Result<PhotoEntry>> {
+  if (!isCount(team) || team > MAX_TEAM) return fail('Enter the team number first, then add the photo.')
+  if (!file.type.startsWith('image/')) return fail("That isn't a photo. Choose a photo, or take one with the camera.")
+  const shrunk = await shrink(file)
+  if (!shrunk.ok) return shrunk
+  if (shrunk.value.size > MAX_PHOTO_BYTES) return fail('That photo is too big, even shrunk. Try taking it again.')
+  const photo: PhotoEntry = {
+    id: newId(),
+    created_at: new Date().toISOString(),
+    event_key: currentEvent(),
+    team,
+    size_bytes: shrunk.value.size,
+    taken_by: currentUser()?.id ?? null,
+    synced: false,
+  }
+  await keepFile(photo.id, shrunk.value)
+  photoStore.set((photos) => [photo, ...photos])
+  void syncEntries()
+  return ok(photo)
+}
+
+/** A photo from this phone, as a row for the team database. */
+export function photoToRow(photo: PhotoEntry): Omit<RobotPhoto, 'created_at' | 'created_by'> {
+  return {
+    id: photo.id,
+    event_key: photo.event_key,
+    team_number: photo.team,
+    path: photoPath(photo.event_key, photo.team, photo.id),
+    size_bytes: photo.size_bytes,
+    taken_by: photo.taken_by,
+    taken_at: photo.created_at,
+  }
+}
+
+/**
+ * Send every Waiting photo: the file, then its row, then mark it Synced and
+ * forget the file on this phone. A file that's already uploaded (an earlier
+ * try that didn't hear back) counts as uploaded.
+ */
+async function sendPhotos(): Promise<Result<number>> {
+  let sent = 0
+  for (const photo of photoStore.get().filter((p) => !p.synced)) {
+    const file = await readFile(photo.id)
+    if (!file) {
+      // Kept in memory (no IndexedDB) and the app was closed: it's gone.
+      photoStore.set((photos) => photos.filter((p) => p.id !== photo.id))
+      continue
+    }
+    const row = photoToRow(photo)
+    if (supabase) {
+      const { error } = await supabase.storage.from(PHOTO_BUCKET).upload(row.path, file, { upsert: false, contentType: 'image/jpeg' })
+      if (error && !/exists|duplicate/i.test(error.message)) return fail("Couldn't upload a robot photo. It will try again by itself.")
+    }
+    const added = await photosTable.insertOnce([row])
+    if (!added.ok) return added
+    photoStore.set((photos) => photos.map((p) => (p.id === photo.id ? { ...p, synced: true } : p)))
+    await forgetFile(photo.id)
+    sent += 1
+  }
+  return ok(sent)
+}
+
+/** One photo for the team page: the newest first. `url` is null until it can be shown. */
+export interface TeamPhoto {
+  id: string
+  url: string | null
+  taken_by: string | null
+  taken_at: string
+  /** True while it's only on this phone. */
+  waiting: boolean
+}
+
+/**
+ * A team's robot photos at this event (or `eventKey`, for prescouting), newest first: the team database's,
+ * and this phone's Waiting ones. The Waiting ones show from the phone, so
+ * they show with no Wi-Fi; sent ones need a connection, through links that
+ * stop working after an hour.
+ */
+export function useTeamPhotos(team: number, eventKey?: string): TeamPhoto[] {
+  const current = useCurrentEvent().key
+  const event = eventKey ?? current
+  const sent = photosTable.useRows()
+  const onPhone = usePhotoEntries()
+  const list = useMemo(() => {
+    const rows = sent.filter((p) => p.event_key === event && p.team_number === team).map((p) => ({ id: p.id, path: p.path, taken_by: p.taken_by, taken_at: p.taken_at, waiting: false }))
+    const have = new Set(rows.map((p) => p.id))
+    const waiting = onPhone
+      .filter((p) => !p.synced && p.event_key === event && p.team === team && !have.has(p.id))
+      .map((p) => ({ id: p.id, path: photoPath(p.event_key, p.team, p.id), taken_by: p.taken_by, taken_at: p.created_at, waiting: true }))
+    return [...rows, ...waiting].sort((a, b) => b.taken_at.localeCompare(a.taken_at))
+  }, [sent, onPhone, event, team])
+
+  const [urls, setUrls] = useState<Record<string, string>>({})
+  useEffect(() => {
+    let current = true
+    const made: string[] = []
+    void (async () => {
+      const found: Record<string, string> = {}
+      // From this phone: Waiting photos, and in demo mode any photo still here.
+      for (const photo of list) {
+        const file = await readFile(photo.id)
+        if (file && typeof URL.createObjectURL === 'function') {
+          found[photo.id] = URL.createObjectURL(file)
+          made.push(found[photo.id])
+        }
+      }
+      // From the team database's bucket: the rest, in one request.
+      const rest = list.filter((p) => !found[p.id] && !p.waiting)
+      if (supabase && rest.length > 0) {
+        const { data } = await supabase.storage.from(PHOTO_BUCKET).createSignedUrls(rest.map((p) => p.path), PHOTO_LINK_SECONDS)
+        for (const [i, link] of (data ?? []).entries()) if (link.signedUrl) found[rest[i].id] = link.signedUrl
+      }
+      if (current) setUrls(found)
+    })()
+    return () => {
+      current = false
+      for (const url of made) URL.revokeObjectURL(url)
+    }
+  }, [list])
+
+  return list.map((p) => ({ id: p.id, url: urls[p.id] ?? null, taken_by: p.taken_by, taken_at: p.taken_at, waiting: p.waiting }))
 }
 
 // Keep sending Waiting match and pit entries, in a browser. (The tests call
@@ -686,6 +1087,14 @@ export interface TeamSummary {
   stops: Tally[]
   /** How many entries say the robot broke down. */
   brokeDown: number
+  /** What broke, out of the entries where it broke down. Several parts can break in one match. */
+  brokeParts: Tally[]
+  /** How many entries say it died or browned out. */
+  brownedOut: number
+  /** Where it started its auto, out of the entries where the scout saw. */
+  autoSides: Tally[]
+  /** Which bonus ranking points its alliance earned, out of every match entry. */
+  rankingPoints: Tally[]
   /** Newest first. */
   written: WrittenAnswer[]
 }
@@ -696,6 +1105,8 @@ export function pitAnswers(pit: PitRow): WrittenAnswer[] {
   const answers: [question: string, text: string | null][] = [
     ['Weight', pit.weight === null ? '' : `${pit.weight} pounds`],
     ['Size', size],
+    ['Drivetrain (typed)', pit.drivetrain_other],
+    ['What it can see', [pit.vision.join(', '), pit.vision_notes?.trim()].filter(Boolean).join('. ')],
     ['Motors', pit.motors],
     ['Auto starting side', pit.auto_side],
     ['Auto path', pit.auto_path],
@@ -707,9 +1118,16 @@ export function pitAnswers(pit: PitRow): WrittenAnswer[] {
   )
 }
 
-/** A pit entry's drivetrain, or null if the scout didn't choose one. */
+/**
+ * A pit entry's drivetrain for the team page's bar, or null if the scout
+ * didn't choose one. Anything that isn't on DRIVETRAINS any more (like an
+ * older "Other omni/holonomic") counts as Other; the typed name is in
+ * pitAnswers().
+ */
 export function pitDrivetrain(pit: PitRow): string | null {
-  return pit.drivetrain?.trim() || null
+  const chosen = pit.drivetrain?.trim()
+  if (!chosen) return null
+  return DRIVETRAINS.includes(chosen) ? chosen : 'Other'
 }
 
 /** This event's entries, each once: an entry that's both Waiting here and in the team database is the same entry. */
@@ -744,8 +1162,19 @@ export function teamSummary(team: number, entries: MatchRow[], pitEntries: PitRo
   const skills = mine.flatMap((e) => (e.driver_skill === null ? [] : [String(e.driver_skill)]))
   const drivetrains = pits.flatMap((p) => pitDrivetrain(p) ?? [])
 
+  const broken = mine.filter((e) => e.broke_down)
+  const autoSides = mine.flatMap((e) => e.auto_side?.trim() || [])
+
+  // Each entry's written answers, leaving out blank ones.
   const notes: WrittenAnswer[] = mine.flatMap((e) =>
-    e.notes?.trim() ? [{ kind: 'match' as const, question: 'Notes', text: e.notes.trim(), match: e.match_number, by: e.scouted_by, at: e.scouted_at }] : [],
+    ([
+      ['How well it does its role', e.role_notes],
+      ['Auto', e.auto_notes],
+      ['What else broke', e.broke_other],
+      ['Notes', e.notes],
+    ] as const).flatMap(([question, text]) =>
+      text?.trim() ? [{ kind: 'match' as const, question, text: text.trim(), match: e.match_number, by: e.scouted_by, at: e.scouted_at }] : [],
+    ),
   )
 
   return {
@@ -762,7 +1191,11 @@ export function teamSummary(team: number, entries: MatchRow[], pitEntries: PitRo
     driverSkill: tally(DRIVER_SKILLS.map(String), skills, skills.length),
     drivetrain: tally(DRIVETRAINS, drivetrains, drivetrains.length),
     stops: tally([...STOPS], mine.map((e) => e.stop), mine.length),
-    brokeDown: mine.filter((e) => e.broke_down).length,
+    brokeDown: broken.length,
+    brokeParts: tally(BREAKDOWN_PARTS, broken.flatMap((e) => e.broke_parts), broken.length),
+    brownedOut: mine.filter((e) => e.browned_out).length,
+    autoSides: tally(AUTO_SIDES, autoSides, autoSides.length),
+    rankingPoints: tally(RANKING_POINTS, mine.flatMap((e) => e.ranking_points), mine.length),
     written: [...notes, ...pits.flatMap(pitAnswers)].sort((a, b) => b.at.localeCompare(a.at)),
   }
 }
@@ -889,6 +1322,16 @@ export function getTeam(team: number): Promise<Result<TbaTeam>> {
 export async function getEventTeams(event = currentEvent()): Promise<Result<TbaTeam[]>> {
   const result = await callFunction<TbaTeam[] | null>('tba', { kind: 'teams', event }, () => DEMO_TEAMS.map(([team]) => demoTeam(team)))
   return result.ok ? ok([...(result.value ?? [])].sort((a, b) => a.team_number - b.team_number)) : result
+}
+
+/**
+ * The event's page on Nexus (frc.nexus, #165), which shows what's on the
+ * field right now, who should be queuing, and announcements. Only a link:
+ * Nexus's live status in the app would need a server function with a key,
+ * which a mentor sets up.
+ */
+export function nexusEventUrl(event = currentEvent()): string {
+  return `https://frc.nexus/en/event/${encodeURIComponent(event)}`
 }
 
 /** A team's page on The Blue Alliance, for the season of `event` (like 2026ilch → 2026). */
@@ -1164,6 +1607,187 @@ export interface Match13Rating {
   epa: number | null
   opr: number | null
   dpr: number | null
+  // The rest came in #152. Match 13's docs give these names but not what
+  // they mean, so these are our reading of them: check on match13.com.
+  // Copies saved on phones before #152 don't have them, so they're optional.
+  /** How much the team's score varies from match to match. Lower is steadier. */
+  xVar?: number | null
+  /** The chance, 0 to 1, of the team earning each of the season's ranking points. */
+  xRp1?: number | null
+  xRp2?: number | null
+  xRp3?: number | null
+  /** This season's game broken into parts, named the way Match 13 names them (they change each season). */
+  components?: Record<string, unknown> | null
+  // From Match 13's simulation of the event (#152, getEventSim()), added to
+  // each rating when the ratings load. Missing until Match 13 has one.
+  /** The team's average final rank in the simulation, and the range most runs land in (5th to 95th percentile). */
+  simRank?: number | null
+  simRankLow?: number | null
+  simRankHigh?: number | null
+  /** The team's average ranking points in the simulation. */
+  simRp?: number | null
+}
+
+// ---------------------------------------------------------------------------
+// More of Match 13's numbers (#152): for the team page and the stats table.
+// They come from the same saved copy as the rest (useRatings()).
+
+/** One number in the stats table, or on the team page. */
+export interface StatColumn {
+  key: string
+  label: string
+  /** True if lower is better, like DPR (points given up) or score variation. Sorting puts these lowest first. */
+  lowerIsBetter?: boolean
+  /** True for a chance from 0 to 1, shown as a percent. */
+  percent?: boolean
+}
+
+/** The numbers every season has, in the order the stats table shows them. */
+export const STAT_COLUMNS: StatColumn[] = [
+  { key: 'xpEnd', label: 'xP' },
+  { key: 'xAuto', label: 'Auto' },
+  { key: 'xTele', label: 'Teleop' },
+  { key: 'xEnd', label: 'Endgame' },
+  { key: 'epa', label: 'EPA' },
+  { key: 'opr', label: 'OPR' },
+  { key: 'dpr', label: 'DPR', lowerIsBetter: true },
+  { key: 'xVar', label: 'Variation', lowerIsBetter: true },
+  { key: 'xRp1', label: 'RP 1 chance', percent: true },
+  { key: 'xRp2', label: 'RP 2 chance', percent: true },
+  { key: 'xRp3', label: 'RP 3 chance', percent: true },
+  { key: 'simRank', label: 'Sim rank', lowerIsBetter: true },
+  { key: 'simRp', label: 'Sim RP' },
+]
+
+/** The parts of this season's game a rating has, as numbers. Anything Match 13 sends that isn't a number is left out. */
+export function ratingComponents(rating: Match13Rating): { name: string; value: number }[] {
+  return Object.entries(rating.components ?? {}).flatMap(([name, value]) => (typeof value === 'number' && Number.isFinite(value) ? [{ name, value }] : []))
+}
+
+/** Every column for these ratings: the ones every season has, then a column for each game part any team has. */
+export function statColumns(ratings: Match13Rating[]): StatColumn[] {
+  const parts = [...new Set(ratings.flatMap((r) => ratingComponents(r).map((c) => c.name)))]
+  return [...STAT_COLUMNS, ...parts.map((name) => ({ key: `part:${name}`, label: name }))]
+}
+
+/** One team's number for a column, or null if Match 13 left it out. */
+export function statValue(rating: Match13Rating, key: string): number | null {
+  if (key.startsWith('part:')) return ratingComponents(rating).find((c) => c.name === key.slice(5))?.value ?? null
+  const value = (rating as unknown as Record<string, unknown>)[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/** "48.6", "72%" for a chance, or "not given" when Match 13 left it out. */
+export function statText(value: number | null, column: Pick<StatColumn, 'percent'> = {}): string {
+  if (value === null) return 'not given'
+  return column.percent ? `${Math.round(value * 100)}%` : value.toFixed(1)
+}
+
+/**
+ * The ratings sorted by one column: best first (lowest first for a
+ * lower-is-better column), or the other way round with `bestFirst` false.
+ * Teams with no number for it go at the bottom either way. Equal numbers go
+ * in team number order.
+ */
+export function sortStats(ratings: Match13Rating[], column: StatColumn, bestFirst = true): Match13Rating[] {
+  const flip = (column.lowerIsBetter ? 1 : -1) * (bestFirst ? 1 : -1)
+  return [...ratings].sort((a, b) => {
+    const x = statValue(a, column.key)
+    const y = statValue(b, column.key)
+    if (x === null || y === null) return x === y ? a.teamNumber - b.teamNumber : x === null ? 1 : -1
+    return (x - y) * flip || a.teamNumber - b.teamNumber
+  })
+}
+
+/** One team in Match 13's simulation of the event (#152). */
+export interface SimTeam {
+  team: number
+  /** Average final rank, and the 5th and 95th percentile ranks. Null if Match 13 didn't send them. */
+  rank: number | null
+  rankLow: number | null
+  rankHigh: number | null
+  /** Average ranking points. */
+  rp: number | null
+}
+
+const num = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+
+/** The first of these fields that's a number. */
+function firstNumber(from: Record<string, unknown> | undefined, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = num(from?.[key])
+    if (value !== null) return value
+  }
+  return null
+}
+
+/**
+ * Read Match 13's simulation answer. Its docs give the fields' names but not
+ * their exact shape, so this accepts a stats object (mean, p5, p50, p95)
+ * under rank or rp, or flat fields like meanRank, and leaves out anything it
+ * can't read, rather than guess. Check it against a real answer.
+ */
+export function readSim(answer: unknown): SimTeam[] {
+  const body = answer as { teams?: unknown } | unknown[] | null
+  const list = Array.isArray(body) ? body : Array.isArray((body as { teams?: unknown })?.teams) ? ((body as { teams: unknown[] }).teams) : []
+  return list.flatMap((item) => {
+    const t = (item ?? {}) as Record<string, unknown>
+    const team = num(t.teamNumber) ?? num(t.team)
+    if (team === null) return []
+    const rank = (t.rank ?? t.ranks) as Record<string, unknown> | undefined
+    const rp = (t.rp ?? t.rps ?? t.rankingPoints) as Record<string, unknown> | undefined
+    const sim: SimTeam = {
+      team,
+      rank: typeof rank === 'object' ? firstNumber(rank, ['mean', 'avg', 'p50']) : firstNumber(t, ['meanRank', 'rankMean', 'avgRank']),
+      rankLow: typeof rank === 'object' ? firstNumber(rank, ['p5']) : firstNumber(t, ['rankP5']),
+      rankHigh: typeof rank === 'object' ? firstNumber(rank, ['p95']) : firstNumber(t, ['rankP95']),
+      rp: typeof rp === 'object' ? firstNumber(rp, ['mean', 'avg', 'p50']) : firstNumber(t, ['meanRp', 'rpMean', 'avgRp']) ?? num(t.rp),
+    }
+    // A team with nothing readable isn't a simulation result.
+    return sim.rank === null && sim.rp === null ? [] : [sim]
+  })
+}
+
+/** Match 13's simulation of the event: each team's likely final rank. Empty until Match 13 has one. */
+export async function getEventSim(event = currentEvent()): Promise<Result<SimTeam[]>> {
+  const result = await callFunction<unknown>('match13', { kind: 'sim', event }, () => demoSim())
+  return result.ok ? ok(readSim(result.value)) : result
+}
+
+/** Put each team's simulation numbers on its rating. */
+export function withSim(ratings: Match13Rating[], sim: SimTeam[]): Match13Rating[] {
+  const byTeam = new Map(sim.map((s) => [s.team, s]))
+  return ratings.map((r) => {
+    const s = byTeam.get(r.teamNumber)
+    return s ? { ...r, simRank: s.rank, simRankLow: s.rankLow, simRankHigh: s.rankHigh, simRp: s.rp } : r
+  })
+}
+
+/** One event a team played in a season, with its Match 13 numbers there (#153). */
+export interface TeamEventRating {
+  event: string
+  /** The team's xP at the end of that event, or null if Match 13 didn't send it. */
+  xp: number | null
+  /** Their xP rank at that event. */
+  rank: number | null
+}
+
+/** Read Match 13's answer for a team's events in a season. Like readSim(), it reads what it can and leaves out the rest. */
+export function readTeamEvents(answer: unknown): TeamEventRating[] {
+  const body = answer as { events?: unknown } | unknown[] | null
+  const list = Array.isArray(body) ? body : Array.isArray((body as { events?: unknown })?.events) ? ((body as { events: unknown[] }).events) : []
+  return list.flatMap((item) => {
+    const e = (item ?? {}) as Record<string, unknown>
+    const event = [e.eventKey, e.event, e.key].find((v): v is string => typeof v === 'string')
+    if (!event) return []
+    return [{ event, xp: firstNumber(e, ['xpEnd', 'xp', 'xpMean']), rank: firstNumber(e, ['rank', 'xpRank']) }]
+  })
+}
+
+/** One team's Match 13 numbers at each event it played in a season, for prescouting (#153). */
+export async function getTeamSeasonRatings(team: number, year: number): Promise<Result<TeamEventRating[]>> {
+  const result = await callFunction<unknown>('match13', { kind: 'team-events', team, year }, () => demoTeamEvents(team, year))
+  return result.ok ? ok(readTeamEvents(result.value)) : result
 }
 
 /** Who Match 13 thinks will win a match, and by how much. */
@@ -1213,7 +1837,7 @@ export interface PicklistPart {
 
 /**
  * Everything a team is scored on: Match 13's auto, teleop and endgame xP,
- * then each counter in season.ts. Not Match 13's total as well: it's the
+ * our average points per match (APS, #166), then each counter in season.ts. Not Match 13's total as well: it's the
  * three parts added up, so weighting it too would count xP twice. A new
  * counter in season.ts shows up here by itself.
  */
@@ -1222,6 +1846,7 @@ export function picklistParts(): PicklistPart[] {
     { key: 'xAuto', label: 'Match 13 auto', lowerIsBetter: false },
     { key: 'xTele', label: 'Match 13 teleop', lowerIsBetter: false },
     { key: 'xEnd', label: 'Match 13 endgame', lowerIsBetter: false },
+    { key: 'aps', label: 'Average points (APS)', lowerIsBetter: false },
     ...COUNTERS.map((c) => ({ key: c.key, label: c.label, lowerIsBetter: c.lowerIsBetter ?? false })),
   ]
 }
@@ -1345,6 +1970,7 @@ export function picklistTeams(ratings: Match13Rating[], entries: MatchRow[], pit
         xAuto: rating?.xAuto ?? null,
         xTele: rating?.xTele ?? null,
         xEnd: rating?.xEnd ?? null,
+        aps: teamAps(team, entries)?.average ?? null,
         ...Object.fromEntries(summary.counters.map((c) => [c.key, c.average])),
       },
       matches: matches.size,
@@ -1397,6 +2023,315 @@ export function useRankedPicklist() {
     return rankTeams(teams, weights).map((line): PicklistLine => ({ ...line, matches: known.get(line.team)?.matches ?? 0, rated: known.get(line.team)?.rated ?? false }))
   }, [teams, weights])
   return { ranked, weights, ratings }
+}
+
+// ---------------------------------------------------------------------------
+// The overview page (#160): one card for each scouting page, with its
+// status and latest results. scoutingOverview() is a plain function that
+// takes what's saved on this phone, so it needs nothing from the network
+// and can be tested. useScoutingOverview() gathers it for the page.
+
+/** One card on the overview: which page it opens, how it's going, and what to say. */
+export interface OverviewCard {
+  /** The page's name in the switch at the top of Scouting, like "Match" or "Final picklist". */
+  view: string
+  tone: Notice['tone']
+  /** Short lines, most important first. */
+  lines: string[]
+}
+
+/** What the overview is worked out from: everything already saved on this phone. */
+export interface OverviewInput {
+  /** This phone's match and pit entries. */
+  entries: Entry[]
+  pitEntries: PitEntry[]
+  sync: SyncStatus
+  /** This event's match and pit entries from the team database and this phone (see useScoutingRows()). */
+  matchRows: MatchRow[]
+  pitRows: PitRow[]
+  schedule: SavedSchedule | null
+  rankings: SavedRankings | null
+  ratings: Match13Rating[]
+  /** The Picklist page's list with this phone's weights, best first. */
+  ranked: { team: number }[]
+  /** The final picklist, top first. */
+  finalPicklist: PicklistRow[]
+  /** This person's own picklist, and everyone's averaged (#151). */
+  myPicklist?: MyPicklistRow[]
+  teamPicklist?: TeamPicklistLine[]
+  now?: Date
+}
+
+/** Every team we know is at the event, from the saved schedule, rankings and Match 13 ratings, lowest first. */
+export function eventTeams(schedule: SavedSchedule | null, rankings: SavedRankings | null, ratings: Match13Rating[]): number[] {
+  const teams = new Set<number>([
+    ...(schedule?.matches ?? []).flatMap((m) => [...m.alliances.red.team_keys, ...m.alliances.blue.team_keys].map(teamNumber)),
+    ...(rankings?.rankings ?? []).map((r) => teamNumber(r.team_key)),
+    ...ratings.map((r) => r.teamNumber),
+  ])
+  return [...teams].sort((a, b) => a - b)
+}
+
+/** "3 waiting · 12 synced", and a line for a sync problem. */
+function entryLines(entries: { synced: boolean }[], kind: string, sync: SyncStatus): string[] {
+  if (entries.length === 0) return [`No ${kind} entries on this phone yet`]
+  const waiting = entries.filter((e) => !e.synced).length
+  const lines = [waiting > 0 ? `${plural(waiting, `${kind} entry`, `${kind} entries`)} waiting to send` : `All ${plural(entries.length, `${kind} entry`, `${kind} entries`)} sent`]
+  if (waiting > 0 && entries.length > waiting) lines.push(`${entries.length - waiting} sent`)
+  if (waiting > 0 && sync.problem) lines.push(sync.problem)
+  return lines
+}
+
+/** The overview's cards, in the same order as the switch at the top of Scouting. */
+export function scoutingOverview(input: OverviewInput, team = OUR_TEAM): OverviewCard[] {
+  const now = input.now ?? new Date()
+  const teams = eventTeams(input.schedule, input.rankings, input.ratings)
+  const waitingTone = (entries: { synced: boolean }[]) => (entries.some((e) => !e.synced) ? ('info' as const) : ('plain' as const))
+
+  // Pit: how many of the event's teams have a pit entry.
+  const pitTeams = new Set(input.pitRows.map((p) => p.team_number))
+  const pitLines = entryLines(input.pitEntries, 'pit', input.sync)
+  if (teams.length > 0) pitLines.push(`${teams.filter((t) => pitTeams.has(t)).length} of ${teams.length} teams pit scouted`)
+  else if (pitTeams.size > 0) pitLines.push(`${plural(pitTeams.size, 'team', 'teams')} pit scouted`)
+
+  // Schedule: our next match, or our last result.
+  let schedule: OverviewCard
+  if (!input.schedule) schedule = { view: 'Schedule', tone: 'plain', lines: ['No schedule saved yet'] }
+  else {
+    const ours = matchesWithPredictions(input.schedule.matches, input.schedule.predictions, team).filter((m) => m.ours)
+    const next = ours.find((m) => !m.score)
+    const last = [...ours].reverse().find((m) => m.score)
+    const side = (m: ScheduleRow) => (m.red.includes(team) ? 'Red' : 'Blue')
+    const lines: string[] = []
+    if (next) lines.push(`Next: ${next.label} · ${side(next)} · ${next.prediction ? likelyWinner(next.prediction) : 'No prediction yet'}`)
+    if (last?.score) {
+      const [us, them] = side(last) === 'Red' ? [last.score.red, last.score.blue] : [last.score.blue, last.score.red]
+      lines.push(`Last: ${last.label} · ${us > them ? 'Won' : us < them ? 'Lost' : 'Tied'} ${us}–${them}`)
+    }
+    if (lines.length === 0) lines.push(input.schedule.matches.length === 0 ? "The Blue Alliance doesn't have the schedule yet" : `${team} isn't on the schedule`)
+    lines.push(`Saved ${updatedAgo(input.schedule.savedAt, now)}`)
+    schedule = { view: 'Schedule', tone: 'plain', lines }
+  }
+
+  // Rankings: our rank and record.
+  let rankings: OverviewCard
+  if (!input.rankings) rankings = { view: 'Rankings', tone: 'plain', lines: ['No rankings saved yet'] }
+  else {
+    const ours = rankOf(input.rankings.rankings, team)
+    const record = ours?.record ? ` · ${ours.record.wins}-${ours.record.losses}-${ours.record.ties}` : ''
+    rankings = {
+      view: 'Rankings',
+      tone: 'plain',
+      lines: [ours ? `Rank ${ours.rank} of ${input.rankings.rankings.length}${record}` : `${team} isn't in the rankings yet`, `Updated ${updatedAgo(input.rankings.checked_at, now)}`],
+    }
+  }
+
+  // Teams: who we've scouted, and who we haven't.
+  const scouted = scoutedTeams(input.matchRows, input.pitRows)
+  const matchScouted = new Set(input.matchRows.map((e) => e.team_number))
+  const notYet = teams.filter((t) => !matchScouted.has(t))
+  const teamLines = [scouted.length === 0 ? 'No teams scouted yet' : `${plural(scouted.length, 'team', 'teams')} scouted`]
+  if (teams.length > 0) teamLines.push(notYet.length === 0 ? 'Every team has a match entry' : `No match entries yet: ${notYet.join(', ')}`)
+
+  const top = (list: number[]) => (list.length === 0 ? null : `Top ${Math.min(3, list.length)}: ${list.slice(0, 3).join(', ')}`)
+  const finalOpen = input.finalPicklist.filter((row) => row.status === 'Open').map((row) => row.team_number)
+
+  return [
+    { view: 'Match', tone: waitingTone(input.entries), lines: entryLines(input.entries, 'match', input.sync) },
+    { view: 'Pit', tone: waitingTone(input.pitEntries), lines: pitLines },
+    schedule,
+    rankings,
+    { view: 'Teams', tone: 'plain', lines: teamLines },
+    { view: 'Picklist', tone: 'plain', lines: [top(input.ranked.map((t) => t.team)) ?? 'No teams to rank yet'] },
+    { view: 'My picklist', tone: 'plain', lines: [top((input.myPicklist ?? []).map((row) => row.team_number)) ?? 'Not started yet'] },
+    {
+      view: 'Team picklist',
+      tone: 'plain',
+      lines: (input.teamPicklist ?? []).length === 0
+        ? ['Nobody has made a picklist yet']
+        : [top(input.teamPicklist!.map((line) => line.team))!, `From ${plural(input.teamPicklist![0].lists, 'list', 'lists')}`],
+    },
+    {
+      view: 'Final picklist',
+      tone: 'plain',
+      lines: input.finalPicklist.length === 0 ? ['Not started yet'] : [top(finalOpen) ?? 'Every team is picked or marked Do not pick', `${plural(input.finalPicklist.length, 'team', 'teams')} on the list`],
+    },
+    { view: 'Simulator', tone: 'plain', lines: ["Pick 6 teams to see the score we'd expect, and who's likely to win"] },
+    { view: 'Stats', tone: 'plain', lines: [input.ratings.length === 0 ? 'No Match 13 ratings saved yet' : `${plural(input.ratings.length, 'team', 'teams')} rated by Match 13`] },
+  ]
+}
+
+/**
+ * The overview's cards, for the page. It only reads what's saved on this
+ * phone (the schedule, rankings and Match 13 copies, and the tables the
+ * other pages use), so opening it never asks The Blue Alliance or Match 13
+ * for anything.
+ */
+export function useScoutingOverview(): OverviewCard[] {
+  const event = useCurrentEvent().key
+  const entries = useEntries()
+  const pitEntries = usePitEntries()
+  const sync = useSyncStatus()
+  const { entries: matchRows, pitEntries: pitRows } = useScoutingRows()
+  const schedule = useSavedSchedule()
+  const savedRankings = useStore(rankingsStore)
+  const savedRatings = useStore(ratingsStore)
+  const weights = useStore(weightsStore)
+  const finalPicklist = usePicklist()
+  const myPicklist = useMyPicklist()
+  const teamPicklist = useTeamPicklist()
+  return useMemo(() => {
+    const rankings = savedRankings?.event === event ? savedRankings : null
+    const ratings = savedRatings.event === event ? savedRatings.ratings : []
+    const ranked = rankTeams(picklistTeams(ratings, matchRows, pitRows), weights)
+    return scoutingOverview({ entries, pitEntries, sync, matchRows, pitRows, schedule, rankings, ratings, ranked, finalPicklist, myPicklist, teamPicklist })
+  }, [event, entries, pitEntries, sync, matchRows, pitRows, schedule, savedRankings, savedRatings, weights, finalPicklist, myPicklist, teamPicklist])
+}
+
+// ---------------------------------------------------------------------------
+// Average points scored (APS) and the match simulator (#166).
+//
+// A team's points in a match are worked out from what we scouted: each
+// counter times its points in season.ts, plus its endgame's points. APS is
+// the average over the matches we scouted them in, with a range of one
+// standard deviation either side (about two in three matches land in it).
+// Match 13's xP is a second opinion, used when we've scouted a team in
+// fewer than MIN_MATCHES matches.
+//
+// The simulator adds up each alliance's expected points. That's the simple
+// version: it doesn't count defense or robots getting in each other's way.
+
+/** Fewer scouted matches than this, and a team's APS is only a guess: it's marked, and Match 13's xP is used if there is one. */
+export const MIN_MATCHES = 3
+
+/** The points one match entry is worth to its alliance, from the points in season.ts. */
+export function entryPoints(entry: Pick<MatchRow, 'counts' | 'endgame'>, counters: Counter[] = COUNTERS, endgamePoints: Record<string, number> = ENDGAME_POINTS): number {
+  const scored = counters.reduce((sum, c) => sum + (c.points ?? 0) * (entry.counts[c.key] ?? 0), 0)
+  return scored + (endgamePoints[entry.endgame] ?? 0)
+}
+
+/** A team's points per match from our scouting. */
+export interface Aps {
+  /** Average points per match. */
+  average: number
+  /** One standard deviation below and above the average. low is never below 0. */
+  low: number
+  high: number
+  /** The standard deviation, for adding teams up in the simulator. */
+  spread: number
+  /** How many matches it's from. Two scouts on the same match count as one. */
+  matches: number
+}
+
+/**
+ * A team's APS at the current event, or null if we haven't scouted them in a
+ * match. When two scouts watched the same robot in the same match, their
+ * points are averaged first, so that match counts once.
+ */
+export function teamAps(team: number, entries: MatchRow[], counters: Counter[] = COUNTERS, endgamePoints: Record<string, number> = ENDGAME_POINTS): Aps | null {
+  const byMatch = new Map<number, number[]>()
+  for (const e of thisEvent(entries)) {
+    if (e.team_number !== team) continue
+    byMatch.set(e.match_number, [...(byMatch.get(e.match_number) ?? []), entryPoints(e, counters, endgamePoints)])
+  }
+  const perMatch = [...byMatch.values()].map((points) => points.reduce((a, b) => a + b, 0) / points.length)
+  if (perMatch.length === 0) return null
+  const average = perMatch.reduce((a, b) => a + b, 0) / perMatch.length
+  const spread = Math.sqrt(perMatch.reduce((sum, p) => sum + (p - average) ** 2, 0) / perMatch.length)
+  return { average, low: Math.max(0, average - spread), high: average + spread, spread, matches: perMatch.length }
+}
+
+/** What we expect one team to score, for the simulator. */
+export interface TeamPoints {
+  team: number
+  /** From our scouting, or null if we haven't scouted them in a match. */
+  aps: Aps | null
+  /** Match 13's xP, or null if it hasn't rated them. */
+  xp: number | null
+  /** What the simulator uses: our APS, or Match 13's xP when we have too few matches. Null if we have neither. */
+  expected: number | null
+  /** The spread around `expected`: our APS's, or 0 for xP, which has none. */
+  spread: number
+  /** Where `expected` came from. */
+  source: 'scouting' | 'match13' | null
+  /** True when we've scouted them in fewer than MIN_MATCHES matches, so `expected` is only a guess. */
+  fewMatches: boolean
+}
+
+/** One team's expected points, from our scouting and Match 13. */
+export function teamPoints(team: number, entries: MatchRow[], ratings: Match13Rating[]): TeamPoints {
+  const aps = teamAps(team, entries)
+  const xp = ratings.find((r) => r.teamNumber === team)?.xpEnd ?? null
+  const fewMatches = (aps?.matches ?? 0) < MIN_MATCHES
+  // With few matches, Match 13 has seen more of them than we have.
+  if (aps && (!fewMatches || xp === null)) return { team, aps, xp, expected: aps.average, spread: aps.spread, source: 'scouting', fewMatches }
+  if (xp !== null) return { team, aps, xp, expected: xp, spread: 0, source: 'match13', fewMatches }
+  return { team, aps, xp, expected: null, spread: 0, source: null, fewMatches }
+}
+
+/** One alliance's expected score in the simulator. */
+export interface AllianceScore {
+  /** The teams' expected points added up. Teams we know nothing about count as 0. */
+  expected: number
+  /** One standard deviation below and above. */
+  low: number
+  high: number
+  spread: number
+  /** Teams with no APS and no xP: their points are missing from `expected`. */
+  unknown: number[]
+}
+
+/**
+ * An alliance's expected score: its teams' expected points added up. The
+ * spreads add the way they do in statistics (the square root of the sum of
+ * squares), since teams don't all have a good or bad match at once.
+ */
+export function allianceScore(teams: TeamPoints[]): AllianceScore {
+  const expected = teams.reduce((sum, t) => sum + (t.expected ?? 0), 0)
+  const spread = Math.sqrt(teams.reduce((sum, t) => sum + t.spread ** 2, 0))
+  return { expected, low: Math.max(0, expected - spread), high: expected + spread, spread, unknown: teams.filter((t) => t.expected === null).map((t) => t.team) }
+}
+
+/**
+ * The chance red outscores blue, from 0 to 1, assuming scores spread out in
+ * a bell curve. With no spread at all, the higher expected score wins for
+ * certain, and equal scores are an even chance.
+ */
+export function redWinChance(red: AllianceScore, blue: AllianceScore): number {
+  const spread = Math.sqrt(red.spread ** 2 + blue.spread ** 2)
+  const lead = red.expected - blue.expected
+  if (spread === 0) return lead > 0 ? 1 : lead < 0 ? 0 : 0.5
+  return normalBelow(lead / spread)
+}
+
+// The chance a bell-curve value is below z (in standard deviations), from
+// the Abramowitz and Stegun formula, correct to about 7 decimal places.
+function normalBelow(z: number): number {
+  const x = Math.abs(z) / Math.SQRT2
+  const t = 1 / (1 + 0.3275911 * x)
+  const erf = 1 - t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) * Math.exp(-x * x)
+  return z >= 0 ? (1 + erf) / 2 : (1 - erf) / 2
+}
+
+/** "34 (26–41)": an expected score and its range, rounded. Just "34" when there's no range. */
+export function pointsRange(expected: number, low: number, high: number): string {
+  return low === high ? String(Math.round(expected)) : `${Math.round(expected)} (${Math.round(low)}–${Math.round(high)})`
+}
+
+/** Every team's expected points, for a page: our entries and this phone's Waiting ones, and the saved Match 13 copy, so it works with no Wi-Fi. */
+export function useTeamPoints(): { pointsFor: (team: number) => TeamPoints; ratings: ReturnType<typeof useRatings> } {
+  const ratings = useRatings()
+  const { entries } = useScoutingRows()
+  const pointsFor = useCallback((team: number) => teamPoints(team, entries, ratings.ratings), [entries, ratings.ratings])
+  return { pointsFor, ratings }
+}
+
+/** The qualification matches not played yet, soonest first, from the schedule saved on this phone. For filling in the simulator. */
+export function upcomingMatches(schedule: SavedSchedule | null): TbaMatch[] {
+  if (!schedule) return []
+  return schedule.matches
+    .filter((m) => m.comp_level === 'qm' && !(m.alliances.red.score >= 0 && m.alliances.blue.score >= 0))
+    .sort((a, b) => a.match_number - b.match_number)
 }
 
 // ---------------------------------------------------------------------------
@@ -1716,9 +2651,10 @@ export function loadRatings(now: Date = new Date()): Promise<void> {
 
 async function load(now: Date): Promise<void> {
   const event = currentEvent()
-  const [ratings, rankings] = await Promise.all([getRatings(event), getRankings(event)])
+  const [ratings, rankings, sim] = await Promise.all([getRatings(event), getRankings(event), getEventSim(event)])
   const notRatedYet = !ratings.ok && NOT_RATED_YET.test(ratings.error)
-  const rated: Result<Match13Rating[]> = notRatedYet ? ok([]) : ratings
+  // The simulation is extra: if Match 13 has none yet, the ratings show without it.
+  const rated: Result<Match13Rating[]> = notRatedYet ? ok([]) : ratings.ok ? ok(withSim(ratings.value, sim.ok ? sim.value : [])) : ratings
   // Start from this event's copy, so another event's numbers never mix in.
   const prev = savedRatings()
   ratingsStore.set({
@@ -1820,7 +2756,31 @@ function demoRatings(): Match13Rating[] {
     epa: round(xpEnd * 0.95),
     opr: round(xpEnd * 1.05),
     dpr: round(30 - xpEnd * 0.2),
+    xVar: round(60 - xpEnd),
+    xRp1: round(Math.min(1, xpEnd / 50)),
+    xRp2: round(Math.min(1, xpEnd / 80)),
+    xRp3: round(Math.min(1, xpEnd / 60)),
+    // Made-up part names: Match 13 names them for each season's game.
+    components: { fuel: round(xpEnd * 0.7), tower: round(xpEnd * 0.3) },
   }))
+}
+
+/** A made-up simulation: teams ranked by their example xP, give or take a few places. */
+function demoSim(): { teams: unknown[] } {
+  const ranked = [...demoRatings()].sort((a, b) => b.xpEnd - a.xpEnd)
+  return {
+    teams: ranked.map((r, i) => ({
+      teamNumber: r.teamNumber,
+      rank: { mean: i + 1.4, p5: Math.max(1, i - 1), p50: i + 1, p95: Math.min(ranked.length, i + 3) },
+      rp: { mean: Math.round((30 - i * 3.5) * 10) / 10 },
+    })),
+  }
+}
+
+/** Made-up Match 13 numbers for a team at each of the example events in a season. */
+function demoTeamEvents(team: number, year: number): { events: unknown[] } {
+  const xp = DEMO_RATINGS.find(([t]) => t === team)?.[2] ?? 30
+  return { events: demoEvents(year).slice(0, 3).map((e, i) => ({ eventKey: e.key, xpEnd: Math.round((xp - i * 2.5) * 10) / 10, rank: 3 + i })) }
 }
 
 /** Made-up predictions for the example schedule: each alliance's ratings added up. */
@@ -2000,4 +2960,329 @@ export async function setPickStatus(id: string, status: PickStatus): Promise<Res
   if (!PICK_STATUSES.includes(status)) return fail('Choose Open, Picked or Do not pick.')
   const result = await picklistTable.update(id, { status })
   return result.ok ? ok(null) : result
+}
+
+// ---------------------------------------------------------------------------
+// Personal picklists, and the team picklist that averages them (#151).
+//
+// Everyone signed in can make their own order for picking teams at an
+// event, with a note on any team. Each is saved in scouting_my_picklist
+// (supabase/migrations/..._scouting_my_picklist.sql), so it's on all their
+// devices, and everyone can read every list so the team picklist can
+// average them. You change only your own; mentors can remove anyone's.
+// keepOffline: lists still show with no Wi-Fi, but changes need a connection.
+
+/** One team on one person's picklist for one event. */
+export interface MyPicklistRow extends Row {
+  event_key: string
+  team_number: number
+  /** Its place on the list: 1 is best. */
+  rank: number
+  /** Like "Great defender, slow climb", or null. */
+  note: string | null
+  /** Whose list it's on. Show their name with useMemberNames(). */
+  created_by: string | null
+  updated_at: string
+}
+
+/** The longest a picklist note can be, the same as the team database. */
+export const MAX_PICKLIST_NOTE = 500
+
+const byRank = (a: MyPicklistRow, b: MyPicklistRow) => a.rank - b.rank || a.team_number - b.team_number
+
+// Made up, for demo mode: three made-up people's lists of the example teams,
+// different lengths, so the team picklist has something to average.
+const EXAMPLE_MY_PICKLISTS: MyPicklistRow[] = (
+  [
+    [DEMO_PEOPLE.jordan, [[9994, 'Fast cycles, reliable climb'], [9991, null], [9993, null], [9992, 'Good defender']]],
+    [DEMO_PEOPLE.sam, [[9991, 'Best auto we saw'], [9994, null], [9995, null]]],
+    [DEMO_PEOPLE.pat, [[9994, null], [9993, 'Slow climb'], [9991, null], [9995, null], [9992, null]]],
+  ] as [string, [number, string | null][]][]
+).flatMap(([person, teams], p) =>
+  teams.map(([team, note], i) => ({
+    id: `00000000-0000-4000-8000-0000000d02${p}${i}`,
+    event_key: EVENT_KEY,
+    team_number: team,
+    rank: i + 1,
+    note,
+    created_at: '2026-11-07T21:00:00Z',
+    created_by: person,
+    updated_at: '2026-11-07T21:00:00Z',
+  })),
+)
+
+export const myPicklistTable = createTable<MyPicklistRow>('scouting_my_picklist', { demo: EXAMPLE_MY_PICKLISTS, sort: byRank, keepOffline: true })
+
+/** One person's list for an event, best first. */
+export function myPicklist(person: string | null | undefined = currentUser()?.id, event = currentEvent()): MyPicklistRow[] {
+  return myPicklistTable.rows().filter((row) => row.event_key === event && row.created_by === person).sort(byRank)
+}
+
+/** The signed-in person's list for the current event, best first, for a page. */
+export function useMyPicklist(): MyPicklistRow[] {
+  const event = useCurrentEvent().key
+  const rows = myPicklistTable.useRows()
+  const person = currentUser()?.id
+  return useMemo(() => rows.filter((row) => row.event_key === event && row.created_by === person).sort(byRank), [rows, event, person])
+}
+
+/** Why a change to your picklist can't be made, or null if it can. */
+function cantChangePicklist(): string | null {
+  if (!currentUser()) return 'Sign in to make your picklist.'
+  if (globalThis.navigator?.onLine === false) return 'No connection. Your picklist is saved to the team, so changing it needs Wi-Fi or data.'
+  return null
+}
+
+/**
+ * Start your list with these teams, best first (like the Picklist page's
+ * order with this phone's weights). Only for an empty list: once it's
+ * started, the order is yours, so this never replaces it.
+ */
+export async function startMyPicklist(teams: number[], event = currentEvent()): Promise<Result<MyPicklistRow[]>> {
+  const problem = cantChangePicklist() ?? (teams.length === 0 ? 'There are no teams to start your picklist with.' : checkTeams(teams))
+  if (problem) return fail(problem)
+  if (myPicklist(currentUser()?.id, event).length > 0) return fail('Your picklist is already started. Move teams on it, or add the teams that are missing.')
+  return myPicklistTable.insertMany([...new Set(teams)].map((team, i) => ({ event_key: event, team_number: team, rank: i + 1, note: null, updated_at: new Date().toISOString() })))
+}
+
+/** Add the teams that aren't on your list yet to the bottom, in the order given. */
+export async function addToMyPicklist(teams: number[], event = currentEvent()): Promise<Result<MyPicklistRow[]>> {
+  const problem = cantChangePicklist() ?? checkTeams(teams)
+  if (problem) return fail(problem)
+  const list = myPicklist(currentUser()?.id, event)
+  const onList = new Set(list.map((row) => row.team_number))
+  const missing = [...new Set(teams)].filter((team) => !onList.has(team))
+  if (missing.length === 0) return ok([])
+  return myPicklistTable.insertMany(missing.map((team, i) => ({ event_key: event, team_number: team, rank: list.length + i + 1, note: null, updated_at: new Date().toISOString() })))
+}
+
+/**
+ * Move a team on your list to place `rank` (1 is the top), and the teams in
+ * between shift one place to make room. A place past either end means the
+ * top or the bottom. Only rows whose place changes are saved.
+ */
+export async function moveOnMyPicklist(team: number, rank: number, event = currentEvent()): Promise<Result> {
+  const problem = cantChangePicklist()
+  if (problem) return fail(problem)
+  const list = myPicklist(currentUser()?.id, event)
+  const row = list.find((r) => r.team_number === team)
+  if (!row) return fail(`Team ${team} isn't on your picklist.`)
+  const to = Math.min(list.length, Math.max(1, Math.round(rank))) - 1
+  const order = list.filter((r) => r !== row)
+  order.splice(to, 0, row)
+  for (const [i, r] of order.entries()) {
+    if (r.rank === i + 1) continue
+    const result = await myPicklistTable.update(r.id, { rank: i + 1 })
+    if (!result.ok) return result
+  }
+  return ok(null)
+}
+
+/** Add, change or clear (with '') your note on a team on your list. */
+export async function setPicklistNote(team: number, note: string, event = currentEvent()): Promise<Result> {
+  const problem = cantChangePicklist()
+  if (problem) return fail(problem)
+  const text = note.trim()
+  if (text.length > MAX_PICKLIST_NOTE) return fail(`Keep the note under ${MAX_PICKLIST_NOTE} characters. It's ${text.length}.`)
+  const row = myPicklist(currentUser()?.id, event).find((r) => r.team_number === team)
+  if (!row) return fail(`Team ${team} isn't on your picklist.`)
+  const result = await myPicklistTable.update(row.id, { note: text || null })
+  return result.ok ? ok(null) : result
+}
+
+/** Where one person put a team, for the team picklist. */
+export interface Placement {
+  /** Whose list. Show their name with useMemberNames(). */
+  by: string | null
+  /** Its place on their list, and how long their list is. */
+  place: number
+  of: number
+  note: string | null
+}
+
+/** One line of the team picklist. */
+export interface TeamPicklistLine {
+  /** 1 is the best. */
+  rank: number
+  team: number
+  /** Its average place as a share of each list: 0 is the top of every list it's on, 1 the bottom. */
+  share: number
+  /** Its average place, as places. */
+  averagePlace: number
+  /** Its best and worst place on any list. */
+  best: number
+  worst: number
+  /** How many lists it's on, out of `lists`. */
+  onLists: number
+  lists: number
+  /** Where each person put it, best first. */
+  placements: Placement[]
+}
+
+/**
+ * Everyone's lists for one event, averaged. Lists can be different lengths,
+ * so each place is turned into a share of its list: the top is 0 and the
+ * bottom is 1, so 1st of 30 counts the same as 1st of 20. A team that isn't
+ * on someone's list is left out of that list's average, not counted as
+ * last. Lowest average first; equal averages go in team number order.
+ */
+export function teamPicklist(rows: MyPicklistRow[]): TeamPicklistLine[] {
+  const lists = new Map<string | null, MyPicklistRow[]>()
+  for (const row of rows) lists.set(row.created_by, [...(lists.get(row.created_by) ?? []), row])
+
+  const placements = new Map<number, (Placement & { share: number })[]>()
+  for (const [by, list] of lists) {
+    const ordered = [...list].sort(byRank)
+    ordered.forEach((row, i) => {
+      const share = ordered.length === 1 ? 0 : i / (ordered.length - 1)
+      placements.set(row.team_number, [...(placements.get(row.team_number) ?? []), { by, place: i + 1, of: ordered.length, note: row.note, share }])
+    })
+  }
+
+  const average = (values: number[]) => values.reduce((a, b) => a + b, 0) / values.length
+  return [...placements]
+    .map(([team, placed]) => ({
+      team,
+      share: average(placed.map((p) => p.share)),
+      averagePlace: average(placed.map((p) => p.place)),
+      best: Math.min(...placed.map((p) => p.place)),
+      worst: Math.max(...placed.map((p) => p.place)),
+      onLists: placed.length,
+      lists: lists.size,
+      placements: placed.sort((a, b) => a.share - b.share).map(({ by, place, of, note }) => ({ by, place, of, note })),
+    }))
+    .sort((a, b) => a.share - b.share || a.team - b.team)
+    .map((line, i) => ({ rank: i + 1, ...line }))
+}
+
+/** The team picklist for the current event, for a page. It updates by itself when someone changes their list. */
+export function useTeamPicklist(): TeamPicklistLine[] {
+  const event = useCurrentEvent().key
+  const rows = myPicklistTable.useRows()
+  return useMemo(() => teamPicklist(rows.filter((row) => row.event_key === event)), [rows, event])
+}
+
+// ---------------------------------------------------------------------------
+// Nexus live status (#165, step 2): what's on the field right now, what's
+// queuing, and when our next match should queue. It comes through the
+// `nexus` server function (supabase/functions/nexus/), which holds the
+// team's key, with made-up example data in demo mode. The last answer is
+// kept on the phone, so with no Wi-Fi it still shows, with when it's from.
+// Not every event uses Nexus: then this says so and the link is still there.
+
+/** One event's live status from Nexus, the parts the app shows. */
+export interface NexusStatus {
+  /** Like "Qualification 18", or null. */
+  onField: string | null
+  nowQueuing: string | null
+  /** Our next match that hasn't been played, or null. */
+  ourNext: { label: string; status: string | null; alliance: 'red' | 'blue'; queueAt: number | null } | null
+  /** The event's announcements, newest first. */
+  announcements: string[]
+  /** When Nexus's numbers are from, in milliseconds since 1970, or null. */
+  asOf: number | null
+}
+
+/**
+ * Read Nexus's answer for an event. Each match has a label like
+ * "Qualification 18", a status ("Queuing soon", "Now queuing", "On deck",
+ * "On field"), the teams on each side and estimated times. Anything it
+ * can't read is left out. Check it against a real answer.
+ */
+export function readNexus(answer: unknown, team = OUR_TEAM): NexusStatus {
+  const a = (answer ?? {}) as Record<string, unknown>
+  const matches = (Array.isArray(a.matches) ? a.matches : []) as Record<string, unknown>[]
+  const label = (m: Record<string, unknown>) => (typeof m.label === 'string' ? m.label : null)
+  const status = (m: Record<string, unknown>) => (typeof m.status === 'string' ? m.status : null)
+  const teams = (value: unknown) => (Array.isArray(value) ? value.map((t) => Number(String(t).replace(/^frc/, ''))) : [])
+  const onField = matches.find((m) => status(m) === 'On field')
+  const next = matches.find((m) => status(m) !== 'Completed' && (teams(m.redTeams).includes(team) || teams(m.blueTeams).includes(team)))
+  const times = (next?.times ?? {}) as Record<string, unknown>
+  const announcements = (Array.isArray(a.announcements) ? a.announcements : []) as Record<string, unknown>[]
+  return {
+    onField: onField ? label(onField) : null,
+    nowQueuing: typeof a.nowQueuing === 'string' ? a.nowQueuing : null,
+    ourNext: next && label(next)
+      ? { label: label(next)!, status: status(next), alliance: teams(next.redTeams).includes(team) ? 'red' : 'blue', queueAt: num(times.estimatedQueueTime) }
+      : null,
+    announcements: [...announcements]
+      .sort((x, y) => (num(y.postedTime) ?? 0) - (num(x.postedTime) ?? 0))
+      .flatMap((n) => (typeof n.announcement === 'string' ? [n.announcement] : [])),
+    asOf: num(a.dataAsOfTime),
+  }
+}
+
+/** One event's live status from Nexus. */
+export async function getNexusStatus(event = currentEvent()): Promise<Result<NexusStatus>> {
+  const result = await callFunction<unknown>('nexus', { kind: 'status', event }, () => demoNexus(event))
+  return result.ok ? ok(readNexus(result.value)) : result
+}
+
+/** The last Nexus status this phone got, and for which event. */
+export interface SavedNexus {
+  event: string
+  status: NexusStatus
+  /** ISO date and time it came. */
+  savedAt: string
+}
+
+// Kept on the phone so it shows with no Wi-Fi. Not keepOnReset: it's only a copy.
+export const nexusStore = createStore<SavedNexus | null>('scouting-nexus', 1, () => null)
+
+/** How often to ask Nexus while the overview is open. The nexus function reuses its answer for 30 seconds. */
+export const NEXUS_EVERY_MS = 60 * 1000
+
+/** Ask Nexus now and keep the answer. Gives back why it couldn't, if it couldn't. */
+export async function refreshNexus(event = currentEvent()): Promise<Result<SavedNexus>> {
+  if (globalThis.navigator?.onLine === false) return fail('No connection.')
+  const result = await getNexusStatus(event)
+  if (!result.ok) return result
+  const saved = { event, status: result.value, savedAt: new Date().toISOString() }
+  nexusStore.set(saved)
+  return ok(saved)
+}
+
+/** "Queue at 2:15 PM", in the phone's own time zone, which is the event's when you're there. */
+export function queueTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+}
+
+/**
+ * The event's Nexus status for a page: the saved copy, asked for again now
+ * and every minute while the page is open. `problem` says why the last ask
+ * didn't work, like an event that doesn't use Nexus.
+ */
+export function useNexusStatus(): { saved: SavedNexus | null; problem: string | null } {
+  const event = useCurrentEvent().key
+  const saved = useStore(nexusStore)
+  const [problem, setProblem] = useState<string | null>(null)
+  useEffect(() => {
+    let current = true
+    const ask = () => void refreshNexus(event).then((result) => current && setProblem(result.ok ? null : result.error))
+    ask()
+    const timer = setInterval(ask, NEXUS_EVERY_MS)
+    return () => {
+      current = false
+      clearInterval(timer)
+    }
+  }, [event])
+  return { saved: saved?.event === event ? saved : null, problem }
+}
+
+/** Made-up Nexus status for demo mode, from the example schedule: match 3 on the field, match 4 queuing. */
+function demoNexus(event: string) {
+  const now = Date.now()
+  return {
+    eventKey: event,
+    dataAsOfTime: now,
+    nowQueuing: 'Qualification 4',
+    matches: DEMO_SCHEDULE.map(([red, blue], i) => ({
+      label: `Qualification ${i + 1}`,
+      status: ['Completed', 'Completed', 'On field', 'Now queuing'][i] ?? 'Queuing soon',
+      redTeams: red.map(String),
+      blueTeams: blue.map(String),
+      times: { estimatedQueueTime: now + (i - 3) * 8 * 60 * 1000 },
+    })),
+    announcements: [{ id: '1', announcement: 'Example: lunch break after match 30.', postedTime: now - 10 * 60 * 1000 }],
+  }
 }
