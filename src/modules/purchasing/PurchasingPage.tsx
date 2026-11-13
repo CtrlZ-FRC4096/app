@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
+import { useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
 import { useMemberNames, useMembers, type Member } from '../../core/members'
 import { navigate, useRoute } from '../../core/router'
 import { isMentor, useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { shortDate } from '../../core/format'
-import { PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
+import { InView, PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
 import { partsTable, systemsTable } from '../bom/data'
 import {
   EMPTY_ITEM,
@@ -191,15 +191,6 @@ function useBomRequest(rest: string[]): Asking | null {
   const part = parts.find((p) => p.id === rest[1])
   if (!part) return null
   return { start: requestFromBomPart(part, systems.find((s) => s.id === part.system_id)), bomPartId: part.id, key: `bom-${part.id}` }
-}
-
-/** Scrolls its contents into view when it first appears, clear of the top bar. */
-function InView(props: { children: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    ref.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-  }, [])
-  return <div ref={ref} style={{ scrollMarginTop: 160 }}>{props.children}</div>
 }
 
 /**

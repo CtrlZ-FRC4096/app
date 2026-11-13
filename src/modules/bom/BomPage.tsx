@@ -1,9 +1,9 @@
-import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react'
 import { plural, shortDate } from '../../core/format'
 import { useMemberNames, useMembers } from '../../core/members'
 import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
-import { PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
+import { InView, PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
 import {
   PART_FILTERS, addPart, addRobot, addSystem, applyOnshapeImport, canEditRobotsAndParts, changePart, changeSystem, filterParts, getOnshapeBom, kindLabel,
   nextPartNumber, partCountText, removePart, removeSystem, renameRobot, shelfText, shortageFor, shortages, toOrder, toOrderCsv, useParts, useRobotParts, useRobots, useSystems,
@@ -423,21 +423,6 @@ function ImportPreview(props: { system: BomSystem; plan: OnshapeImportPlan; onDo
       </Panel>
     </div>
   )
-}
-
-/**
- * Scroll a form to the top of the screen when it opens, clear of the top bar.
- * The forms open above the parts list, so one opened from a part further down
- * would otherwise be out of sight (#170). Give it a `key` so it scrolls again
- * when it opens for another part. A copy of Purchasing's InView: moving it into
- * src/core/ui.tsx for both modules needs a mentor.
- */
-function InView(props: { children: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    ref.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-  }, [])
-  return <div ref={ref} style={{ scrollMarginTop: 160 }}>{props.children}</div>
 }
 
 /** Put the cursor in a form's first box when it opens. InView does the scrolling. */

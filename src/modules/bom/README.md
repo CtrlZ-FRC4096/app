@@ -39,7 +39,7 @@ The rules are in `supabase/migrations/20261110130000_bom_student_leaders.sql` (u
 
 Parts marked "Removed in Onshape" don't show Purchase or Ready to CAM.
 
-Every form (a part, Ready to CAM, stages, assigning a stage) opens near the top of the page, above the parts list, and scrolls itself into view when it opens (`InView` in `BomPage.tsx`, a copy of Purchasing's), so it's never out of sight (#170).
+Every form (a part, Ready to CAM, stages, assigning a stage) opens near the top of the page, above the parts list, and scrolls itself into view when it opens (`InView` from `src/core/ui.tsx`, which Purchasing uses too), so it's never out of sight (#170).
 
 **Custom and COTS.** Custom parts are made in our shop; COTS parts are bought. The page calls them Custom, but the database still stores them as `made`, so no migration was needed for the name.
 
