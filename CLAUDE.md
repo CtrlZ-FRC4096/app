@@ -47,6 +47,14 @@ enough for them to understand and for a mentor to review.
   (like `useNoteSummary`), set as `useSummary` / `useAttention` in `index.ts`.
 - Pages use the components in `src/core/ui.tsx` and the classes in
   `src/core/styles.css`. Don't add new colours; use the CSS variables.
+- A form that opens away from the button that opened it (above a long
+  list, say) goes in `<InView key={...}>` from `src/core/ui.tsx`, so it
+  scrolls into view.
+- Write effects with braces, `useEffect(() => { ... }, [])`, unless the
+  function returns a cleanup function on purpose. Without braces the effect
+  returns whatever its one line returns, and React calls that when the
+  component goes away: newer Chrome's `scrollIntoView()` returns a Promise,
+  which crashed the BOM and CNC pages (#173).
 - To read another module's data, import from its `data.ts`, never its pages.
 - `useSession()` gives the signed-in person's `id`, `name` and `role`.
   `isMentor(role)` covers mentors and admins. Hiding a button is only for
