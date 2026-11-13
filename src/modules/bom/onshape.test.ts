@@ -18,7 +18,7 @@ const system: BomSystem = {
 let n = 0
 const part = (more: Partial<Part>): Part => ({
   id: `p${++n}`, system_id: 'sys', part_number: `4096-26-SHO-00${n}`, name: 'Part', revision: null, kind: 'made', material: 'Aluminum', quantity: 1,
-  vendor: null, vendor_part_number: null, onshape_url: null, onshape_id: null, removed_in_onshape: false, created_at: '', created_by: null, ...more,
+  vendor: null, vendor_part_number: null, product_url: null, onshape_url: null, onshape_id: null, removed_in_onshape: false, created_at: '', created_by: null, ...more,
 })
 const line = (more: Partial<OnshapeLine>): OnshapeLine => ({
   onshape_id: 'doc/tab/JHD', name: 'Flywheel plate', part_number: null, revision: null, quantity: 1, material: null, vendor: null, standard: false, url: 'https://cad.onshape.com/x', ...more,
@@ -57,6 +57,18 @@ describe('planOnshapeImport', () => {
     const plan = planOnshapeImport(system, bom(line({ name: 'Spacer for am-1234' })), [made])
     expect(plan.add).toEqual([])
     expect(plan.change.some((c) => 'kind' in c.changes)).toBe(false)
+  })
+
+  it('keeps a part changed to COTS by hand COTS, with the vendor details and product page we typed', () => {
+    // A belt drawn with a belt generator: Custom in CAD, but we buy it.
+    const belt = part({
+      onshape_id: 'doc/tab/JBELT', name: 'HTD 5mm 120T 9mm belt', kind: 'cots', material: null,
+      vendor: 'WCP', vendor_part_number: 'EXAMPLE-BELT-120', product_url: 'https://example.com/belt',
+    })
+    const fromCad = line({ onshape_id: 'doc/tab/JBELT', name: 'HTD 5mm 120T 9mm belt', part_number: '4096-26-SHO-009', material: 'Rubber', vendor: 'Another vendor' })
+    const plan = planOnshapeImport(system, bom(fromCad), [belt])
+    const changes = plan.change[0]?.changes ?? {}
+    for (const kept of ['kind', 'material', 'vendor', 'vendor_part_number', 'product_url']) expect(changes, kept).not.toHaveProperty(kept)
   })
 
   it("makes standard content and parts with a vendor COTS, with Onshape's number as the vendor's", () => {

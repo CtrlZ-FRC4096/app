@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import { membersTable } from '../../core/members'
 import {
-  addPart, addRobot, addSystem, bomSummary, canEditRobotsAndParts, changePart, changeSystem, checkPart, checkSystem, countParts, filterParts, kindLabel,
+  addPart, addRobot, addSystem, bomSummary, canEditRobotsAndParts, changePart, changeSystem, checkPart, checkSystem, countParts, filterParts, kindChangeWarning, kindLabel,
   nextPartNumber, partCountText, partsTable, identifyCots, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, shortageFor, shortages, systemsTable, toOrder, toOrderCsv, NO_VENDOR,
   type NewPart, type Part,
 } from './data'
@@ -80,6 +80,7 @@ const newMadePart = (changes: Partial<NewPart> = {}): NewPart => ({
   quantity: 2,
   vendor: '',
   vendor_part_number: '',
+  product_url: '',
   ...changes,
 })
 
@@ -108,6 +109,8 @@ describe('checkPart', () => {
       [{ quantity: 0 }, /quantity/], // a whole number, 1 or more
       [{ quantity: 1.5 }, /quantity/],
       [{ revision: 'x'.repeat(11) }, /revision under 10 characters\. This one is 11/], // longer than the database allows
+      [{ kind: 'cots', vendor: 'WCP', product_url: 'wcproducts.com/belt' }, /https:\/\//], // only whole https:// links
+      [{ kind: 'cots', vendor: 'WCP', product_url: 'javascript:alert(1)' }, /https:\/\//],
     ]
     for (const [changes, error] of refused) expect(checkPart(newMadePart(changes), parts()), JSON.stringify(changes)).toMatch(error)
   })
@@ -153,9 +156,9 @@ describe('addPart', () => {
   })
 
   it('adds a COTS part without a material, and with no revision if left empty', async () => {
-    await addPart(newMadePart({ kind: 'cots', revision: '', material: 'Left over', vendor: 'WCP', vendor_part_number: 'EXAMPLE-COL-12' }))
+    await addPart(newMadePart({ kind: 'cots', revision: '', material: 'Left over', vendor: 'WCP', vendor_part_number: 'EXAMPLE-COL-12', product_url: ' https://example.com/col ' }))
     expect(parts().find((p) => p.part_number === '4096-26-INT-007')).toMatchObject({
-      kind: 'cots', revision: null, material: null, vendor: 'WCP', vendor_part_number: 'EXAMPLE-COL-12',
+      kind: 'cots', revision: null, material: null, vendor: 'WCP', vendor_part_number: 'EXAMPLE-COL-12', product_url: 'https://example.com/col',
     })
   })
 
@@ -176,9 +179,39 @@ describe('changePart and removePart', () => {
     expect(plate()).toMatchObject({ revision: 'C', quantity: 4, material: '6061 aluminum, 1/8 in plate' })
   })
 
-  it('clears the material when a part is changed to COTS', async () => {
-    await changePart(plate(), newMadePart({ part_number: '4096-26-INT-001', kind: 'cots', vendor: 'WCP' }))
-    expect(plate()).toMatchObject({ kind: 'cots', material: null, vendor: 'WCP' })
+  it('clears the material and removes the stages when a part is changed to COTS, and starts with none when changed back', async () => {
+    const others = stepsTable.rows().filter((s) => s.part_id !== plate().id)
+    expect(stepsFor(plate(), stepsTable.rows()).length).toBeGreaterThan(0)
+    const toCots = newMadePart({ part_number: '4096-26-INT-001', kind: 'cots', vendor: 'WCP', vendor_part_number: 'EXAMPLE-BELT-120', product_url: 'https://example.com/belt' })
+    expect((await changePart(plate(), toCots)).ok).toBe(true)
+    expect(plate()).toMatchObject({ kind: 'cots', material: null, vendor: 'WCP', vendor_part_number: 'EXAMPLE-BELT-120', product_url: 'https://example.com/belt' })
+    expect(stepsFor(plate(), stepsTable.rows())).toEqual([])
+    expect(stepsTable.rows()).toEqual(others)
+
+    expect((await changePart(plate(), newMadePart({ part_number: '4096-26-INT-001' }))).ok).toBe(true)
+    expect(plate()).toMatchObject({ kind: 'made', vendor: null, vendor_part_number: null, product_url: null })
+    expect(stepsFor(plate(), stepsTable.rows())).toEqual([])
+  })
+
+  it('says what changing a Custom part to COTS will do, before saving', () => {
+    const steps = stepsTable.rows()
+    const withStages = plate()
+    const done = stepsFor(withStages, steps).filter((s) => s.status === 'done').length
+    const motor = parts().find((p) => p.kind === 'cots')!
+    const noStages = { ...withStages, id: 'no-stages' }
+    const cases: [Part, 'made' | 'cots', number, RegExp | null][] = [
+      [withStages, 'cots', 0, new RegExp(`has \\d+ stages \\(${done} done\\)\\. Changing it to COTS removes them\\.$`)],
+      [withStages, 'cots', 2, /removes them\. 2 are on the CNC board/],
+      [noStages, 'cots', 1, /^1 is on the CNC board/],
+      [noStages, 'cots', 0, null], // nothing to lose
+      [withStages, 'made', 0, null], // not changing kind
+      [motor, 'made', 0, null], // COTS to Custom loses nothing
+    ]
+    for (const [part, kind, onBoard, expected] of cases) {
+      const warning = kindChangeWarning(part, kind, steps, onBoard)
+      if (expected) expect(warning, part.name).toMatch(expected)
+      else expect(warning, part.name).toBeNull()
+    }
   })
 
   it('deletes a part', async () => {

@@ -175,6 +175,16 @@ describe('BOM robots, systems and parts', () => {
     ).rejects.toThrow('check constraint')
   })
 
+  it('lets student leaders, but not students, give a part a product page, and only accepts https:// links', async () => {
+    const [part] = await addMadePart(mentor)
+    const setLink = (person: string, link: string) =>
+      db.as(person, 'update public.bom_parts set product_url = $1 where id = $2 returning id', [link, part.id])
+    expect(await setLink(leader, 'https://www.example.com/belt')).toEqual([{ id: part.id }])
+    expect(await setLink(student, 'https://www.example.com/other')).toEqual([])
+    await expect(setLink(leader, 'javascript:alert(1)')).rejects.toThrow('check constraint')
+    expect(await db.sql('select product_url from public.bom_parts')).toEqual([{ product_url: 'https://www.example.com/belt' }])
+  })
+
   it('deletes the parts in a system when the system is deleted', async () => {
     await addMadePart(mentor)
     await db.as(mentor, 'delete from public.bom_systems where id = $1', [systemId])

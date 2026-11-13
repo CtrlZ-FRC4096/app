@@ -17,6 +17,10 @@
  *   WCP-0123, is COTS with that vendor (identifyCots() in data.ts, #20).
  *   Parts already in the app keep the kind they have, so changing a wrong
  *   guess by hand sticks.
+ * - A part that's already COTS keeps its vendor, vendor part number and
+ *   product page: what we typed wins, and Onshape only fills in what's
+ *   empty. So a belt drawn in CAD and changed to COTS by hand keeps its
+ *   details (#169).
  * - Parts no longer in Onshape are marked "Removed in Onshape", not
  *   deleted, so their history stays. If they come back, the mark goes.
  */
@@ -115,6 +119,8 @@ export function planOnshapeImport(system: BomSystem, bom: OnshapeBom, allParts: 
     const fromOnshape = kind === 'made' ? fit(line.part_number, 40) : null
     const freeNumber = fromOnshape && (!owner.has(fromOnshape) || owner.get(fromOnshape) === existing?.id) ? fromOnshape : null
 
+    // A part that was already COTS keeps the vendor details we typed (#169).
+    const keep = existing?.kind === 'cots' ? existing : undefined
     // Where Onshape has nothing, keep what's already here.
     const row: PartRow = {
       system_id: system.id,
@@ -124,8 +130,10 @@ export function planOnshapeImport(system: BomSystem, bom: OnshapeBom, allParts: 
       kind,
       material: kind === 'made' ? (fit(line.material, 100) ?? existing?.material ?? null) : null,
       quantity: Math.max(1, Math.round(line.quantity) || 1),
-      vendor: kind === 'cots' ? (fit(line.vendor, 100) ?? recognized?.vendor ?? existing?.vendor ?? null) : null,
-      vendor_part_number: kind === 'cots' ? (recognized?.vendor_part_number ?? fit(line.part_number, 100) ?? existing?.vendor_part_number ?? null) : null,
+      vendor: kind === 'cots' ? (keep?.vendor ?? fit(line.vendor, 100) ?? recognized?.vendor ?? null) : null,
+      vendor_part_number: kind === 'cots' ? (keep?.vendor_part_number ?? recognized?.vendor_part_number ?? fit(line.part_number, 100) ?? null) : null,
+      // Onshape has no product pages: only people add them.
+      product_url: kind === 'cots' ? (keep?.product_url ?? null) : null,
       onshape_url: line.url,
       onshape_id: line.onshape_id,
       removed_in_onshape: false,

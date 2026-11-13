@@ -34,6 +34,7 @@ The rules are in `supabase/migrations/20261110130000_bom_student_leaders.sql` (u
 |:--|:--|:--|
 | **Purchase**, or **Open in Purchasing** once there's a request | COTS parts | Opens a request in Purchasing filled in from the part, or the request it already has. Its status, **Late** and "Arrives Nov 12" sit just before it. |
 | **Ready to CAM** | Custom parts | Puts the part on the CNC board. "2 on the CNC board" sits just before it. |
+| **Product page ↗** | COTS parts with a product page, or whose Purchasing request has a link | Opens the product's page in a new tab. |
 | **Open CAD ↗** | Parts with an Onshape link | Opens the part in Onshape in a new tab. |
 | **Edit** | Every part, for student leaders, mentors and admins | Opens the part's form, to change or delete it. Tapping the name does too. |
 
@@ -42,6 +43,14 @@ Parts marked "Removed in Onshape" don't show Purchase or Ready to CAM.
 Every form (a part, Ready to CAM, stages, assigning a stage) opens near the top of the page, above the parts list, and scrolls itself into view when it opens (`InView` from `src/core/ui.tsx`, which Purchasing uses too), so it's never out of sight (#170).
 
 **Custom and COTS.** Custom parts are made in our shop; COTS parts are bought. The page calls them Custom, but the database still stores them as `made`, so no migration was needed for the name.
+
+**Changing a Custom part to COTS** (#169). Some parts come in from Onshape as Custom, but we buy them, like belts drawn with a belt generator. **Edit** the part and pick COTS, then fill in the vendor, vendor part number and **Product page** (an optional `https://` link). Its material is cleared.
+- **Its stages are removed** when you save, so it drops out of the station queues. The form says so first: "This part has 3 stages (1 done). Changing it to COTS removes them." (`kindChangeWarning()` and `changePart()` in `data.ts`).
+- **The CNC board is left alone.** If some are on the CNC board, the form says so: take them off there if they won't be cut.
+- It then shows like any other COTS part: what's on the shelf, its order in Purchasing (or **Purchase**), and it counts in **To order**. **Purchase** fills in Purchasing's link from the product page.
+- **Changing it back to Custom** works too. It starts with no stages: choose them with **Add stages**.
+
+The product page column is added by `supabase/migrations/20261113120000_bom_parts_product_url.sql`, with its rules tested in `supabase/tests/bom.test.ts`.
 
 **Part numbers.** Every part gets a team number like `4096-26-INT-001`: team, year, system code, then a number. Custom parts also have a material, such as "6061 aluminum, 1/4 in plate". COTS (bought) parts have a vendor and the vendor's part number.
 
@@ -87,6 +96,7 @@ Student leaders, mentors and admins import. Students can add a system's Onshape 
 3. The page shows what will change before anything is saved. **Import** makes the changes:
    - **New parts are added.** A custom part keeps its Onshape part number if no other part has it; otherwise it gets the next team number. Standard content (bolts, nuts) and parts with a vendor are COTS: Onshape's part number becomes the vendor's part number, and they get a team number too.
    - **Vendor part numbers are recognized** (#20). A new part with a vendor's number in its part number or name is COTS with that vendor: `WCP-0123` (West Coast Products), `am-1234` (Andy Mark), `REV-21-1650` (REV Robotics), `217-1234` and `276-1234` (VEX). `identifyCots()` in `data.ts` has the patterns: add a vendor there, with a test. Our own numbers (`4096-…`) are never taken for bought parts. It's a guess from how the number is written, so check the preview; a part already in the app keeps the kind it has, so fixing a wrong guess by hand sticks.
+   - **A part that's already COTS keeps what we typed:** its vendor, vendor part number and product page. Onshape only fills them in where they're empty. So a belt changed to COTS by hand stays COTS with its details.
    - **Changed names, quantities, materials and revisions are updated.** Where Onshape has nothing (no material set yet, say), what's in the app stays.
    - **Parts no longer in Onshape are marked "Removed in Onshape"**, not deleted, so their history stays. If they come back, the mark goes.
 
