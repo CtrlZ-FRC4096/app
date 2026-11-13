@@ -3,7 +3,21 @@ import { shortDate } from '../format'
 import { toast } from '../toast'
 import { PageHead, Panel, Pill } from '../ui'
 import { navigate, parseRoute } from '../router'
-import { SHOWN_NOTIFICATIONS, deleteNotification, markAllRead, markRead, notificationHref, unreadCount, useNotifications, type AppNotification } from '../notifications'
+import { useSession } from '../session'
+import { modules } from '../../modules'
+import {
+  SHOWN_NOTIFICATIONS,
+  deleteNotification,
+  markAllRead,
+  markRead,
+  notificationAreas,
+  notificationHref,
+  setNotificationSetting,
+  unreadCount,
+  useNotificationSettings,
+  useNotifications,
+  type AppNotification,
+} from '../notifications'
 import {
   BLOCKED_TEXT,
   IPHONE_STEPS,
@@ -26,9 +40,9 @@ import {
 type Outcome = { ok: true; value: unknown } | { ok: false; error: string }
 
 /**
- * Notifications, from the bell at the top right: your notifications, and
- * turning phone notifications on or off for this device. See
- * src/core/notifications.ts and src/core/push.ts.
+ * Notifications, from the bell at the top right: your notifications, which
+ * kinds you get, and turning phone notifications on or off for this device.
+ * See src/core/notifications.ts and src/core/push.ts.
  */
 export function Notifications() {
   const [state, setState] = useState<PushState | null>(null)
@@ -52,6 +66,7 @@ export function Notifications() {
         Things that need you. They show here, and on your phone too if you turn that on below.
       </PageHead>
       <List busy={busy} onTest={() => void run(() => sendTest(state === 'on'), 'Sent.')} />
+      <WhatToNotify />
       <ThisDevice state={state} busy={busy} run={run} />
     </>
   )
@@ -107,6 +122,58 @@ function List(props: { busy: boolean; onTest: () => void }) {
           ))}
         </div>
       )}
+    </Panel>
+  )
+}
+
+/**
+ * A switch for each kind of notification, under the name of the module that
+ * sends it. They're built from each module's `notifications` list in its
+ * index.ts, so a new kind shows up here by itself.
+ */
+function WhatToNotify() {
+  const { role } = useSession()
+  const areas = notificationAreas(modules, role, useNotificationSettings())
+  const [saving, setSaving] = useState<string | null>(null)
+
+  async function change(key: string, enabled: boolean) {
+    setSaving(key)
+    const result = await setNotificationSetting(key, enabled)
+    setSaving(null)
+    if (!result.ok) toast(result.error)
+  }
+
+  if (areas.length === 0) return null
+
+  return (
+    <Panel title="What to notify me about">
+      <p className="panel-body note" style={{ paddingBottom: 0 }}>
+        Turn off anything you don't want to hear about. Changes are saved as soon as you tap.
+      </p>
+      {areas.map((area) => (
+        <section key={area.id}>
+          <h3 style={{ padding: '14px 16px 4px' }}>{area.name}</h3>
+          <div className="row-list">
+            {area.kinds.map((kind) => (
+              <label key={kind.key} className="check" style={{ display: 'flex', minHeight: 44, alignItems: 'flex-start', fontSize: 'inherit' }}>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={kind.enabled}
+                  disabled={saving === kind.key}
+                  onChange={(e) => void change(kind.key, e.target.checked)}
+                  style={{ flex: 'none', width: 24, height: 24, marginTop: 2 }}
+                />
+                <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+                  <strong>{kind.name}</strong>
+                  <br />
+                  <span className="note">{kind.description}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </section>
+      ))}
     </Panel>
   )
 }

@@ -19,7 +19,7 @@ This list is typed in by hand. It's **separate from the BOM**, which comes from 
 - **From the BOM** (#80): a COTS part's **Purchase** button opens **Add new item** filled in from the part (name, vendor, product page link, vendor part number, quantity, and its system as the type), linked to the part. The BOM then shows the request's status, with a link to it here. The BOM's vendor names are matched to the list in `vendorFor()`.
 - **Prices:** Price each is what one costs, and it can be left empty. The list and the form work out the line's total from it and Number needed, like "$12.50 each · $50.00 total" (`priceText()`), so the two can't disagree. Everyone on the team sees prices. Anyone can fill one in or change it while an item is being asked for; once it's ordered, only mentors and purchasers can change it, like everything else about an order. Shipping, tax and a total for a whole order aren't built yet.
 - **Requested by** is always whoever filled in the form (everyone signs in with Slack). Nobody can pick someone else or change it later, not even a mentor. Importing the Slack list (step 3) will need a mentors-only way to keep its names.
-- **Notifications** (#93): when a request is ordered (Order Placed) or arrives (Received), whoever asked for it gets a notification in the bell, which opens the item. Nobody gets one for their own change. The database adds them (`supabase/migrations/..._purchase_notifications.sql`, tested in `supabase/tests/purchase-notifications.test.ts`), so demo mode doesn't show them. They don't go to phones yet.
+- **Notifications** (#93): when a request is ordered (Order Placed) or arrives (Received), whoever asked for it gets a notification in the bell, which opens the item. Nobody gets one for their own change. People can switch these off with **My requests** under "What to notify me about" on the Notifications page (#155); it's listed in `index.ts`. The database adds them (`supabase/migrations/..._purchase_notifications.sql`, and `..._notification_settings.sql` for the switch, tested in `supabase/tests/purchase-notifications.test.ts`), so demo mode doesn't show them. They don't go to phones yet.
 - **Receipts** (#79): once an item is ordered (#168), mentors and purchasers can open it to add a PDF or photo of its receipt, or several. **Add receipt** appears as soon as they pick Order Placed or a later status in the form, along with the other order fields. Existing receipts stay visible if the status goes back to asking; they can still be opened and deleted. On a phone, **Add receipt** offers the camera as well as files. Up to 10 MB each. See [Receipts](#receipts).
 - The home page tile shows "3 to order now (1 high priority)".
 
@@ -27,7 +27,7 @@ The statuses, vendors and types are lists at the top of `data.ts`, so they're ea
 
 | File | What it does |
 |:--|:--|
-| `index.ts` | Tells the app about the module: it's in the Build menu, with the home page tile's status. |
+| `index.ts` | Tells the app about the module: it's in the Build menu, with the home page tile's status and its one kind of notification (My requests). |
 | `data.ts` | The lists, the `purchase_items` table and its example rows, the views, the checks, adding, changing and deleting items, and receipts. |
 | `data.test.ts` | Tests for `data.ts`. |
 | `PurchasingPage.tsx` | The view switch and search, the items under each heading, the form, receipts, and the purchasers. Its address can open a request from a BOM part (`#/purchasing/from-bom/<part id>`) or an item (`#/purchasing/item/<item id>`). |

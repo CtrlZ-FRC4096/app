@@ -69,7 +69,7 @@ every role that can open it.
 
 | File | Job |
 |:--|:--|
-| `index.ts` | Tells the app about the module, including which menu it sits under (`group`). Optional `useSummary` puts a status on the home page tile; optional `useAttention` adds lines to "Needs attention". Both are hooks from `data.ts`. |
+| `index.ts` | Tells the app about the module, including which menu it sits under (`group`). Optional `useSummary` puts a status on the home page tile; optional `useAttention` adds lines to "Needs attention". Both are hooks from `data.ts`. Optional `notifications` lists the kinds of notification it sends (see below). |
 | `data.ts` | The module's table (`createTable`), its rules, and the functions that change it. Pages never save anything themselves. |
 | `data.test.ts` | Tests for every function in `data.ts`. They run in demo mode. |
 | `SomethingPage.tsx` | The page. Reads rows with a `use...()` hook and changes them with functions from `data.ts`. |
@@ -100,6 +100,16 @@ what stop people.
 
 **Showing who did something.** `useMemberNames()` from `src/core/members.ts`
 turns a `created_by` id into a name.
+
+**Sending notifications.** List each kind in `index.ts`, like Purchasing's
+`{ key: 'purchasing.request_updates', name: 'My requests', description: '...', on: true }`.
+It gets its own switch under "What to notify me about" on the Notifications
+page by itself, for people who can open your module. The trigger in your
+migration that adds the notifications checks the switch first with
+`private.wants_notification(member_id, 'your-module.kind', true)` (the last
+value is the same as `on`), and fills in `topic` with the key. See
+`supabase/migrations/..._notification_settings.sql`. Adding a trigger needs a
+mentor.
 
 **Reading another module's data.** Import from that module's `data.ts`, never
 from its pages. The BOM will read stock levels from `../inventory/data`.
