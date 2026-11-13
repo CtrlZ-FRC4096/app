@@ -42,6 +42,11 @@ export function replyText(json: string, status = 200): Response {
   return new Response(json, { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
 }
 
+/** A file the browser is allowed to read, such as a part's STEP from Onshape. The app names it when saving it. */
+export function replyFile(bytes: Uint8Array<ArrayBuffer>): Response {
+  return new Response(bytes, { headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' } })
+}
+
 async function findMember(req: Request): Promise<{ member: Member; db: SupabaseClient } | null> {
   const authorization = req.headers.get('Authorization')
   const id = tokenSubject(authorization)

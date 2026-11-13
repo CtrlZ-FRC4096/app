@@ -925,9 +925,8 @@ export async function setDailyReminder(on: boolean): Promise<Result> {
 }
 
 // ---------------------------------------------------------------------------
-// Files for the machines (#23): which kind of file each machine needs, and
-// what to call it. Getting the file itself from Onshape isn't built yet: it
-// goes through the onshape server function, which a mentor sets up.
+// Files for the machines (#24): which kind of file each machine needs, and
+// what to call it. Downloading the file itself from Onshape is in files.ts.
 
 export type FileFormat = 'step' | 'stl' | '3mf' | 'dxf'
 export const FILE_FORMAT_NAMES: Record<FileFormat, string> = { step: 'STEP', stl: 'STL', '3mf': '3MF', dxf: 'DXF' }

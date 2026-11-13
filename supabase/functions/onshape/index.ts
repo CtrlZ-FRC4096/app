@@ -9,10 +9,12 @@
 //   the parts asked for in a Part Studio (one per configuration).
 // - layout: where each part sits in a sheet's layout assembly, for the CNC
 //   module. One call.
+// - file: a part's STEP or STL, for whoever is at its machine (#24). STL is
+//   one call; STEP is usually 4 to 6. See files.ts.
 //
 // Onshape limits calls per year, so the app only calls this when someone
 // clicks a button, and keeps what it gets.
-import { forMembers, reply } from '../_shared/members.ts'
+import { forMembers, reply, replyFile } from '../_shared/members.ts'
 import {
   bomLines,
   byConfiguration,
@@ -26,17 +28,36 @@ import {
   type OnshapeShapes,
 } from './onshape.ts'
 import { readBodies, shapeFromEdges } from './shape.ts'
+import { createOnshapeFiles, fileRequest, isFileRequest, partSource, type FilePart } from './files.ts'
 
 const accessKey = Deno.env.get('ONSHAPE_ACCESS_KEY') ?? ''
 const secretKey = Deno.env.get('ONSHAPE_SECRET_KEY') ?? ''
 const onshape = createOnshape(accessKey, secretKey)
+const onshapeFile = createOnshapeFiles(accessKey, secretKey)
 
 export default {
-  fetch: forMembers(async (req) => {
+  fetch: forMembers(async (req, _member, db) => {
     if (!accessKey || !secretKey) {
       return reply({ error: "The Onshape keys aren't set up yet. A mentor adds ONSHAPE_ACCESS_KEY and ONSHAPE_SECRET_KEY: see supabase/README.md." }, 503)
     }
-    const request = onshapeRequest(await req.json().catch(() => null))
+    const body = await req.json().catch(() => null)
+
+    // A part's file for its machine (#24). Anyone on the team can download.
+    // The part is read with the caller's own sign-in, so only parts in the
+    // BOM can be fetched, and its Onshape link comes from the database.
+    if (isFileRequest(body)) {
+      const asked = fileRequest(body)
+      if ('error' in asked) return reply({ error: asked.error }, 400)
+      const { data, error } = await db.from('bom_parts').select('name, onshape_url, onshape_id, removed_in_onshape').eq('id', asked.part).maybeSingle()
+      if (error) return reply({ error: "Couldn't read that part from the BOM. Try again in a minute." }, 502)
+      const source = partSource(data as FilePart | null)
+      if ('error' in source) return reply({ error: source.error }, source.status)
+      const answer = await onshapeFile(source, asked.format)
+      console.log(`onshape file: ${asked.format} for part ${asked.part}, ${answer.calls} Onshape calls`)
+      return answer.ok ? replyFile(answer.bytes) : reply({ error: answer.error }, answer.status)
+    }
+
+    const request = onshapeRequest(body)
     if ('error' in request) return reply({ error: request.error }, 400)
 
     if (request.kind === 'check') {

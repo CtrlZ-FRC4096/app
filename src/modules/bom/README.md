@@ -163,17 +163,31 @@ The example Intake in demo mode is linked to a made-up assembly, so **Import fro
 
 ## Files for the machines
 
-Not on the page yet (#23). `data.ts` already works out which file each machine needs (`MACHINE_FILE_FORMATS`) and what it's called (`partFileName()`), and `partFiles()` lists a part's files from its stages:
+Whoever is at a machine can download the part's file without opening Onshape (#24). Under a custom part's stages, **Files:** has a **Download STEP** or **Download STL** button for each file its machines need. Pick a machine in the station filter (say "Lathe only") and **Download all 3 STEP files** at the top gets every part in that queue, one after another (the browser may ask once whether the site can download several files: choose Allow). There's no zip, so no extra package was needed.
 
-| Machine | File |
-|:--|:--|
-| Lathe, mill | STEP |
-| 3D printer | STL (or 3MF) |
-| Laser | DXF |
-| CNC router | DXF (or STEP) |
-| Hand tools | none |
+| Machine | File it needs | What the app downloads now |
+|:--|:--|:--|
+| Lathe, mill | STEP | STEP |
+| 3D printer | STL (or 3MF) | STL, in millimeters |
+| CNC router | DXF (or STEP) | STEP, until DXF works |
+| Laser | DXF | Nothing yet: export it from Onshape (**Open CAD**) |
+| Hand tools | none | |
 
 Files are named by part number and revision, like `4096-26-INT-014_revB.step`.
+
+- **Anyone on the team can download.** It changes nothing, and the people at the machines need the files. The server function only fetches parts that are in the BOM: the app sends the part's id, and the function reads its Onshape link from `bom_parts` with the caller's own sign-in.
+- **Only parts imported from Onshape** can be downloaded, because the app has to know which Onshape part each one is (`onshape_id`). Parts typed in by hand say so.
+- **Onshape is only asked when someone presses Download.** An STL is one Onshape API call. A STEP is made by Onshape in the background (a "translation"): one call to start it, a few to check it's done, and one to fetch it, so about 4 to 6. A whole queue is that for each part. Files bigger than 20 MB aren't passed on.
+- **In demo mode** the buttons give a tiny made-up file (a 20 mm cube STL, or a STEP with only a header), so they can be tried without keys.
+
+| File | What it does |
+|:--|:--|
+| `data.ts` | Which file each machine needs (`MACHINE_FILE_FORMATS`), its name (`partFileName()`), and a part's files from its stages (`partFiles()`). |
+| `files.ts` | Which of those the app can download (`partDownloads()`), a machine's queue (`queueFiles()`), and downloading through the `onshape` server function (`downloadPartFile()`, `downloadQueue()`). Tested in `files.test.ts`. |
+| `Downloads.tsx` | The **Files:** buttons under a part, and the queue's download button. |
+| `supabase/functions/onshape/files.ts` | What the server function asks Onshape for a part's STEP or STL, and checks on what comes back. Tested with a made-up Onshape in `supabase/tests/onshape-files.test.ts`. |
+
+**View 3D** isn't built yet: it needs a 3D viewer library, which is an npm package, so a mentor decides (see the pull request for #24).
 
 ## Slack reminders
 
@@ -192,7 +206,7 @@ Messages from the team's Slack bot about the stages assigned to people (#22). Th
 
 ## Still to do
 
-- View 3D and download buttons for a part's files, and a whole queue's (#23). They need a mentor: a viewer library, and file exports in the `onshape` server function
+- View 3D, and DXF downloads for the laser and router (#24). 3D needs a mentor to pick a viewer library
 - Write team part numbers into Onshape (#21)
 - Slack reminders (#22): the team to confirm the days and who gets the weekly summary (see [Slack reminders](#slack-reminders))
 - Move a part's CNC router stage along when the CNC board marks it cut
