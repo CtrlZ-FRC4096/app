@@ -17,6 +17,7 @@ import {
 } from './data'
 import { assignStep, checkAssignment, dueText, isOverdue, today } from './data'
 import { partFileName, partFiles } from './data'
+import { getsDailyReminder, reminderOptOutsTable, setDailyReminder } from './data'
 
 beforeEach(() => {
   setDemoRole('student')
@@ -670,5 +671,19 @@ describe('partFiles', () => {
     const shaft = part('Roller shaft')
     expect(partFiles(shaft, [{ ...stage('Roller shaft', 'process1'), machine: 'hand_tools' }])).toEqual([])
     expect(files('Brushless motor')).toEqual([])
+  })
+})
+
+describe('setDailyReminder', () => {
+  it('turns your own daily Slack reminder off and back on, and doing it twice changes nothing', async () => {
+    reminderOptOutsTable.reset()
+    const on = () => getsDailyReminder(DEMO_PEOPLE.alex, reminderOptOutsTable.rows())
+    const steps: [turnOn: boolean, expected: boolean][] = [[false, false], [false, false], [true, true], [true, true]]
+    for (const [turnOn, expected] of steps) {
+      expect((await setDailyReminder(turnOn)).ok).toBe(true)
+      expect(on(), `after turning it ${turnOn ? 'on' : 'off'}`).toBe(expected)
+    }
+    // Jordan turned theirs off in the example data, and that stays.
+    expect(getsDailyReminder(DEMO_PEOPLE.jordan, reminderOptOutsTable.rows())).toBe(false)
   })
 })

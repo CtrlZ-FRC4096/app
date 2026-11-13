@@ -888,6 +888,43 @@ export function stationQueue(parts: Part[], steps: Step[], station: Station): { 
 }
 
 // ---------------------------------------------------------------------------
+// Slack reminders about your stages (#22): the reminders themselves are in
+// reminders.ts. Here is the switch to turn off your daily one. A row in
+// bom_reminder_opt_outs means that person turned it off, so everyone else
+// gets it without doing anything. Each person sees, adds and removes only
+// their own row (..._bom_reminder_opt_outs.sql).
+
+/** One row of bom_reminder_opt_outs: this person turned off their daily Slack reminder. */
+export interface ReminderOptOut extends Row {
+  member_id: string
+}
+
+export const reminderOptOutsTable = createTable<ReminderOptOut>('bom_reminder_opt_outs', {
+  // Jordan turned theirs off.
+  demo: [{ id: '00000000-0000-4000-8000-0000000b3001', member_id: DEMO_PEOPLE.jordan, created_at: '2026-11-01T18:00:00Z' }],
+})
+
+/** Does this person get the daily reminder? Yes, unless they turned it off. */
+export function getsDailyReminder(memberId: string, optOuts: ReminderOptOut[]): boolean {
+  return !optOuts.some((o) => o.member_id === memberId)
+}
+
+export function useDailyReminder(memberId: string): boolean {
+  return getsDailyReminder(memberId, reminderOptOutsTable.useRows())
+}
+
+/** Turn your own daily reminder on or off. */
+export async function setDailyReminder(on: boolean): Promise<Result> {
+  const me = currentUser()
+  if (!me) return fail('Sign in first.')
+  const mine = reminderOptOutsTable.rows().find((o) => o.member_id === me.id)
+  if (on) return mine ? reminderOptOutsTable.remove(mine.id) : ok(null)
+  if (mine) return ok(null)
+  const result = await reminderOptOutsTable.insert({ member_id: me.id })
+  return result.ok ? ok(null) : result
+}
+
+// ---------------------------------------------------------------------------
 // Files for the machines (#23): which kind of file each machine needs, and
 // what to call it. Getting the file itself from Onshape isn't built yet: it
 // goes through the onshape server function, which a mentor sets up.
