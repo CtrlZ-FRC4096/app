@@ -27,6 +27,8 @@
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { currentUser, isMentor, useSession, type User } from '../../core/session'
+import type { Member } from '../../core/members'
+import type { Role } from '../../core/roles'
 import { isLive, supabase } from '../../core/supabase'
 import { money, plural } from '../../core/format'
 import type { Notice, Tone } from '../../core/registry'
@@ -334,10 +336,22 @@ export function arrivalText(item: PurchaseItem): string | null {
 
 const NOT_A_BUYER = 'Only mentors and purchasers place and change orders. Ask one of them: they\'re listed at the bottom of this page.'
 
+/** Who chooses the purchasers: mentors and admins, on the Members page (#144). */
+export function canChooseBuyers(role: Role): boolean {
+  return isMentor(role)
+}
+
+/** Who can be made a purchaser: anyone whose access is on, except mentors and admins, who already place orders. */
+export function canBeBuyer(member: Pick<Member, 'active' | 'role'>): boolean {
+  return member.active && !isMentor(member.role)
+}
+
+const NOT_CHOOSING = 'Only mentors and admins choose the purchasers.'
+
 /** Make someone a purchaser. Mentors and admins only. */
 export async function addBuyer(memberId: string): Promise<Result<Buyer>> {
   const me = currentUser()
-  if (!me || !isMentor(me.role)) return fail('Only mentors and admins choose the purchasers.')
+  if (!me || !canChooseBuyers(me.role)) return fail(NOT_CHOOSING)
   if (!memberId) return fail('Pick someone first.')
   if (buyersTable.rows().some((b) => b.member_id === memberId)) return fail("They're already a purchaser.")
   return buyersTable.insert({ member_id: memberId })
@@ -346,8 +360,17 @@ export async function addBuyer(memberId: string): Promise<Result<Buyer>> {
 /** Stop someone being a purchaser. Mentors and admins only. */
 export async function removeBuyer(buyer: Buyer): Promise<Result> {
   const me = currentUser()
-  if (!me || !isMentor(me.role)) return fail('Only mentors and admins choose the purchasers.')
+  if (!me || !canChooseBuyers(me.role)) return fail(NOT_CHOOSING)
   return buyersTable.remove(buyer.id)
+}
+
+/** The Members page's Purchaser tick: make someone a purchaser, or stop them being one. Doing it twice changes nothing. */
+export async function setBuyer(memberId: string, on: boolean): Promise<Result> {
+  const buyer = buyersTable.rows().find((b) => b.member_id === memberId)
+  if (on === Boolean(buyer)) return ok(null)
+  if (!on) return removeBuyer(buyer!)
+  const added = await addBuyer(memberId)
+  return added.ok ? ok(null) : added
 }
 
 // ---------------------------------------------------------------------------

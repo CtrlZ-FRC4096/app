@@ -5,6 +5,7 @@
 // and purchase-receipts.test.ts.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
+import type { Member } from '../../core/members'
 import {
   EMPTY_ITEM,
   MAX_NAME_LENGTH,
@@ -15,6 +16,8 @@ import {
   TYPES,
   VENDORS,
   addBuyer,
+  canBeBuyer,
+  canChooseBuyers,
   addItem,
   arrivalText,
   addReceipt,
@@ -33,6 +36,7 @@ import {
   isLate,
   isOrderChange,
   removeBuyer,
+  setBuyer,
   requestFromBomPart,
   requestsByBomPart,
   searchItems,
@@ -436,6 +440,29 @@ describe('purchasers', () => {
     expect((await removeBuyer(jordan)).ok).toBe(true)
     expect(buyersTable.rows().map((b) => b.member_id)).toEqual([DEMO_PEOPLE.alex])
   })
+
+  it('are chosen by mentors and admins, from people whose access is on and who are not mentors or admins', () => {
+    expect((['student', 'leader', 'mentor', 'admin'] as const).map(canChooseBuyers)).toEqual([false, false, true, true])
+    const cases: [Pick<Member, 'active' | 'role'>, boolean][] = [
+      [{ active: true, role: 'student' }, true],
+      [{ active: true, role: 'leader' }, true],
+      [{ active: true, role: 'mentor' }, false], // already places orders
+      [{ active: true, role: 'admin' }, false],
+      [{ active: false, role: 'student' }, false], // access switched off
+    ]
+    for (const [member, expected] of cases) expect(canBeBuyer(member), JSON.stringify(member)).toBe(expected)
+  })
+
+  it('are ticked on and off from the Members page, where ticking twice changes nothing', async () => {
+    setDemoRole('admin')
+    const ids = () => buyersTable.rows().map((b) => b.member_id)
+    expect((await setBuyer(DEMO_PEOPLE.alex, true)).ok).toBe(true)
+    expect((await setBuyer(DEMO_PEOPLE.alex, true)).ok).toBe(true)
+    expect(ids().filter((id) => id === DEMO_PEOPLE.alex)).toHaveLength(1)
+    expect((await setBuyer(DEMO_PEOPLE.jordan, false)).ok).toBe(true)
+    expect((await setBuyer(DEMO_PEOPLE.jordan, false)).ok).toBe(true)
+    expect(ids()).toEqual([DEMO_PEOPLE.alex])
+  })
 })
 
 // The database refuses all of these too (supabase/tests/purchasing-orders.test.ts
@@ -460,6 +487,8 @@ describe('only mentors and purchasers', () => {
       ['delete a receipt', () => removeReceipt(receipt)],
       ['choose a purchaser', () => addBuyer(DEMO_PEOPLE.alex)],
       ['remove a purchaser', () => removeBuyer(buyer)],
+      ['tick a purchaser on the Members page', () => setBuyer(DEMO_PEOPLE.alex, true)],
+      ['untick a purchaser on the Members page', () => setBuyer(buyer.member_id, false)],
     ]
     const everything = () => [itemsTable.rows(), buyersTable.rows(), receiptsTable.rows()]
     const before = everything()
