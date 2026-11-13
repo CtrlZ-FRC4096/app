@@ -538,6 +538,12 @@ export interface PitEntry {
   match: number | null
   /** One of DRIVETRAINS in season.ts, or '' if not chosen. */
   drivetrain: string
+  /** The drivetrain typed when it's Other, like "West coast with butterfly modules". '' otherwise. */
+  drivetrain_other: string
+  /** "What can their robot see?": any of VISION in season.ts. */
+  vision: string[]
+  /** More about what it can see, typed. '' if left blank. */
+  vision_notes: string
   /** Pounds. */
   weight: number | null
   /** Inches. */
@@ -582,8 +588,13 @@ export function checkPitEntry(fields: PitFields): string | null {
     const length = text.trim().length
     if (length > MAX_NOTES_LENGTH) return `Keep the ${name} under ${MAX_NOTES_LENGTH} characters. This one is ${length}.`
   }
+  if (fields.drivetrain === 'Other' && fields.drivetrain_other.trim().length > MAX_DRIVETRAIN_LENGTH) return `Keep the drivetrain under ${MAX_DRIVETRAIN_LENGTH} characters.`
+  if (fields.vision_notes.trim().length > MAX_SHORT_LENGTH) return `Keep what it can see under ${MAX_SHORT_LENGTH} characters.`
   return null
 }
+
+/** The longest a typed Other drivetrain can be, the same as the team database. */
+export const MAX_DRIVETRAIN_LENGTH = 100
 
 /** Weights and sizes must be under this. Nothing real comes close: it only stops a typo like 1155 for 115.5 from getting much worse. */
 export const MAX_PIT_NUMBER = 10000
@@ -596,6 +607,9 @@ export function savePitEntry(fields: PitFields): Result<PitEntry> {
   const entry: PitEntry = {
     ...fields,
     motors: trim(fields.motors),
+    // The typed drivetrain only means something when Other is chosen.
+    drivetrain_other: fields.drivetrain === 'Other' ? trim(fields.drivetrain_other) : '',
+    vision_notes: trim(fields.vision_notes),
     auto_path: trim(fields.auto_path),
     partners_do: trim(fields.partners_do),
     they_do: trim(fields.they_do),
@@ -617,6 +631,11 @@ export interface ScoutingPitEntry extends Row {
   team_number: number
   match_number: number | null
   drivetrain: string | null
+  /** The drivetrain typed when it's Other. Empty otherwise, or for entries saved before #163. */
+  drivetrain_other: string | null
+  /** Any of VISION in season.ts. Empty for entries saved before #163. */
+  vision: string[]
+  vision_notes: string | null
   weight: number | null
   length: number | null
   width: number | null
@@ -635,21 +654,35 @@ export interface ScoutingPitEntry extends Row {
 
 // Made up, for demo mode. Team numbers in the 9990s, so nobody mistakes them for real scouting.
 const EXAMPLE_PIT_ENTRIES: ScoutingPitEntry[] = [
-  { id: '00000000-0000-4000-8000-0000000d0101', event_key: EVENT_KEY, team_number: 9991, match_number: null, drivetrain: 'Swerve', weight: 118.5, length: 28, width: 28, height: 22, motors: '8 Kraken X60 on swerve, 2 on the shooter', auto_side: 'Center', auto_path: 'Scores preload, picks up 2 from the middle', partners_do: 'Feed us fuel', they_do: 'Score from the hub', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-06T22:10:00Z', created_at: '2026-11-06T22:11:00Z', created_by: DEMO_PEOPLE.jordan },
-  { id: '00000000-0000-4000-8000-0000000d0102', event_key: EVENT_KEY, team_number: 9992, match_number: null, drivetrain: 'Tank', weight: null, length: null, width: null, height: null, motors: null, auto_side: 'Left', auto_path: null, partners_do: null, they_do: 'Play defense', scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-06T22:20:00Z', created_at: '2026-11-06T22:21:00Z', created_by: DEMO_PEOPLE.alex },
+  { id: '00000000-0000-4000-8000-0000000d0101', event_key: EVENT_KEY, team_number: 9991, match_number: null, drivetrain: 'Swerve', drivetrain_other: null, vision: ['AprilTags', 'Game piece detection'], vision_notes: 'Two cameras on the shooter', weight: 118.5, length: 28, width: 28, height: 22, motors: '8 Kraken X60 on swerve, 2 on the shooter', auto_side: 'Center', auto_path: 'Scores preload, picks up 2 from the middle', partners_do: 'Feed us fuel', they_do: 'Score from the hub', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-06T22:10:00Z', created_at: '2026-11-06T22:11:00Z', created_by: DEMO_PEOPLE.jordan },
+  { id: '00000000-0000-4000-8000-0000000d0102', event_key: EVENT_KEY, team_number: 9992, match_number: null, drivetrain: 'Other', drivetrain_other: 'West coast with butterfly modules', vision: [], vision_notes: null, weight: null, length: null, width: null, height: null, motors: null, auto_side: 'Left', auto_path: null, partners_do: null, they_do: 'Play defense', scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-06T22:20:00Z', created_at: '2026-11-06T22:21:00Z', created_by: DEMO_PEOPLE.alex },
 ]
 
-export const pitTable = createTable<ScoutingPitEntry>('scouting_pit_entries', { demo: EXAMPLE_PIT_ENTRIES, sort: newestFirst })
+// Version 2: the drivetrain typed for Other, and vision, were added to the rows (#163).
+export const pitTable = createTable<ScoutingPitEntry>('scouting_pit_entries', { demo: EXAMPLE_PIT_ENTRIES, sort: newestFirst, version: 2 })
 
-/** A pit entry from this device, as a row for the team database. Blank choices and boxes are sent as empty (null). */
-export function pitToRow(entry: PitEntry): Omit<ScoutingPitEntry, 'created_at' | 'created_by'> {
-  const text = (value: string) => value.trim() || null
+/** Fields added to the pit form after the first pit entries were saved on phones (#163). */
+type PitAddedLater = 'drivetrain_other' | 'vision' | 'vision_notes'
+
+/** A pit entry saved on a phone by an older version of the app, before some questions were on the form. */
+type OlderPitEntry = Omit<PitEntry, PitAddedLater> & Partial<Pick<PitEntry, PitAddedLater>>
+
+/**
+ * A pit entry from this device, as a row for the team database. Blank
+ * choices and boxes are sent as empty (null), and so are questions an
+ * older entry doesn't have.
+ */
+export function pitToRow(entry: PitEntry | OlderPitEntry): Omit<ScoutingPitEntry, 'created_at' | 'created_by'> {
+  const text = (value: string | undefined) => value?.trim() || null
   return {
     id: entry.id,
     event_key: entry.event_key ?? currentEvent(),
     team_number: entry.team,
     match_number: entry.match,
     drivetrain: text(entry.drivetrain),
+    drivetrain_other: text(entry.drivetrain_other),
+    vision: entry.vision ?? [],
+    vision_notes: text(entry.vision_notes),
     weight: entry.weight,
     length: entry.length,
     width: entry.width,
@@ -758,6 +791,8 @@ export function pitAnswers(pit: PitRow): WrittenAnswer[] {
   const answers: [question: string, text: string | null][] = [
     ['Weight', pit.weight === null ? '' : `${pit.weight} pounds`],
     ['Size', size],
+    ['Drivetrain (typed)', pit.drivetrain_other],
+    ['What it can see', [pit.vision.join(', '), pit.vision_notes?.trim()].filter(Boolean).join('. ')],
     ['Motors', pit.motors],
     ['Auto starting side', pit.auto_side],
     ['Auto path', pit.auto_path],
@@ -769,9 +804,16 @@ export function pitAnswers(pit: PitRow): WrittenAnswer[] {
   )
 }
 
-/** A pit entry's drivetrain, or null if the scout didn't choose one. */
+/**
+ * A pit entry's drivetrain for the team page's bar, or null if the scout
+ * didn't choose one. Anything that isn't on DRIVETRAINS any more (like an
+ * older "Other omni/holonomic") counts as Other; the typed name is in
+ * pitAnswers().
+ */
 export function pitDrivetrain(pit: PitRow): string | null {
-  return pit.drivetrain?.trim() || null
+  const chosen = pit.drivetrain?.trim()
+  if (!chosen) return null
+  return DRIVETRAINS.includes(chosen) ? chosen : 'Other'
 }
 
 /** This event's entries, each once: an entry that's both Waiting here and in the team database is the same entry. */

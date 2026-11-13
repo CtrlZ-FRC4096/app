@@ -6,7 +6,7 @@ import { resetAllStores } from '../../core/store'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import {
   MAX_NOTES_LENGTH, MAX_SHORT_LENGTH, blankOrNumber, checkEntry, checkPitEntry, getEventTeams, tbaTeamUrl, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
-  MAX_PIT_NUMBER, numberOnly, pitAnswers, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, scoutedTeams, syncEntries, syncStatus, teamNumber,
+  MAX_PIT_NUMBER, MAX_DRIVETRAIN_LENGTH, numberOnly, pitAnswers, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, scoutedTeams, syncEntries, syncStatus, teamNumber,
   teamSummary, toRow, type EntryFields, type MatchRow, type PitFields, type PitRow, type TeamSummary,
   qualVideoRows, videoLink, type TbaMatchWithVideos,
   loadRatings, needsLoading, ratingsStore, resetRatings, savedRatings, savedWhen, signed, STALE_MS, teamRating, teamRecord, type Match13Rating,
@@ -28,6 +28,9 @@ const PIT: PitFields = {
   team: 9992,
   match: null,
   drivetrain: 'Swerve',
+  drivetrain_other: '',
+  vision: ['AprilTags'],
+  vision_notes: '',
   weight: 115.5,
   length: 28,
   width: 28,
@@ -273,6 +276,9 @@ describe('checkPitEntry', () => {
       ['no match number', { match: null }],
       ['no weight or size', { weight: null, length: null, width: null, height: null }],
       ['the longest answer', { motors: 'x'.repeat(MAX_NOTES_LENGTH) }],
+      ['the longest typed drivetrain', { drivetrain: 'Other', drivetrain_other: 'x'.repeat(MAX_DRIVETRAIN_LENGTH) }],
+      ['a long typed drivetrain that is not used, because Other is not chosen', { drivetrain_other: 'x'.repeat(MAX_DRIVETRAIN_LENGTH + 1) }],
+      ['the longest vision answer', { vision_notes: 'x'.repeat(MAX_SHORT_LENGTH) }],
     ]
     for (const [label, change] of allowed) expect(checkPitEntry({ ...PIT, ...change }), label).toBeNull()
     const refused: [string, Partial<PitFields>, RegExp][] = [
@@ -281,6 +287,8 @@ describe('checkPitEntry', () => {
       ['half a match', { match: 2.5 }, /Check the match number, or leave it blank/],
       ['a match number too big', { match: 1001 }, /match number/],
       ['a weight of zero', { weight: 0 }, /Check the weight, or leave it blank/],
+      ['a typed drivetrain too long', { drivetrain: 'Other', drivetrain_other: 'x'.repeat(MAX_DRIVETRAIN_LENGTH + 1) }, /drivetrain/],
+      ['a vision answer too long', { vision_notes: 'x'.repeat(MAX_SHORT_LENGTH + 1) }, /what it can see/],
       ['a weight too big', { weight: MAX_PIT_NUMBER }, /weight/],
       ['a height that is not a number', { height: Number.NaN }, /Check the height, or leave it blank/],
       ['an answer too long', { they_do: 'x'.repeat(MAX_NOTES_LENGTH + 1) }, /under 1000/],
@@ -360,6 +368,20 @@ describe('syncing pit entries', () => {
     if (!saved.ok) throw new Error(saved.error)
     const { event_key: _old, ...older } = saved.value
     expect(pitToRow(older)).toMatchObject({ event_key: EVENT_KEY, drivetrain: null, auto_side: null, motors: null, weight: null })
+  })
+
+  it('sends an entry saved before the typed drivetrain and vision were on the form (#163) with them empty', () => {
+    const saved = savePitEntry(PIT)
+    if (!saved.ok) throw new Error(saved.error)
+    const { drivetrain_other: _d, vision: _v, vision_notes: _n, ...older } = saved.value
+    expect(pitToRow(older)).toMatchObject({ drivetrain_other: null, vision: [], vision_notes: null })
+  })
+
+  it('keeps the typed drivetrain only when Other is chosen', () => {
+    const other = savePitEntry({ ...PIT, drivetrain: 'Other', drivetrain_other: '  West coast  ' })
+    const swerve = savePitEntry({ ...PIT, drivetrain: 'Swerve', drivetrain_other: 'West coast' })
+    expect(other.ok && other.value.drivetrain_other).toBe('West coast')
+    expect(swerve.ok && swerve.value.drivetrain_other).toBe('')
   })
 })
 
@@ -1271,10 +1293,16 @@ describe('teamSummary', () => {
     const skill = teamSummary(9991, [row(1, { driver_skill: 4 }), row(2, { driver_skill: null })], []).driverSkill
     expect(skill.map((t) => t.option)).toEqual(['1', '2', '3', '4', '5'])
     expect(skill[3]).toEqual({ option: '4', count: 1, share: 1 })
-    const summary = teamSummary(9991, [row(1, { stop: 'E-stop', broke_down: true }), row(2)], [pit({ drivetrain: 'Tank' }), pit({ drivetrain: '' })])
+    const summary = teamSummary(
+      9991,
+      [row(1, { stop: 'E-stop', broke_down: true }), row(2)],
+      [pit({ drivetrain: 'Tank' }), pit({ drivetrain: '' }), pit({ drivetrain: 'Other', drivetrain_other: 'West coast' }), pit({ drivetrain: 'Other omni/holonomic' })],
+    )
     expect(summary.stops.find((t) => t.option === 'E-stop')).toEqual({ option: 'E-stop', count: 1, share: 0.5 })
     expect(summary.brokeDown).toBe(1)
-    expect(summary.drivetrain.find((t) => t.option === 'Tank')).toEqual({ option: 'Tank', count: 1, share: 1 })
+    expect(summary.drivetrain.find((t) => t.option === 'Tank')).toEqual({ option: 'Tank', count: 1, share: 1 / 3 })
+    // A typed drivetrain, and one no longer on the list, both count as Other.
+    expect(summary.drivetrain.find((t) => t.option === 'Other')).toMatchObject({ count: 2 })
     expect(summary.drivetrain).toHaveLength(DRIVETRAINS.length)
   })
 
@@ -1308,7 +1336,7 @@ describe('teamSummary', () => {
   })
 
   it('lists notes and pit answers newest first, leaving out blank ones', () => {
-    const blankPit = { motors: null, auto_path: null, partners_do: null, auto_side: null, weight: null, length: null, width: null, height: null }
+    const blankPit = { motors: null, auto_path: null, partners_do: null, auto_side: null, weight: null, length: null, width: null, height: null, vision: [] }
     const summary = teamSummary(
       9991,
       [row(1, { notes: 'Slow intake' }), row(3, { notes: '  ' }), row(2, { notes: 'Fast cycles', scouted_by: DEMO_PEOPLE.jordan })],
@@ -1344,8 +1372,17 @@ describe('teamSummary', () => {
 describe('pitAnswers', () => {
   it("gives each answer the scout filled in, with the robot's size together", () => {
     const answers = pitAnswers(pitToRow({ ...PIT, id: 'pit-1', created_at: '2026-11-07T14:00:00Z', scouted_by: null, synced: false, motors: '' }))
-    expect(answers.map((a) => a.question)).toEqual(['Weight', 'Size', 'Auto starting side', 'Auto path', 'What they want partners to do', 'What they will do'])
+    expect(answers.map((a) => a.question)).toEqual(['Weight', 'Size', 'What it can see', 'Auto starting side', 'Auto path', 'What they want partners to do', 'What they will do'])
     expect(answers[1].text).toBe('28 × 28 × 36 inches (length × width × height)')
+    expect(answers[2].text).toBe('AprilTags')
+  })
+
+  it('gives the typed drivetrain, and what it can see with the typed part after the choices', () => {
+    const answers = pitAnswers(
+      pitToRow({ ...PIT, id: 'pit-2', created_at: '2026-11-07T14:00:00Z', scouted_by: null, synced: false, drivetrain: 'Other', drivetrain_other: 'West coast', vision: ['AprilTags', 'Game piece detection'], vision_notes: 'Two cameras' }),
+    )
+    expect(answers.find((a) => a.question === 'Drivetrain (typed)')?.text).toBe('West coast')
+    expect(answers.find((a) => a.question === 'What it can see')?.text).toBe('AprilTags, Game piece detection. Two cameras')
   })
 })
 

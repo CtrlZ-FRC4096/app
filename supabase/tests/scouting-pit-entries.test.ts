@@ -79,6 +79,29 @@ describe('scouting pit entries', () => {
     ).toEqual([{ team_number: 9991 }])
   })
 
+  // #163: the questions added later. A pit entry from an older phone leaves them out.
+  it('takes a typed Other drivetrain and what the robot can see, and leaves them empty for an older entry', async () => {
+    const [full] = await db.as<Record<string, unknown>>(
+      scout,
+      `insert into public.scouting_pit_entries (id, event_key, team_number, drivetrain, drivetrain_other, vision, vision_notes, scouted_at)
+       values ($1, '2026test', 9991, 'Other', 'West coast', '{AprilTags}', 'Two cameras', now()) returning *`,
+      [crypto.randomUUID()],
+    )
+    expect(full).toMatchObject({ drivetrain_other: 'West coast', vision: ['AprilTags'], vision_notes: 'Two cameras' })
+    const [older] = await send(scout, [{}])
+    expect(older).toMatchObject({ drivetrain_other: null, vision: [], vision_notes: null })
+  })
+
+  it('refuses a typed drivetrain or vision answer that is empty or too long, like the form', async () => {
+    const insert = (column: string, value: string) =>
+      db.as(scout, `insert into public.scouting_pit_entries (id, event_key, team_number, scouted_at, ${column}) values ($1, '2026test', 9991, now(), $2)`, [crypto.randomUUID(), value])
+    for (const [column, longest] of [['drivetrain_other', 100], ['vision_notes', 300]] as const) {
+      await expect(insert(column, ''), column).rejects.toThrow('check constraint')
+      await expect(insert(column, 'x'.repeat(longest + 1)), column).rejects.toThrow('check constraint')
+      expect(await insert(column, 'x'.repeat(longest)), column).toEqual([])
+    }
+  })
+
   it('refuses no team, a weight or size of 0 or less, and empty text instead of nothing', async () => {
     await expect(send(scout, [{ team: 0 }])).rejects.toThrow('check constraint')
     await expect(send(scout, [{ weight: 0 }])).rejects.toThrow('check constraint')

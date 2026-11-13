@@ -37,8 +37,18 @@ export const BREAKDOWN_PARTS: string[] = ['Drivetrain', 'Intake', 'Shooter', 'Cl
  */
 export const RANKING_POINTS: string[] = ['Energized', 'Supercharged', 'Traversal']
 
-/** Pit form: the drivetrain choices. */
-export const DRIVETRAINS: string[] = ['Swerve', 'Tank', 'Mecanum', 'H-drive', 'Other omni/holonomic']
+/**
+ * Pit form: the drivetrain choices, the common ones first. Keep 'Other' last:
+ * choosing it shows a box to type the drivetrain, and the team page counts
+ * anything typed, or no longer on this list, as Other.
+ */
+export const DRIVETRAINS: string[] = ['Swerve', 'Tank', 'Mecanum', 'H-drive', 'Other']
+
+/**
+ * Pit form: "What can their robot see?" Scouts can choose more than one.
+ * The requirements mark this as a maybe: check it with the scouting lead.
+ */
+export const VISION: string[] = ['AprilTags', 'Game piece detection', 'None']
 
 /** Pit form, and the match form's observed auto: which side of the field a robot starts its auto on. */
 export const AUTO_SIDES: string[] = ['Left', 'Center', 'Right']
