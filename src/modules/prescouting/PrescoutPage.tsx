@@ -1,22 +1,23 @@
 import { useState, type FormEvent } from 'react'
 import { href, useRoute } from '../../core/router'
+import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
 import type { Result } from '../../core/table'
-import { MAX_TEAM, tbaTeamUrl } from '../scouting/data'
+import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../scouting/data'
 import {
-  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, firstLine, isEventKey, prescoutOverview, reloadPrescoutTeams, savePrescout,
-  setPrescoutEvent, toggleMark, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams,
+  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, firstLine, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout,
+  setPrescoutEvent, useIsStrategy, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
   type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutTeam,
 } from './data'
+import Stars from './Stars'
+import TeamSeason from './TeamSeason'
 
 // Big enough to tap, and 16px text so phones don't zoom in on the box.
 const BOX = { minHeight: 46, fontSize: 16 }
 
 /** The address of a team's prescouting page. */
-function teamHref(event: string, team: number): string {
-  return href('prescouting', event, String(team))
-}
+const teamHref = prescoutHref
 
 // Prescouting. #/prescouting is the overview of every team at the event
 // (#116, #118); #/prescouting/<event>/<team> is one team's
@@ -24,6 +25,14 @@ function teamHref(event: string, team: number): string {
 // link to it always opens the same team at the same event.
 export default function PrescoutPage() {
   const [event, team] = useRoute().rest
+  // Strategy team, student leaders, mentors and admins only (#167). The database refuses anyone else too.
+  if (!useIsStrategy()) {
+    return (
+      <Panel>
+        <p className="panel-body" style={{ margin: 0 }}>{`${STRATEGY_ONLY} Ask a mentor if you need it.`}</p>
+      </Panel>
+    )
+  }
   if (event === undefined) return <Overview />
   const number = Number(team)
   if (!isEventKey(event) || !Number.isInteger(number) || number < 1 || number > MAX_TEAM) {
@@ -46,12 +55,15 @@ function Overview() {
   const event = usePrescoutEvent()
   const result = usePrescoutTeams(event)
   const notes = usePrescoutNotes(event)
+  const stars = useStars(event)
+  const me = useSession().id
   const [sort, setSort] = useState<PrescoutSort>('Team number')
-  const teams = result?.ok ? prescoutOverview(result.value, notes, sort) : []
+  const teams = result?.ok ? prescoutOverview(result.value, notes, stars, me, sort) : []
+  const starred = teams.some((t) => t.group !== 'Everyone else')
 
   return (
     <>
-      <PageHead title="Prescouting">Every team coming to an event, to look up before it starts. Mark the ones we care about to keep them at the top.</PageHead>
+      <PageHead title="Prescouting">Every team coming to an event, to look up before it starts. Star the ones we care about to keep them at the top.</PageHead>
       <EventBox event={event} />
       <Panel title={`Teams at ${event}`} aside={result?.ok ? <span className="note">{result.value.length} teams</span> : undefined}>
         {!result ? (
@@ -64,8 +76,9 @@ function Overview() {
               Sort by
               <Pick label="Sort by" options={[...PRESCOUT_SORTS]} value={sort} onChange={setSort} />
             </div>
-            <TeamGroup title="Marked" event={event} teams={teams.filter((t) => t.marked)} />
-            <TeamGroup title={teams.some((t) => t.marked) ? 'Everyone else' : ''} event={event} teams={teams.filter((t) => !t.marked)} />
+            {STAR_GROUPS.map((group) => (
+              <TeamGroup key={group} title={starred ? group : ''} event={event} teams={teams.filter((t) => t.group === group)} />
+            ))}
           </div>
         )}
       </Panel>
@@ -74,9 +87,9 @@ function Overview() {
 }
 
 /**
- * Marked teams, or everyone else, each in the chosen sort. The headings
- * show why a marked team stays above a team with a better EPA. With no
- * marked teams there's one list and no heading (title '').
+ * Team stars, your stars, or everyone else, each in the chosen sort. The
+ * headings show why a starred team stays above a team with a better EPA.
+ * With no starred teams there's one list and no heading (title '').
  */
 function TeamGroup(props: { title: string; event: string; teams: OverviewTeam[] }) {
   if (props.teams.length === 0) return null
@@ -143,7 +156,7 @@ function Problem(props: { error: string; retry: () => void }) {
 }
 
 /** The answers the overview shows, in order. The rest are on the team's page. */
-const OVERVIEW_ANSWERS: (keyof PrescoutAnswers)[] = ['key_task', 'strengths', 'weaknesses', 'other_notes']
+const OVERVIEW_ANSWERS: (keyof PrescoutAnswers)[] = ['overall', 'key_task', 'strengths', 'weaknesses', 'other_notes']
 
 /** One team in the overview: a card, not a table row, so nothing scrolls sideways on a phone. */
 export function TeamCard(props: { event: string; team: OverviewTeam }) {
@@ -158,8 +171,8 @@ export function TeamCard(props: { event: string; team: OverviewTeam }) {
           <br />
           <span className="note tnum">{`EPA ${formatEpa(t.epa)}`}</span>
         </a>
-        <MarkButton event={props.event} team={t.team} marked={t.marked} />
       </div>
+      <Stars event={props.event} team={t.team} />
       {notes ? (
         <dl style={{ margin: 0, display: 'grid', gap: 4, fontSize: 14 }}>
           {OVERVIEW_ANSWERS.map((key) => (
@@ -184,22 +197,6 @@ function formatEpa(epa: number | null): string {
   return epa === null ? '—' : epa.toFixed(1)
 }
 
-/** The star. Marks are shared: everyone sees the same marked teams. */
-function MarkButton(props: { event: string; team: number; marked: boolean }) {
-  const [busy, setBusy] = useState(false)
-  async function toggle() {
-    setBusy(true)
-    const result = await toggleMark(props.event, props.team)
-    setBusy(false)
-    if (!result.ok) toast(result.error)
-  }
-  return (
-    <button type="button" className="btn" style={{ flexShrink: 0, minHeight: 44 }} aria-pressed={props.marked} disabled={busy} onClick={() => void toggle()}>
-      {props.marked ? '★ Marked' : '☆ Mark'}
-    </button>
-  )
-}
-
 // ---------------------------------------------------------------------------
 // One team's page: who they are, then our notes.
 
@@ -218,15 +215,52 @@ export function TeamPage(props: { event: string; team: number }) {
         <TeamLine list={list} details={details} />
       </PageHead>
       <div className="toolbar">
-        <MarkButton event={event} team={team} marked={notes?.marked ?? false} />
         <a className="btn" style={{ minHeight: 44 }} href={details?.tbaUrl ?? tbaTeamUrl(team, event)} target="_blank" rel="noreferrer">
           The Blue Alliance
         </a>
+        {/* #119: what we saw in matches, one tap away. */}
+        <a className="btn" style={{ minHeight: 44 }} href={href('scouting', 'team', String(team))}>
+          Scouting team page →
+        </a>
       </div>
+      <Panel title="Stars">
+        <div className="panel-body">
+          <Stars event={event} team={team} />
+        </div>
+      </Panel>
+      <RobotPhotos event={event} team={team} />
       <NotesForm event={event} team={team} saved={notes ?? NO_ANSWERS} />
+      <TeamSeason event={event} team={team} />
     </>
   )
 }
+
+/**
+ * Photos of the team's robot from pit scouting (#164), newest first. Tap one
+ * to open it full size. Only shown once someone's taken one; the photos
+ * come from the Scouting module's useTeamPhotos().
+ */
+function RobotPhotos(props: { event: string; team: number }) {
+  const photos = useTeamPhotos(props.team, props.event)
+  if (photos.length === 0) return null
+  return (
+    <Panel title="Robot photos" aside={<span className="note">From pit scouting</span>}>
+      {/* Only this row scrolls sideways, never the page. */}
+      <div className="panel-body" style={{ display: 'flex', gap: 8, overflowX: 'auto' }}>
+        {photos.map((photo, i) =>
+          photo.url ? (
+            <a key={photo.id} href={photo.url} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
+              <img src={photo.url} alt={`Team ${props.team}'s robot, photo ${i + 1}`} style={{ width: i === 0 ? 200 : 120, height: i === 0 ? 150 : 90, objectFit: 'cover', borderRadius: 'var(--radius)', display: 'block' }} />
+            </a>
+          ) : (
+            <span key={photo.id} className="note" style={{ flexShrink: 0 }}>{photo.waiting ? 'On a phone, not sent yet' : 'Needs a connection'}</span>
+          ),
+        )}
+      </div>
+    </Panel>
+  )
+}
+
 
 /** The EPA under the team's name, or why it's not there. */
 function TeamLine(props: { list: Result<PrescoutTeam[]> | null; details: PrescoutTeam | undefined }) {

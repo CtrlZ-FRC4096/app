@@ -4,7 +4,7 @@
 
 ## What works so far
 
-- The match form, drawn from `season.ts`: counters, role (choose any), broke down, E-stop or A-stop, driver skill, endgame and notes
+- The match form, drawn from `season.ts`: observed auto (where it started, from `AUTO_SIDES`, and what it did), counters, role (choose any) and how well it does it, broke down and what broke (`BREAKDOWN_PARTS`, plus a box for anything else), died or browned out, E-stop, A-stop or both, driver skill, endgame, the bonus ranking points its alliance earned (`RANKING_POINTS`: check the names with the scouting lead) and notes (#162). Entries saved on phones before #162 don't have the new answers; `toRow()` sends them as empty or "no", and the `..._scouting_entries_more_questions.sql` migration adds the columns.
 - The team fills in from the schedule (#40). The scout picks their position once (Red 1 to Blue 3), and the phone remembers it (`positionStore` in `data.ts`). Typing the match number fills in the team for that position and shows it big, in the alliance's colour, to check against the robot's bumpers. The scout can still change it. This is `MatchTeamFields.tsx`.
   - The schedule comes from `loadSchedule()` when the form opens. It saves the qualification matches on the phone (`scheduleStore`), so it keeps working with no Wi-Fi once it's loaded. With no saved copy (no Wi-Fi the first time, or The Blue Alliance doesn't have the schedule yet) the form says so, and the scout types the team in.
   - `teamFor()` finds the team for a match and position.
@@ -22,20 +22,27 @@
   - `matchesWithPredictions()` matches each prediction to its match by key and puts them in the order they're played.
   - `refreshSchedule()` gets both and saves them on the device (`scheduleStore`), so with no connection the page shows the last ones with when they're from. Other features that need the schedule offline, like #40, can read it with `savedSchedule()`.
   - `keepScheduleFresh()` asks again every 2 minutes while the page is open, when the app comes back on screen, and when the phone comes back online. (The `match13` function reuses its answer for 2 minutes, so asking more often doesn't help.)
-- A Match / Pit / Schedule / Rankings / Picklist / Final picklist switch at the top of the page. The choice is in the address: `#/scouting` is the match form, `#/scouting/pit` the pit form, `#/scouting/schedule` the schedule, `#/scouting/rankings` the rankings, `#/scouting/picklist` the picklist and `#/scouting/shared-picklist` the final picklist. Each form is one panel, with a line between its sections (`FormSection.tsx`). The pit form (`PitForm.tsx`) asks for the team, drivetrain, weight and size, motors, preferred auto and strategy. Its choice lists are `DRIVETRAINS` and `AUTO_SIDES` in `season.ts`. Save pit entry: `savePitEntry()` in `data.ts` keeps it on this device (`pitStore`). It needs a team number. It doesn't ask for a match number: the table's `match_number` column is still there for older entries, and new ones send it empty. Pit entries are sent to the team database the same way as match entries (#35): `syncEntries()` sends both, to the `scouting_pit_entries` table (`supabase/migrations/..._scouting_pit_entries.sql`, rules tested in `supabase/tests/scouting-pit-entries.test.ts`). Every visit to a team is kept. Both forms show what's saved on this device, Waiting or Synced, with `SavedOnDevice.tsx`.
+- An Overview / Match / Pit / Schedule / Rankings / Picklists / Simulator / Stats switch at the top of the page, and a Ranked / Mine / Team / Final switch under Picklists (#151). The choice is in the address: `#/scouting` is the overview (#160), `#/scouting/match` the match form, `#/scouting/pit` the pit form, `#/scouting/schedule` the schedule, `#/scouting/rankings` the rankings, `#/scouting/picklist` the picklist, `#/scouting/my-picklist` your own picklist, `#/scouting/team-picklist` the team picklist and `#/scouting/shared-picklist` the final picklist. Each form is one panel, with a line between its sections (`FormSection.tsx`). The pit form (`PitForm.tsx`) asks for the team, drivetrain, weight and size, motors, what the robot can see, preferred auto and strategy. Its choice lists are `DRIVETRAINS`, `VISION` and `AUTO_SIDES` in `season.ts`. Choosing the **Other** drivetrain shows a box to type it (#163); the team page's drivetrain bar counts typed ones, and any no longer in `DRIVETRAINS`, as Other, and lists the typed name with the pit answers. Vision is marked as a maybe in the requirements: check it with the scouting lead. Pit entries saved before #163 sync with these empty (`pitToRow()`). Save pit entry: `savePitEntry()` in `data.ts` keeps it on this device (`pitStore`). It needs a team number. It doesn't ask for a match number: the table's `match_number` column is still there for older entries, and new ones send it empty. Pit entries are sent to the team database the same way as match entries (#35): `syncEntries()` sends both, to the `scouting_pit_entries` table (`supabase/migrations/..._scouting_pit_entries.sql`, rules tested in `supabase/tests/scouting-pit-entries.test.ts`). Every visit to a team is kept. Both forms show what's saved on this device, Waiting or Synced, with `SavedOnDevice.tsx`.
 - A team page (#36, `TeamPage.tsx`), at `#/scouting/team/9991`: everything scouted about one team at this event (`EVENT_KEY`). Type a team number, tap a team from the list of scouted teams, or tap "Team 9991" in the list of saved entries or on the Rankings page. It shows:
   - **Rank** (#39, `TeamRank.tsx`), at the top: the team's place in the event rankings and its record, like "Rank 3 of 42 · 5-1-0"
   - **Numbers**: each counter in `season.ts`, its average per match and each match's count
-  - **How often**: bars for endgame, role, driver skill, E-stop or A-stop, and drivetrain (from the pit form), and how often it broke down
+  - **How often**: bars for endgame, role, driver skill, E-stop or A-stop, what broke (out of the times it broke down), auto starting side, ranking points, and drivetrain (from the pit form), and how often it broke down or browned out
   - **Written answers**: match notes and pit answers, newest first, with who wrote them
+  - **Prescouting** (#119): our prescouting answers for the team (key task, strengths, weaknesses, expected auto paths) from the Prescouting module's `usePrescoutFor()`, with a link to their prescouting page, or "Not prescouted yet"
   - **Match 13** (#37, `TeamRatings.tsx`): the team's xP rank at the event ("Rank 3 of 42"), its xP and how much it changed since the event started, the Auto / Teleop / Endgame parts, Statbotics' EPA and the win-loss-tie record, with when the numbers are from and a **Refresh** button. It reads the saved copy from `useRatings()` (see "One team's numbers" below), so with no connection it shows the saved numbers and says so. A team Match 13 hasn't rated shows "No Match 13 rating yet", and a part Match 13 left out shows "not given".
 
   The sums are `teamSummary()` in `data.ts`, a plain function so the picklist can use the same numbers. Adding a counter to `season.ts` adds it to the page with no other change. It counts this event's match and pit entries from the team database plus this phone's Waiting ones; two scouts watching the same robot count as two entries. `pitAnswers()` and `pitDrivetrain()` are the only code that reads a pit entry's answers. Each panel is its own component, so new ones (like Match 13's numbers or match videos) go below the others.
 - The picklist (#42, `Picklist.tsx`, at `#/scouting/picklist`): every team at the event ranked best first, from our scouting and Match 13. See "Picklist score" below.
 - The final picklist (#43, `SharedPicklist.tsx`, at `#/scouting/shared-picklist`): the order the strategy team wants to pick teams in, shared by every phone. See "Shared picklist" below.
-- The Competition menu lists Match, Pit, Schedule, Rankings, Teams, Picklist and Final picklist under Scouting (`pages` in `index.ts`).
+- The match simulator (#166, `Simulator.tsx`, at `#/scouting/simulate`): see "Average points and the simulator" below.
+- The stats table (#152, `StatsTable.tsx`, at `#/scouting/stats`): every team's Match 13 numbers in one table. See "More of Match 13's numbers" below.
+- Robot photos (#164): see "Robot photos" below.
+- The overview (#160, `Overview.tsx`, at `#/scouting`): a card for each page, in the switch's order, that opens it. Each says how that page is going: entries waiting to send (and why), how many of the event's teams are pit scouted, our next match with its prediction and our last result, our rank and record, teams with no match entries yet, the top 3 of each picklist, and how many teams Match 13 has rated. `scoutingOverview()` in `data.ts` works these out from what's saved on the phone (`useScoutingOverview()` gathers it), so the overview never asks The Blue Alliance or Match 13 for anything, and a card with nothing saved says so. `eventTeams()` gives every team we know is at the event from the saved schedule, rankings and ratings. The home page tile also shows our rank, like "3 entries waiting · Rank 6".
+- Personal picklists and the team picklist (#151): see "My picklist and the team picklist" below.
+- The Competition menu lists Overview, Match, Pit, Schedule, Rankings, Teams, Picklist, My picklist, Team picklist, Final picklist, Simulator and Stats under Scouting (`pages` in `index.ts`).
 - Match videos (#41): `useTeamQualVideos(team)` in `data.ts` gives a team's qualification matches in order, each with its alliance, Won / Lost / Tied (or not played yet), the scores, and a YouTube link for each video. A played match with no links has no video on The Blue Alliance yet. It loads when the page opens, and `reload()` is for a "Check again" button. The **Match videos** panel on the team page (`TeamVideos.tsx`) shows one line per qual, like "Qual 12 · Red · Won 84–71", with a **Watch ↗** button that opens the video in YouTube in a new tab ("Watch (2) ↗" for a second video), "No video yet", or "Not played yet". It's only links, no video players or thumbnails, to keep the page light on venue Wi-Fi. `VideoList` draws the lines from rows, so tests can use made-up ones.
 - Prescouting is its own module, just above Scouting in the Competition menu: see [its README](../prescouting/README.md). It gets the teams and EPA from `getEventTeams()` and `getRatings()` here.
+- Stars (#118) come from the Prescouting module, so they're the same in both: the Teams page (`TeamPage.tsx`) lists starred teams first (team stars, then your own), and each team's page has a **Stars** panel to see and add stars. It reads them with `useStars()` and `starredFirst()` from `../prescouting/data.ts`, and draws them with Prescouting's `Stars.tsx`.
 
 Entries are kept on the device in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. `syncEntries()` sends the Waiting ones to the `scouting_entries` table (`supabase/migrations/..._scouting_entries.sql`, rules tested in `supabase/tests/scouting-entries.test.ts`) and marks them Synced.
 
@@ -66,6 +73,29 @@ The page is `SharedPicklist.tsx`. Everyone signed in sees the list: rank, team (
 - Big up and down buttons on each team, which wait while a move saves, and an Open / Picked / Do not pick choice. Screen readers hear "Moved team 9991 to place 2."
 
 Hiding the buttons is only tidiness: the table's rules are what stop anyone else changing the list.
+
+## Average points and the simulator (#166)
+
+Each counter in `season.ts` can have `points` (what the alliance gets for
+each one), and `ENDGAME_POINTS` gives each endgame choice's points. Check
+them against the game manual with the scouting lead.
+
+| In `data.ts` | Does |
+|:--|:--|
+| `entryPoints(entry)` | One match entry's points: each counter times its points, plus the endgame's |
+| `teamAps(team, entries)` | A team's average points per match (APS) at this event, with a range of one standard deviation either side and how many matches it's from. Two scouts on the same match count once. `null` if not scouted in a match |
+| `teamPoints(team, entries, ratings)` | What we expect a team to score: our APS, or Match 13's xP when we've scouted them in fewer than `MIN_MATCHES` (3) matches. `fewMatches` marks those as a guess |
+| `allianceScore(teams)` | An alliance's expected score and range. Teams with nothing to go on count as 0 and are listed in `unknown` |
+| `redWinChance(red, blue)` | The chance red outscores blue, from 0 to 1, assuming scores spread in a bell curve |
+| `useTeamPoints()` | For a page: `pointsFor(team)` from this event's entries and the saved Match 13 copy, so it works with no Wi-Fi |
+| `upcomingMatches(schedule)` | The qualification matches not played yet, from the saved schedule |
+
+The team page shows "APS 34 (26–41) from 6 matches", with Match 13's xP
+beside it. APS is also a picklist part. The simulator page takes 3 teams a
+side (or one side only), or fills them in from an upcoming match, and shows
+each alliance's expected score and who's likely to win. It only adds teams
+up: it doesn't count defense or robots getting in each other's way, and
+says so.
 
 ## What it needs to do
 
@@ -108,6 +138,79 @@ picklists are for it, and new entries are saved under it.
 - **Until someone picks the event,** it's `EVENT_KEY` in `season.ts`, and the
   top of the page says so.
 
+## The strategy team (#167)
+
+From the scouting requirements: only strategy people and mentors see the
+analysis. **Strategy and mentors only:** the overview, team pages, all four
+picklists, the simulator, stats, and the whole Prescouting module.
+**Everyone:** the match and pit forms, the schedule and the rankings, so any
+scout can do their job.
+
+- **Who:** mentors tick people on the Members page (Strategy team column).
+  Mentors and admins always count. It's the `scouting_strategy_team` table
+  (`supabase/migrations/..._scouting_strategy_team.sql`, rules tested in
+  `supabase/tests/scouting-strategy-team.test.ts`), with `keepOffline`, so a
+  phone with no Wi-Fi still knows which pages to show.
+- **In code:** `isStrategy(user, members)` and `useIsStrategy()` in
+  `data.ts`. `STRATEGY_PATHS` lists the strategy-only pages, and
+  `useHiddenScoutingPages()` hides them from the Competition menu (through
+  `useHiddenPages` in `index.ts`). Off the team, the switch only shows
+  Match, Pit, Schedule and Rankings, `#/scouting` opens the match form, a
+  strategy page's address says "Only the strategy team and mentors can see
+  this.", and team numbers aren't links.
+- **The database too:** the same migration's `private.is_strategy()` limits
+  reading match and pit entries to the strategy team, except that everyone
+  still reads the entries they scouted or sent, so scouts can send entries
+  and see them synced. The final picklist, personal picklists (other
+  people's), robot photos (other people's), and everything in Prescouting
+  are strategy only too.
+
+## Robot photos (#164)
+
+The pit form has an **Add a photo** button that opens the phone's camera.
+Each photo saves straight away, for the team typed in the form, and a team
+can have several. The pit form lists the photos on the phone, Waiting or
+Synced. The team page shows the newest photo big and the rest in a row
+below (`TeamPhotos.tsx`), and the team's Prescouting page shows them too.
+Tap one to open it full size.
+
+- **Shrinking:** `addPhoto()` shrinks each photo to a JPEG with its longest
+  side at most 1280 pixels (`shrinkPhoto()`, `shrunkSize()`), so it
+  uploads quickly on venue Wi-Fi.
+- **No Wi-Fi:** photos wait on the phone like entries, and `syncEntries()`
+  sends them along with match and pit entries. The files wait in the
+  browser's IndexedDB (`photoFiles.ts`), because localStorage only holds
+  about 5 MB; `photoStore` lists them. Once a photo is sent, the phone
+  forgets its file.
+- **Where they go:** the private `robot-photos` bucket, at
+  `event/team/id.jpg` (`photoPath()`), and a row in `scouting_robot_photos`
+  (`supabase/migrations/..._scouting_robot_photos.sql`, rules tested in
+  `supabase/tests/scouting-robot-photos.test.ts`). Signed-in members see and
+  add photos; only mentors delete them; nobody changes one. Sent photos show
+  through links that stop working after an hour, so they need a connection.
+- **Demo mode** has no file storage: photos show only on the phone that took
+  them, until they're sent.
+
+## Nexus
+
+[Nexus](https://frc.nexus) shows what's happening at an event right now:
+what's on the field, who should be queuing, and announcements. The overview
+and the Schedule page have an **Open in Nexus ↗** link to the current
+event's page (`nexusEventUrl()` in `data.ts`, #165).
+
+The overview also shows Nexus's live status (#165 step 2): what's on the
+field, what's queuing, our next match with when to queue, and the newest
+announcement. It comes through the `nexus` server function, which holds the
+`NEXUS_KEY` secret and only allows one event's status. `getNexusStatus()`
+asks, `readNexus()` reads the answer, and `useNexusStatus()` asks again
+every minute while the overview is open and keeps the last answer on the
+phone (`nexusStore`), so it shows with no Wi-Fi. An event that doesn't use
+Nexus says so. **Check `readNexus()` against a real answer at the first
+event**: it reads the fields Nexus is known to send (`label`, `status`,
+`redTeams`, `blueTeams`, `times.estimatedQueueTime`, `nowQueuing`,
+`announcements`) and leaves out anything else. The pit display (#161) can
+use the same queue time when it's built.
+
 ## The Blue Alliance
 
 `data.ts` already gets these from The Blue Alliance, through the `tba`
@@ -121,6 +224,7 @@ server function, which holds the team's key (see "Server functions" in
 | `getEventTeams()` | Every team registered for the event, by number, before the schedule is out |
 | `getTeamMatches(team)` | One team's matches at the event, with their videos |
 | `getTeam(team)` | A team's nickname and home |
+| `getTeamEvents(team, year)` | Any team's events in a season, newest first (for Prescouting, #153). `tbaEventUrl(event)` links to one |
 
 Each returns `{ ok: true, value }` or `{ ok: false, error }`. The event is
 the one the team is scouting (see "The event" below). In demo mode they
@@ -157,11 +261,85 @@ shows with no Wi-Fi.
 | `signed(n)` | A change like "+4.6" or "−1.4" |
 | `savedWhen(loadedAt)` | When the saved numbers are from, like "Today at 3:40 PM" |
 
+### More of Match 13's numbers (#152)
+
+Match 13 sends more than we first used. `Match13Rating` now also has
+`xVar` (how much a team's score varies: lower is steadier), `xRp1` to
+`xRp3` (the chance of each ranking point) and `components` (this season's
+game in parts, named the way Match 13 names them). Match 13's docs give
+the names but not their meanings, so these are our reading: **check them on
+match13.com, and ask the strategy team which they want**, before relying
+on them. They're optional, because copies saved on phones before #152 don't
+have them; a missing one shows "not given".
+
+| In `data.ts` | Does |
+|:--|:--|
+| `STAT_COLUMNS` | The numbers every season has, in the stats table's order, with which are lower-is-better and which are chances |
+| `statColumns(ratings)` | Those, then a column for each game part any team has |
+| `statValue(rating, key)`, `statText(value, column)` | One team's number, and as text ("48.6", "72%" or "not given") |
+| `ratingComponents(rating)` | The game parts, leaving out anything that isn't a number |
+| `sortStats(ratings, column, bestFirst)` | Sorts by a column, best first or the other way round; missing numbers go last |
+
+The team page's Match 13 panel shows OPR, DPR and all of these. The stats
+page shows them for every team: tap a heading to sort, tap a team to open
+its page. Only the table scrolls sideways on a phone. Anything from Match
+13 endpoints we don't ask for yet need a mentor to allow them in the
+`match13` server function first.
+
+**Match 13's simulation** (`kind: 'sim'`): `getEventSim()` asks for it with
+the ratings, and `withSim()` puts each team's likely final rank, its range
+(5th to 95th percentile) and its ranking points on the team's rating, so
+the team page and the stats table (Sim rank, Sim RP) show them. If Match 13
+has no simulation yet, the ratings show without it. **A team's season**
+(`kind: 'team-events'`): `getTeamSeasonRatings(team, year)` gives a team's
+xP and rank at each event, for Prescouting. Match 13's docs don't give these
+answers' exact shape, so `readSim()` and `readTeamEvents()` read the likely
+fields and leave out anything else: check them against a real answer.
+
 If a load doesn't work, the last copy stays and `error` says why. Match 13
 having nothing for the event yet isn't an error: nobody's rated yet. A copy
 saved for another event counts as nothing saved. "Reset example data" may
 clear the copy; that's fine, it loads again.
 - Scouting data is visible to signed-in team members only.
+
+## My picklist and the team picklist (#151)
+
+Everyone signed in can make their own picklist for the event
+(`MyPicklist.tsx`, at `#/scouting/my-picklist`): **Start my list** fills it
+from the Picklist page's order with this phone's weights, **Add teams not
+on my list** adds teams that joined later, the up and down buttons move a
+team one place and **Move to…** moves it to any place. Each team can have a
+note of up to 500 characters.
+
+The team picklist (`TeamPicklist.tsx`, at `#/scouting/team-picklist`)
+averages everyone's lists: each team's average place, its best and worst,
+how many lists it's on, and where each person put it, with their notes. A
+place counts as a share of its list (top 0, bottom 1), so 1st of 30 counts
+the same as 1st of 20. A team missing from someone's list is left out of
+that list, not counted as last. Mentors can start the Final picklist from
+it (**Start from the team picklist**).
+
+Lists are saved in `scouting_my_picklist`
+(`supabase/migrations/..._scouting_my_picklist.sql`, rules tested in
+`supabase/tests/scouting-my-picklist.test.ts`), one row per person, event
+and team, so they're on all your devices. Everyone signed in reads every
+list and note; you add, change and remove only your own (only `rank` and
+`note` can change); mentors can remove anyone's. The table has
+`keepOffline`, so lists show with no Wi-Fi, but changes need a connection
+and say so.
+
+| In `data.ts` | Does |
+|:--|:--|
+| `useMyPicklist()`, `myPicklist(person)` | One person's list for the event, best first |
+| `startMyPicklist(teams)` | Starts an empty list in this order. Refuses if it's started |
+| `addToMyPicklist(teams)` | Adds the missing teams to the bottom |
+| `moveOnMyPicklist(team, place)` | Moves a team to a place; the teams between shift one place |
+| `setPicklistNote(team, note)` | Adds, changes or clears (with '') a note |
+| `teamPicklist(rows)`, `useTeamPicklist()` | Everyone's lists averaged, as above |
+
+Questions for the strategy team (from #151): should every list count the
+same, and should notes be seen by everyone or only the writer and mentors?
+Right now every list counts the same and everyone signed in sees the notes.
 
 ## Picklist score (#42)
 
@@ -176,7 +354,7 @@ are from, and if Match 13 couldn't be reached it keeps using the saved copy.
 
 | In `data.ts` | Does |
 |:--|:--|
-| `picklistParts()` | What a team is scored on: Match 13 auto, teleop and endgame xP, then each counter in `season.ts` |
+| `picklistParts()` | What a team is scored on: Match 13 auto, teleop and endgame xP, our average points (APS), then each counter in `season.ts` |
 | `rankTeams(teams, weights)` | Ranks teams best first, with a score from 0 to 100 |
 | `picklistCsv(ranked, parts)` | The list as CSV, for a spreadsheet |
 | `weightsStore` | How much each part counts (0 to 5), saved on this phone |

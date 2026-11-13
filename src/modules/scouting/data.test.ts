@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetAllStores } from '../../core/store'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import {
-  MAX_NOTES_LENGTH, blankOrNumber, checkEntry, checkPitEntry, getEventTeams, tbaTeamUrl, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
-  MAX_PIT_NUMBER, numberOnly, pitAnswers, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, scoutedTeams, syncEntries, syncStatus, teamNumber,
+  MAX_NOTES_LENGTH, MAX_SHORT_LENGTH, blankOrNumber, checkEntry, checkPitEntry, getEventTeams, tbaTeamUrl, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
+  MAX_PIT_NUMBER, MAX_DRIVETRAIN_LENGTH, numberOnly, pitAnswers, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, scoutedTeams, syncEntries, syncStatus, teamNumber,
   teamSummary, toRow, type EntryFields, type MatchRow, type PitFields, type PitRow, type TeamSummary,
   qualVideoRows, videoLink, type TbaMatchWithVideos,
   loadRatings, needsLoading, ratingsStore, resetRatings, savedRatings, savedWhen, signed, STALE_MS, teamRating, teamRecord, type Match13Rating,
@@ -21,12 +21,23 @@ import { addMissingTeams, byPosition, moveTeam, picklist, picklistTable, positio
 import { COUNTERS, DRIVETRAINS, EVENT_KEY } from './season'
 import { loadSchedule, positionStore, setPosition, teamFor, type SavedSchedule } from './data'
 import { rankOf } from './data'
+import { getEventSim, getNexusStatus, getTeamSeasonRatings, nexusStore, readNexus, readSim, readTeamEvents, refreshNexus, withSim } from './data'
+import { STRATEGY_PATHS, addStrategyMember, isStrategy, removeStrategyMember, strategyTable } from './data'
+import { MAX_PICKLIST_NOTE, addToMyPicklist, moveOnMyPicklist, myPicklist, myPicklistTable, setPicklistNote, startMyPicklist, teamPicklist, type MyPicklistRow } from './data'
+import { addPhoto, photoPath, photoStore, photoToRow, photosTable, shrunkSize, MAX_PHOTO_BYTES } from './data'
+import { readFile } from './photoFiles'
+import { nexusEventUrl, eventTeams, scoutingOverview, type OverviewInput, type Entry, type PitEntry } from './data'
+import { STAT_COLUMNS, ratingComponents, sortStats, statColumns, statText, statValue } from './data'
+import { MIN_MATCHES, allianceScore, entryPoints, pointsRange, redWinChance, teamAps, teamPoints, upcomingMatches } from './data'
 import { chooseEvent, currentEvent, eventStore, eventWhenWhere, eventsTable, getOurEvents, latestEvent, lookupSeasons, searchEvents, type TbaEvent } from './data'
 
 // A filled-in pit form. Each test changes only the part it's about.
 const PIT: PitFields = {
   team: 9992,
   drivetrain: 'Swerve',
+  drivetrain_other: '',
+  vision: ['AprilTags'],
+  vision_notes: '',
   weight: 115.5,
   length: 28,
   width: 28,
@@ -89,9 +100,16 @@ const FORM: EntryFields = {
   counts: { autoFuel: 3, teleopFuel: 14, fuelMissed: 2 },
   endgame: 'Level 2',
   roles: ['Scorer', 'Defender'],
+  role_notes: '  Quick, missed a few  ',
   broke_down: true,
+  broke_parts: ['Intake'],
+  broke_other: '  Bumper fell off  ',
+  browned_out: false,
   stop: 'A-stop',
   driver_skill: 4,
+  auto_side: 'Left',
+  auto_notes: 'Scored preload',
+  ranking_points: ['Energized'],
   notes: '  Fast cycles  ',
 }
 
@@ -104,7 +122,7 @@ describe('saveEntry', () => {
     const result = saveEntry(FORM)
     if (!result.ok) throw new Error(result.error)
     expect(entryStore.get()).toEqual([result.value])
-    expect(result.value).toMatchObject({ ...FORM, notes: 'Fast cycles', synced: false })
+    expect(result.value).toMatchObject({ ...FORM, notes: 'Fast cycles', role_notes: 'Quick, missed a few', broke_other: 'Bumper fell off', synced: false })
     expect(result.value.scouted_by).not.toBeNull()
   })
 
@@ -114,6 +132,11 @@ describe('saveEntry', () => {
     expect(entryStore.get().map((e) => e.match)).toEqual([13, 12])
     expect(entryStore.get()[0].id).not.toBe(entryStore.get()[1].id)
     expect(entryStore.get()[0].roles).toEqual([])
+  })
+
+  it("forgets what broke when it didn't break down", () => {
+    const result = saveEntry({ ...FORM, broke_down: false })
+    expect(result.ok && [result.value.broke_parts, result.value.broke_other]).toEqual([[], ''])
   })
 
   it('saves nothing when the form has a problem, and says why', () => {
@@ -137,6 +160,9 @@ describe('checkEntry', () => {
       ['driver skill 1', { driver_skill: 1 }],
       ['driver skill 5', { driver_skill: 5 }],
       ['the longest notes', { notes: 'x'.repeat(MAX_NOTES_LENGTH) }],
+      ['the longest short answers', { role_notes: 'x'.repeat(MAX_SHORT_LENGTH), broke_other: 'x'.repeat(MAX_SHORT_LENGTH), auto_notes: 'x'.repeat(MAX_SHORT_LENGTH) }],
+      ['both stops', { stop: 'Both' }],
+      ['no auto side seen', { auto_side: '' }],
     ]
     for (const [label, change] of allowed) expect(checkEntry({ ...FORM, ...change }), label).toBeNull()
     const refused: [string, Partial<EntryFields>, RegExp][] = [
@@ -147,6 +173,9 @@ describe('checkEntry', () => {
       ['a match number too big', { match: 1001 }, /match number/],
       ['driver skill 6', { driver_skill: 6 }, /driver skill/],
       ['notes too long', { notes: 'x'.repeat(MAX_NOTES_LENGTH + 1) }, /notes/],
+      ['how well it does its role too long', { role_notes: 'x'.repeat(MAX_SHORT_LENGTH + 1) }, /its role/],
+      ['what else broke too long', { broke_other: 'x'.repeat(MAX_SHORT_LENGTH + 1) }, /else broke/],
+      ['auto answer too long', { auto_notes: 'x'.repeat(MAX_SHORT_LENGTH + 1) }, /auto/],
     ]
     for (const [label, change, problem] of refused) expect(checkEntry({ ...FORM, ...change }), label).toMatch(problem)
   })
@@ -184,9 +213,16 @@ describe('syncing to the team database', () => {
         counts: FORM.counts,
         endgame: 'Level 2',
         roles: ['Scorer', 'Defender'],
+        role_notes: 'Quick, missed a few',
         broke_down: true,
+        broke_parts: ['Intake'],
+        broke_other: 'Bumper fell off',
+        browned_out: false,
         stop: 'A-stop',
         driver_skill: 4,
+        auto_side: 'Left',
+        auto_notes: 'Scored preload',
+        ranking_points: ['Energized'],
         notes: 'Fast cycles',
         scouted_by: DEMO_PEOPLE.alex,
         scouted_at: first.value.created_at,
@@ -230,6 +266,9 @@ describe('syncing to the team database', () => {
     const { roles: _r, broke_down: _b, stop: _s, driver_skill: _d, ...rest } = saved.value
     expect(toRow({ ...rest, defense: true })).toMatchObject({ roles: ['Defender'], broke_down: false, stop: 'None', driver_skill: null })
     expect(toRow({ ...rest, defense: false }).roles).toEqual([])
+    // Saved before #162: no role answer, nothing broke, no brownout, auto not seen, no ranking points.
+    const { role_notes: _rn, broke_parts: _bp, broke_other: _bo, browned_out: _bw, auto_side: _as, auto_notes: _an, ranking_points: _rp, ...before162 } = saved.value
+    expect(toRow(before162)).toMatchObject({ role_notes: null, broke_parts: [], broke_other: null, browned_out: false, auto_side: null, auto_notes: null, ranking_points: [] })
     // Saved before events were recorded: the current event.
     const { event_key: _old, ...older } = saved.value
     expect(toRow(older).event_key).toBe(EVENT_KEY)
@@ -242,12 +281,17 @@ describe('checkPitEntry', () => {
       ['the whole form', {}],
       ['no weight or size', { weight: null, length: null, width: null, height: null }],
       ['the longest answer', { motors: 'x'.repeat(MAX_NOTES_LENGTH) }],
+      ['the longest typed drivetrain', { drivetrain: 'Other', drivetrain_other: 'x'.repeat(MAX_DRIVETRAIN_LENGTH) }],
+      ['a long typed drivetrain that is not used, because Other is not chosen', { drivetrain_other: 'x'.repeat(MAX_DRIVETRAIN_LENGTH + 1) }],
+      ['the longest vision answer', { vision_notes: 'x'.repeat(MAX_SHORT_LENGTH) }],
     ]
     for (const [label, change] of allowed) expect(checkPitEntry({ ...PIT, ...change }), label).toBeNull()
     const refused: [string, Partial<PitFields>, RegExp][] = [
       ['no team', { team: 0 }, /Enter the team number/],
       ['a team number too big', { team: 100000 }, /team number/],
       ['a weight of zero', { weight: 0 }, /Check the weight, or leave it blank/],
+      ['a typed drivetrain too long', { drivetrain: 'Other', drivetrain_other: 'x'.repeat(MAX_DRIVETRAIN_LENGTH + 1) }, /drivetrain/],
+      ['a vision answer too long', { vision_notes: 'x'.repeat(MAX_SHORT_LENGTH + 1) }, /what it can see/],
       ['a weight too big', { weight: MAX_PIT_NUMBER }, /weight/],
       ['a height that is not a number', { height: Number.NaN }, /Check the height, or leave it blank/],
       ['an answer too long', { they_do: 'x'.repeat(MAX_NOTES_LENGTH + 1) }, /under 1000/],
@@ -328,6 +372,20 @@ describe('syncing pit entries', () => {
     expect(pitToRow(saved.value)).toMatchObject({ match_number: null, drivetrain: null, auto_side: null, motors: null, weight: null })
     const { event_key: _old, ...older } = saved.value
     expect(pitToRow({ ...older, match: 4 })).toMatchObject({ event_key: EVENT_KEY, match_number: 4 })
+  })
+
+  it('sends an entry saved before the typed drivetrain and vision were on the form (#163) with them empty', () => {
+    const saved = savePitEntry(PIT)
+    if (!saved.ok) throw new Error(saved.error)
+    const { drivetrain_other: _d, vision: _v, vision_notes: _n, ...older } = saved.value
+    expect(pitToRow(older)).toMatchObject({ drivetrain_other: null, vision: [], vision_notes: null })
+  })
+
+  it('keeps the typed drivetrain only when Other is chosen', () => {
+    const other = savePitEntry({ ...PIT, drivetrain: 'Other', drivetrain_other: '  West coast  ' })
+    const swerve = savePitEntry({ ...PIT, drivetrain: 'Swerve', drivetrain_other: 'West coast' })
+    expect(other.ok && other.value.drivetrain_other).toBe('West coast')
+    expect(swerve.ok && swerve.value.drivetrain_other).toBe('')
   })
 })
 
@@ -668,10 +726,10 @@ describe('picklist score', () => {
     expect(DEFAULT_WEIGHTS).toEqual(Object.fromEntries(picklistParts().map((p) => [p.key, 1])))
   })
 
-  it("scores Match 13's auto, teleop and endgame, then every counter in season.ts", () => {
+  it("scores Match 13's auto, teleop and endgame, our average points, then every counter in season.ts", () => {
     const parts = picklistParts()
-    expect(parts.slice(0, 3).map((p) => p.key)).toEqual(['xAuto', 'xTele', 'xEnd'])
-    expect(parts.slice(3)).toEqual(COUNTERS.map((c) => ({ key: c.key, label: c.label, lowerIsBetter: c.lowerIsBetter ?? false })))
+    expect(parts.slice(0, 4).map((p) => p.key)).toEqual(['xAuto', 'xTele', 'xEnd', 'aps'])
+    expect(parts.slice(4)).toEqual(COUNTERS.map((c) => ({ key: c.key, label: c.label, lowerIsBetter: c.lowerIsBetter ?? false })))
     expect(parts.find((p) => p.key === 'fuelMissed')?.lowerIsBetter).toBe(true)
   })
 
@@ -698,9 +756,16 @@ describe("the picklist page: each team's numbers and the weights", () => {
     counts: { autoFuel: 2, teleopFuel: 10, fuelMissed: 1 },
     endgame: 'Level 1',
     roles: ['Scorer'],
+    role_notes: null,
     broke_down: false,
+    broke_parts: [],
+    broke_other: null,
+    browned_out: false,
     stop: 'None',
     driver_skill: 3,
+    auto_side: null,
+    auto_notes: null,
+    ranking_points: [],
     notes: null,
     scouted_by: DEMO_PEOPLE.alex,
     scouted_at: '2026-11-07T15:00:00Z',
@@ -712,10 +777,10 @@ describe("the picklist page: each team's numbers and the weights", () => {
 
   beforeEach(() => weightsStore.reset())
 
-  it("uses the team page's averages and Match 13's auto, teleop and endgame", () => {
+  it("uses the team page's averages, our average points and Match 13's auto, teleop and endgame", () => {
     const entries = [row(1, { counts: { autoFuel: 1, teleopFuel: 10, fuelMissed: 2 } }), row(2, { counts: { autoFuel: 4, teleopFuel: 6, fuelMissed: 0 } })]
     const [team] = picklistTeams([rated(9991, 12)], entries, [])
-    expect(team).toEqual({ team: 9991, values: { xAuto: 12, xTele: 20, xEnd: 5, autoFuel: 2.5, teleopFuel: 8, fuelMissed: 1 }, matches: 2, rated: true })
+    expect(team).toEqual({ team: 9991, values: { xAuto: 12, xTele: 20, xEnd: 5, aps: 20.5, autoFuel: 2.5, teleopFuel: 8, fuelMissed: 1 }, matches: 2, rated: true })
     const summary = teamSummary(9991, entries, [])
     for (const c of summary.counters) expect(team.values[c.key]).toBe(c.average)
   })
@@ -1173,9 +1238,16 @@ describe('teamSummary', () => {
     counts: { autoFuel: 2, teleopFuel: 10, fuelMissed: 1 },
     endgame: 'Level 1',
     roles: ['Scorer'],
+    role_notes: null,
     broke_down: false,
+    broke_parts: [],
+    broke_other: null,
+    browned_out: false,
     stop: 'None',
     driver_skill: 3,
+    auto_side: null,
+    auto_notes: null,
+    ranking_points: [],
     notes: null,
     scouted_by: DEMO_PEOPLE.alex,
     scouted_at: `2026-11-07T15:${String(match).padStart(2, '0')}:00Z`,
@@ -1225,15 +1297,50 @@ describe('teamSummary', () => {
     const skill = teamSummary(9991, [row(1, { driver_skill: 4 }), row(2, { driver_skill: null })], []).driverSkill
     expect(skill.map((t) => t.option)).toEqual(['1', '2', '3', '4', '5'])
     expect(skill[3]).toEqual({ option: '4', count: 1, share: 1 })
-    const summary = teamSummary(9991, [row(1, { stop: 'E-stop', broke_down: true }), row(2)], [pit({ drivetrain: 'Tank' }), pit({ drivetrain: '' })])
+    const summary = teamSummary(
+      9991,
+      [row(1, { stop: 'E-stop', broke_down: true }), row(2)],
+      [pit({ drivetrain: 'Tank' }), pit({ drivetrain: '' }), pit({ drivetrain: 'Other', drivetrain_other: 'West coast' }), pit({ drivetrain: 'Other omni/holonomic' })],
+    )
     expect(summary.stops.find((t) => t.option === 'E-stop')).toEqual({ option: 'E-stop', count: 1, share: 0.5 })
     expect(summary.brokeDown).toBe(1)
-    expect(summary.drivetrain.find((t) => t.option === 'Tank')).toEqual({ option: 'Tank', count: 1, share: 1 })
+    expect(summary.drivetrain.find((t) => t.option === 'Tank')).toEqual({ option: 'Tank', count: 1, share: 1 / 3 })
+    // A typed drivetrain, and one no longer on the list, both count as Other.
+    expect(summary.drivetrain.find((t) => t.option === 'Other')).toMatchObject({ count: 2 })
     expect(summary.drivetrain).toHaveLength(DRIVETRAINS.length)
   })
 
+  it("counts what broke out of the times it broke down, brownouts, where its auto started out of the times it was seen, and ranking points out of every match", () => {
+    const summary = teamSummary(
+      9991,
+      [
+        row(1, { broke_down: true, broke_parts: ['Intake', 'Climber'], browned_out: true, auto_side: 'Left', ranking_points: ['Energized'] }),
+        row(2, { broke_down: true, broke_parts: ['Intake'], auto_side: 'Left', ranking_points: ['Energized', 'Traversal'] }),
+        row(3, { auto_side: null }),
+        row(4, { auto_side: 'Center' }),
+      ],
+      [],
+    )
+    expect(summary.brokeParts.find((t) => t.option === 'Intake')).toEqual({ option: 'Intake', count: 2, share: 1 })
+    expect(summary.brokeParts.find((t) => t.option === 'Climber')).toEqual({ option: 'Climber', count: 1, share: 0.5 })
+    expect(summary.brownedOut).toBe(1)
+    expect(summary.autoSides.find((t) => t.option === 'Left')).toMatchObject({ count: 2 })
+    expect(summary.autoSides.find((t) => t.option === 'Left')?.share).toBeCloseTo(2 / 3)
+    expect(summary.rankingPoints.find((t) => t.option === 'Energized')).toEqual({ option: 'Energized', count: 2, share: 0.5 })
+    expect(summary.stops.map((t) => t.option)).toEqual(['None', 'A-stop', 'E-stop', 'Both'])
+  })
+
+  it('lists the role, auto and what-else-broke answers with the notes, with who wrote them', () => {
+    const summary = teamSummary(9991, [row(1, { role_notes: 'Fast cycles', auto_notes: 'Scored preload', broke_other: 'Bumper', notes: '  ' })], [])
+    expect(summary.written.map((w) => [w.question, w.text, w.by])).toEqual([
+      ['How well it does its role', 'Fast cycles', DEMO_PEOPLE.alex],
+      ['Auto', 'Scored preload', DEMO_PEOPLE.alex],
+      ['What else broke', 'Bumper', DEMO_PEOPLE.alex],
+    ])
+  })
+
   it('lists notes and pit answers newest first, leaving out blank ones', () => {
-    const blankPit = { motors: null, auto_path: null, partners_do: null, auto_side: null, weight: null, length: null, width: null, height: null }
+    const blankPit = { motors: null, auto_path: null, partners_do: null, auto_side: null, weight: null, length: null, width: null, height: null, vision: [] }
     const summary = teamSummary(
       9991,
       [row(1, { notes: 'Slow intake' }), row(3, { notes: '  ' }), row(2, { notes: 'Fast cycles', scouted_by: DEMO_PEOPLE.jordan })],
@@ -1269,8 +1376,17 @@ describe('teamSummary', () => {
 describe('pitAnswers', () => {
   it("gives each answer the scout filled in, with the robot's size together", () => {
     const answers = pitAnswers(pitToRow({ ...PIT, id: 'pit-1', created_at: '2026-11-07T14:00:00Z', scouted_by: null, synced: false, motors: '' }))
-    expect(answers.map((a) => a.question)).toEqual(['Weight', 'Size', 'Auto starting side', 'Auto path', 'What they want partners to do', 'What they will do'])
+    expect(answers.map((a) => a.question)).toEqual(['Weight', 'Size', 'What it can see', 'Auto starting side', 'Auto path', 'What they want partners to do', 'What they will do'])
     expect(answers[1].text).toBe('28 × 28 × 36 inches (length × width × height)')
+    expect(answers[2].text).toBe('AprilTags')
+  })
+
+  it('gives the typed drivetrain, and what it can see with the typed part after the choices', () => {
+    const answers = pitAnswers(
+      pitToRow({ ...PIT, id: 'pit-2', created_at: '2026-11-07T14:00:00Z', scouted_by: null, synced: false, drivetrain: 'Other', drivetrain_other: 'West coast', vision: ['AprilTags', 'Game piece detection'], vision_notes: 'Two cameras' }),
+    )
+    expect(answers.find((a) => a.question === 'Drivetrain (typed)')?.text).toBe('West coast')
+    expect(answers.find((a) => a.question === 'What it can see')?.text).toBe('AprilTags, Game piece detection. Two cameras')
   })
 })
 
@@ -1457,7 +1573,11 @@ describe('the event the team is scouting', () => {
     eventsTable.reset()
     resetAllStores()
   })
-  afterEach(() => setDemoRole('student'))
+  // Put the event back too, so a pick here doesn't carry on into later tests.
+  afterEach(() => {
+    setDemoRole('student')
+    eventStore.reset()
+  })
 
   const regional: TbaEvent = {
     key: '2027ilpe', name: 'Example Peoria Regional', city: 'Peoria', state_prov: 'Illinois', country: 'USA', start_date: '2027-03-25', end_date: '2027-03-27', year: 2027,
@@ -1540,5 +1660,512 @@ describe('looking up an event', () => {
     if (!result.ok) throw new Error(result.error)
     expect(result.value.map((e) => e.key)[0]).toBe(EVENT_KEY)
     expect(result.value.map((e) => e.start_date)).toEqual([...result.value.map((e) => e.start_date)].sort())
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Average points (APS) and the match simulator (#166).
+
+describe('average points and the match simulator', () => {
+  let next = 0
+  // A match entry worth `fuel` points from teleop fuel, plus its endgame's points.
+  const scored = (team: number, match: number, fuel: number, endgame = 'None', fields: Partial<MatchRow> = {}): MatchRow => ({
+    id: `aps-${++next}`, event_key: EVENT_KEY, match_number: match, team_number: team,
+    counts: { autoFuel: 0, teleopFuel: fuel, fuelMissed: 5 }, endgame,
+    roles: [], role_notes: null, broke_down: false, broke_parts: [], broke_other: null, browned_out: false, stop: 'None', driver_skill: 3,
+    auto_side: null, auto_notes: null, ranking_points: [], notes: null, scouted_by: null, scouted_at: '2026-11-07T15:00:00Z',
+    ...fields,
+  })
+  const xp = (teamNumber: number, xpEnd: number): Match13Rating => ({ teamNumber, xpStart: xpEnd, xpEnd, xAuto: null, xTele: null, xEnd: null, epa: null, opr: null, dpr: null })
+
+  it("adds up each counter's points and the endgame's, with no points for a counter that has none, like fuel missed", () => {
+    expect(entryPoints({ counts: { autoFuel: 3, teleopFuel: 10, fuelMissed: 7 }, endgame: 'Level 2' })).toBe(3 + 10 + 20)
+    expect(entryPoints({ counts: {}, endgame: 'None' })).toBe(0)
+    // A counter missing from an entry counts as 0, and other seasons' settings work too.
+    expect(entryPoints({ counts: { climbs: 2 }, endgame: 'Park' }, [{ key: 'climbs', label: 'Climbs', points: 6 }], { Park: 2 })).toBe(14)
+  })
+
+  it('averages points per match, with a range of one standard deviation, and how many matches', () => {
+    const aps = teamAps(9991, [scored(9991, 1, 20), scored(9991, 2, 40), scored(9992, 2, 99)])
+    expect(aps).toEqual({ average: 30, low: 20, high: 40, spread: 10, matches: 2 })
+    expect(pointsRange(aps!.average, aps!.low, aps!.high)).toBe('30 (20–40)')
+  })
+
+  it('counts two scouts on the same match as one match, averaging their points, and never goes below 0', () => {
+    const aps = teamAps(9991, [scored(9991, 1, 10), scored(9991, 1, 30), scored(9991, 2, 0)])
+    expect(aps).toMatchObject({ average: 10, matches: 2 })
+    expect(aps!.low).toBe(0)
+  })
+
+  it('gives nothing for a team with no match entries, or only entries at another event', () => {
+    expect(teamAps(9991, [])).toBeNull()
+    expect(teamAps(9991, [scored(9991, 1, 20, 'None', { event_key: '2025ilch' })])).toBeNull()
+  })
+
+  it('uses our APS with enough matches, and Match 13 xP with too few, marking those as a guess', () => {
+    const enough = [1, 2, 3].map((m) => scored(9991, m, 30))
+    expect(MIN_MATCHES).toBe(3)
+    expect(teamPoints(9991, enough, [xp(9991, 50)])).toMatchObject({ expected: 30, source: 'scouting', fewMatches: false, xp: 50 })
+    expect(teamPoints(9991, enough.slice(0, 2), [xp(9991, 50)])).toMatchObject({ expected: 50, spread: 0, source: 'match13', fewMatches: true })
+    // With too few matches and no rating, our few matches are still better than nothing.
+    expect(teamPoints(9991, enough.slice(0, 1), [])).toMatchObject({ expected: 30, source: 'scouting', fewMatches: true })
+    expect(teamPoints(9991, [], [])).toMatchObject({ expected: null, source: null, aps: null, xp: null, fewMatches: true })
+  })
+
+  it("adds up an alliance's expected points, with the spreads combined, and lists teams with nothing to go on", () => {
+    const team = (expected: number | null, spread: number) => ({ team: 9990 + spread, aps: null, xp: null, expected, spread, source: null, fewMatches: false })
+    const score = allianceScore([team(30, 3), team(20, 4), team(null, 0)])
+    expect(score).toEqual({ expected: 50, low: 45, high: 55, spread: 5, unknown: [9990] })
+  })
+
+  it('gives the chance red wins: even for equal scores, higher for the bigger lead, and certain with no spread', () => {
+    const alliance = (expected: number, spread: number) => ({ expected, low: expected - spread, high: expected + spread, spread, unknown: [] })
+    expect(redWinChance(alliance(50, 5), alliance(50, 5))).toBeCloseTo(0.5)
+    // A lead of one combined spread is about 84%.
+    expect(redWinChance(alliance(60, 3), alliance(55, 4))).toBeCloseTo(0.8413, 3)
+    expect(redWinChance(alliance(40, 3), alliance(45, 4))).toBeCloseTo(0.1587, 3)
+    expect(redWinChance(alliance(40, 0), alliance(30, 0))).toBe(1)
+    expect(redWinChance(alliance(30, 0), alliance(40, 0))).toBe(0)
+  })
+
+  it('lists the qualification matches not played yet, soonest first, for filling in the simulator', async () => {
+    const result = await getSchedule()
+    if (!result.ok) throw new Error(result.error)
+    const saved: SavedSchedule = { event: EVENT_KEY, matches: [...result.value].reverse(), predictions: [], savedAt: '2026-11-07T15:00:00Z' }
+    // The example schedule's first two matches are played.
+    expect(upcomingMatches(saved).map((m) => m.match_number)).toEqual([3, 4])
+    expect(upcomingMatches(null)).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// More of Match 13's numbers (#152).
+
+describe("more of Match 13's numbers", () => {
+  const rating = (teamNumber: number, extra: Partial<Match13Rating> = {}): Match13Rating => ({
+    teamNumber, xpStart: 30, xpEnd: 40, xAuto: 10, xTele: 25, xEnd: 5, epa: 38, opr: 41, dpr: 12, ...extra,
+  })
+
+  it("reads each number, with a number Match 13 leaves out (or a copy saved before #152 doesn't have) as not given", () => {
+    const full = rating(9991, { xVar: 8.4, xRp1: 0.72 })
+    expect(statValue(full, 'opr')).toBe(41)
+    expect(statValue(full, 'xRp1')).toBe(0.72)
+    expect(statText(statValue(full, 'xRp1'), { percent: true })).toBe('72%')
+    expect(statText(statValue(full, 'xVar'))).toBe('8.4')
+    // Saved before #152: no xVar or xRp2 at all.
+    expect(statValue(rating(9991), 'xVar')).toBeNull()
+    expect(statText(statValue(full, 'xRp2'), { percent: true })).toBe('not given')
+    expect(statValue(rating(9991, { dpr: null }), 'dpr')).toBeNull()
+  })
+
+  it('reads the game parts with the names Match 13 sends, leaving out anything that is not a number', () => {
+    const r = rating(9991, { components: { barge: 12.5, coral: 20, notes: 'x', nested: { a: 1 } } })
+    expect(ratingComponents(r)).toEqual([{ name: 'barge', value: 12.5 }, { name: 'coral', value: 20 }])
+    expect(ratingComponents(rating(9991))).toEqual([])
+    expect(ratingComponents(rating(9991, { components: null }))).toEqual([])
+    expect(statValue(r, 'part:coral')).toBe(20)
+    expect(statValue(r, 'part:algae')).toBeNull()
+  })
+
+  it("has a column for every number, then each game part any team has, once", () => {
+    const columns = statColumns([rating(1, { components: { barge: 1 } }), rating(2, { components: { barge: 2, coral: 3 } }), rating(3)])
+    expect(columns.slice(0, STAT_COLUMNS.length)).toEqual(STAT_COLUMNS)
+    expect(columns.slice(STAT_COLUMNS.length).map((c) => [c.key, c.label])).toEqual([['part:barge', 'barge'], ['part:coral', 'coral']])
+    expect(STAT_COLUMNS.find((c) => c.key === 'dpr')?.lowerIsBetter).toBe(true)
+  })
+
+  it('sorts best first, lowest first for lower-is-better columns, either way round, with missing numbers always last', () => {
+    const ratings = [rating(1, { opr: 30, dpr: 10 }), rating(2, { opr: 50, dpr: 20 }), rating(3, { opr: null, dpr: null }), rating(4, { opr: 50, dpr: 5 })]
+    const column = (key: string) => STAT_COLUMNS.find((c) => c.key === key)!
+    const teams = (sorted: Match13Rating[]) => sorted.map((r) => r.teamNumber)
+    expect(teams(sortStats(ratings, column('opr')))).toEqual([2, 4, 1, 3])
+    expect(teams(sortStats(ratings, column('opr'), false))).toEqual([1, 2, 4, 3])
+    expect(teams(sortStats(ratings, column('dpr')))).toEqual([4, 1, 2, 3])
+  })
+
+  it('has the new numbers in the example ratings', async () => {
+    const result = await getRatings()
+    if (!result.ok) throw new Error(result.error)
+    expect(result.value.every((r) => statValue(r, 'xVar') !== null && ratingComponents(r).length > 0)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The overview page (#160).
+
+describe('the scouting overview', () => {
+  const NOW = new Date('2026-03-13T18:00:00Z')
+  // A phone's entry, Waiting or Synced.
+  const onPhone = (synced: boolean) => ({ synced }) as Entry
+  const pitOnPhone = (synced: boolean) => ({ synced }) as PitEntry
+  const match = (n: number, red: number[], blue: number[], redScore = -1, blueScore = -1): TbaMatch => ({
+    key: `${EVENT_KEY}_qm${n}`, comp_level: 'qm', set_number: 1, match_number: n,
+    alliances: { red: { score: redScore, team_keys: red.map((t) => `frc${t}`) }, blue: { score: blueScore, team_keys: blue.map((t) => `frc${t}`) } },
+    winning_alliance: '', predicted_time: null,
+  })
+  const schedule = (matches: TbaMatch[], predictions: MatchPrediction[] = []): SavedSchedule => ({ event: EVENT_KEY, matches, predictions, savedAt: '2026-03-13T17:50:00Z' })
+  const ranking = (team: number, rank: number) => ({ rank, team_key: `frc${team}`, record: { wins: 5, losses: 2, ties: 0 }, matches_played: 7, extra_stats: [15] })
+  const row = (team: number): MatchRow => ({
+    id: `ov-${team}`, event_key: EVENT_KEY, match_number: 1, team_number: team, counts: {}, endgame: 'None', roles: [], role_notes: null,
+    broke_down: false, broke_parts: [], broke_other: null, browned_out: false, stop: 'None', driver_skill: 3, auto_side: null, auto_notes: null,
+    ranking_points: [], notes: null, scouted_by: null, scouted_at: '2026-03-13T15:00:00Z',
+  })
+  const nothing: OverviewInput = {
+    entries: [], pitEntries: [], sync: { sending: false, problem: null }, matchRows: [], pitRows: [], schedule: null, rankings: null, ratings: [], ranked: [], finalPicklist: [], now: NOW,
+  }
+  const card = (input: Partial<OverviewInput>, view: string) => scoutingOverview({ ...nothing, ...input }, 4096).find((c) => c.view === view)!
+
+  it('has a card for every page, in the order of the switch, and says plainly when nothing is saved yet', () => {
+    const cards = scoutingOverview(nothing, 4096)
+    expect(cards.map((c) => c.view)).toEqual(['Match', 'Pit', 'Schedule', 'Rankings', 'Teams', 'Picklist', 'My picklist', 'Team picklist', 'Final picklist', 'Simulator', 'Stats'])
+    expect(cards.map((c) => c.lines[0])).toEqual([
+      'No match entries on this phone yet', 'No pit entries on this phone yet', 'No schedule saved yet', 'No rankings saved yet', 'No teams scouted yet',
+      'No teams to rank yet', 'Not started yet', 'Nobody has made a picklist yet', 'Not started yet', "Pick 6 teams to see the score we'd expect, and who's likely to win", 'No Match 13 ratings saved yet',
+    ])
+  })
+
+  it('says how many entries are waiting to send, and why, or that they all sent', () => {
+    const waiting = card({ entries: [onPhone(false), onPhone(false), onPhone(false), onPhone(true)], sync: { sending: false, problem: 'No connection.' } }, 'Match')
+    expect(waiting).toEqual({ view: 'Match', tone: 'info', lines: ['3 match entries waiting to send', '1 sent', 'No connection.'] })
+    expect(card({ entries: [onPhone(true), onPhone(true)] }, 'Match')).toEqual({ view: 'Match', tone: 'plain', lines: ['All 2 match entries sent'] })
+  })
+
+  it("counts how many of the event's teams have a pit entry", () => {
+    const pit = card({ pitEntries: [pitOnPhone(true)], pitRows: [{ team_number: 9991 } as PitRow], rankings: { event: EVENT_KEY, rankings: [ranking(9991, 1), ranking(9992, 2), ranking(4096, 3)], checked_at: '2026-03-13T17:00:00Z' } }, 'Pit')
+    expect(pit.lines).toEqual(['All 1 pit entry sent', '1 of 3 teams pit scouted'])
+  })
+
+  it("gives our next match with its alliance and prediction, and our last result", () => {
+    const saved = schedule(
+      [match(1, [4096, 9991, 9992], [9993, 9994, 9995], 84, 71), match(2, [9991, 9992, 9993], [9994, 9995, 9996]), match(3, [9993, 9994, 9995], [4096, 9991, 9992])],
+      [{ key: `${EVENT_KEY}_qm3`, redWinChance: 0.64, redScore: 70, blueScore: 60 }],
+    )
+    expect(card({ schedule: saved }, 'Schedule').lines).toEqual(['Next: Qual 3 · Blue · Red 64%', 'Last: Qual 1 · Won 84–71', 'Saved 10 minutes ago'])
+    // Every match played: only the last result.
+    expect(card({ schedule: schedule([match(1, [9991, 9992, 9993], [4096, 9994, 9995], 90, 60)]) }, 'Schedule').lines[0]).toBe('Last: Qual 1 · Lost 60–90')
+    expect(card({ schedule: schedule([match(1, [9991, 9992, 9993], [9994, 9995, 9996])]) }, 'Schedule').lines[0]).toBe("4096 isn't on the schedule")
+    expect(card({ schedule: schedule([]) }, 'Schedule').lines[0]).toBe("The Blue Alliance doesn't have the schedule yet")
+  })
+
+  it('gives our rank and record, or says we are not in the rankings', () => {
+    const rankings = { event: EVENT_KEY, rankings: [ranking(9991, 1), ranking(4096, 2)], checked_at: '2026-03-13T17:30:00Z' }
+    expect(card({ rankings }, 'Rankings').lines).toEqual(['Rank 2 of 2 · 5-2-0', 'Updated 30 minutes ago'])
+    expect(card({ rankings: { ...rankings, rankings: [ranking(9991, 1)] } }, 'Rankings').lines[0]).toBe("4096 isn't in the rankings yet")
+  })
+
+  it("lists the event's teams with no match entries yet", () => {
+    const teams = card({ matchRows: [row(9991)], ratings: [9991, 9992, 9993].map((t) => ({ teamNumber: t, xpStart: 1, xpEnd: 1, xAuto: null, xTele: null, xEnd: null, epa: null, opr: null, dpr: null })) }, 'Teams')
+    expect(teams.lines).toEqual(['1 team scouted', 'No match entries yet: 9992, 9993'])
+  })
+
+  it('gives the top 3 of each picklist, only Open teams on the final one', () => {
+    expect(card({ ranked: [{ team: 9994 }, { team: 9991 }, { team: 9992 }, { team: 9993 }] }, 'Picklist').lines).toEqual(['Top 3: 9994, 9991, 9992'])
+    const final = (team: number, status: PicklistRow['status']) => ({ team_number: team, status }) as PicklistRow
+    expect(card({ finalPicklist: [final(9991, 'Picked'), final(9992, 'Open'), final(9993, 'Do not pick'), final(9994, 'Open')] }, 'Final picklist').lines).toEqual(['Top 2: 9992, 9994', '4 teams on the list'])
+  })
+
+  it("knows the event's teams from the saved schedule, rankings and ratings, each once", () => {
+    const saved = schedule([match(1, [4096, 9991, 9992], [9993, 9994, 9995])])
+    expect(eventTeams(saved, { event: EVENT_KEY, rankings: [ranking(9996, 1)], checked_at: '' }, [])).toEqual([4096, 9991, 9992, 9993, 9994, 9995, 9996])
+    expect(eventTeams(null, null, [])).toEqual([])
+  })
+})
+
+describe('Nexus (#165)', () => {
+  it("links to the current event's page on Nexus, or another event's", () => {
+    expect(nexusEventUrl()).toBe(`https://frc.nexus/en/event/${EVENT_KEY}`)
+    expect(nexusEventUrl('2026mndu2')).toBe('https://frc.nexus/en/event/2026mndu2')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Robot photos (#164). The tests can't draw pictures, so they pass addPhoto()
+// a pretend shrink. Node has no IndexedDB, so files are kept in memory.
+
+describe('robot photos', () => {
+  const jpeg = (bytes = 1000) => new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' })
+  const shrink = async (file: Blob) => ({ ok: true as const, value: jpeg(Math.min(file.size, 2000)) })
+
+  beforeEach(async () => {
+    await syncEntries()
+    photoStore.reset()
+    photosTable.reset()
+    entryStore.reset()
+    pitStore.reset()
+    syncStatus.reset()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('shrinks a photo so its longest side is at most 1280 pixels, keeping its shape, and leaves small ones alone', () => {
+    expect(shrunkSize(4032, 3024)).toEqual({ width: 1280, height: 960 })
+    expect(shrunkSize(3024, 4032)).toEqual({ width: 960, height: 1280 })
+    expect(shrunkSize(800, 600)).toEqual({ width: 800, height: 600 })
+  })
+
+  it("puts each photo in its event and team's folder, named by its id", () => {
+    expect(photoPath('2026ilch', 9991, 'abc')).toBe('2026ilch/9991/abc.jpg')
+  })
+
+  it('needs a team number and a photo', async () => {
+    expect(await addPhoto(0, jpeg(), shrink)).toEqual({ ok: false, error: 'Enter the team number first, then add the photo.' })
+    expect(await addPhoto(9991, new Blob(['hi'], { type: 'text/plain' }), shrink)).toEqual({ ok: false, error: expect.stringMatching(/isn't a photo/) })
+    expect(await addPhoto(9991, jpeg(), async () => ({ ok: false, error: "Couldn't read that photo." }))).toEqual({ ok: false, error: "Couldn't read that photo." })
+    expect(await addPhoto(9991, jpeg(), async () => ({ ok: true, value: jpeg(MAX_PHOTO_BYTES + 1) }))).toMatchObject({ ok: false })
+    expect(photoStore.get()).toEqual([])
+  })
+
+  it('keeps a photo Waiting on this phone with no connection, then sends it and forgets the file', async () => {
+    vi.stubGlobal('navigator', { onLine: false })
+    const added = await addPhoto(9991, jpeg(5000), shrink)
+    if (!added.ok) throw new Error(added.error)
+    expect(added.value).toMatchObject({ team: 9991, event_key: EVENT_KEY, size_bytes: 2000, synced: false })
+    expect(await readFile(added.value.id)).not.toBeNull()
+    expect(photosTable.rows()).toEqual([])
+
+    vi.stubGlobal('navigator', { onLine: true })
+    expect(await syncEntries()).toEqual({ ok: true, value: 1 })
+    expect(photoStore.get()[0].synced).toBe(true)
+    expect(photosTable.rows()).toEqual([expect.objectContaining(photoToRow(added.value))])
+    expect(photosTable.rows()[0].path).toBe(`${EVENT_KEY}/9991/${added.value.id}.jpg`)
+    expect(await readFile(added.value.id)).toBeNull()
+  })
+
+  it('never sends a photo twice, even if the phone sends it again', async () => {
+    const added = await addPhoto(9991, jpeg(), shrink)
+    if (!added.ok) throw new Error(added.error)
+    await syncEntries()
+    photoStore.set((photos) => photos.map((p) => ({ ...p, synced: false })))
+    // The file is already forgotten, so a second send just drops it from the list.
+    await syncEntries()
+    expect(photosTable.rows()).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Personal picklists and the team picklist (#151). In demo mode a student is
+// Alex, who has no example list; Jordan, Sam and Pat do.
+
+describe('my picklist', () => {
+  beforeEach(() => {
+    myPicklistTable.reset()
+    setDemoRole('student')
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const mine = () => myPicklist().map((row) => [row.team_number, row.rank])
+
+  it("starts my list in the order given, 1, 2, 3, once, and won't start it again", async () => {
+    expect(myPicklist()).toEqual([])
+    expect(await startMyPicklist([9994, 9991, 9994, 9992])).toMatchObject({ ok: true })
+    expect(mine()).toEqual([[9994, 1], [9991, 2], [9992, 3]])
+    expect(await startMyPicklist([9993])).toEqual({ ok: false, error: expect.stringMatching(/already started/) })
+    expect(await startMyPicklist([])).toMatchObject({ ok: false })
+  })
+
+  it('adds only the missing teams, to the bottom', async () => {
+    await startMyPicklist([9991, 9992])
+    expect(await addToMyPicklist([9992, 9995, 9993])).toMatchObject({ ok: true })
+    expect(mine()).toEqual([[9991, 1], [9992, 2], [9995, 3], [9993, 4]])
+  })
+
+  it('moves a team up, down, or to any place, shifting the teams in between, and only changes rows that move', async () => {
+    await startMyPicklist([9991, 9992, 9993, 9994, 9995])
+    await moveOnMyPicklist(9993, 2)
+    expect(mine().map(([t]) => t)).toEqual([9991, 9993, 9992, 9994, 9995])
+    await moveOnMyPicklist(9991, 5)
+    expect(mine().map(([t]) => t)).toEqual([9993, 9992, 9994, 9995, 9991])
+    // Past either end means the top or the bottom.
+    await moveOnMyPicklist(9995, 0)
+    await moveOnMyPicklist(9993, 99)
+    expect(mine()).toEqual([[9995, 1], [9992, 2], [9994, 3], [9991, 4], [9993, 5]])
+    const before = myPicklistTable.rows().find((r) => r.team_number === 9991 && r.created_by === DEMO_PEOPLE.alex)!
+    await moveOnMyPicklist(9992, 3)
+    expect(myPicklistTable.rows().find((r) => r.id === before.id)).toBe(before)
+    expect(await moveOnMyPicklist(1234, 1)).toEqual({ ok: false, error: "Team 1234 isn't on your picklist." })
+  })
+
+  it('adds, changes and clears a note, up to 500 characters', async () => {
+    await startMyPicklist([9991])
+    expect(await setPicklistNote(9991, '  Great defender  ')).toEqual({ ok: true, value: null })
+    expect(myPicklist()[0].note).toBe('Great defender')
+    expect(await setPicklistNote(9991, 'x'.repeat(MAX_PICKLIST_NOTE + 1))).toMatchObject({ ok: false, error: expect.stringMatching(/500/) })
+    await setPicklistNote(9991, '')
+    expect(myPicklist()[0].note).toBeNull()
+  })
+
+  it("says changes need a connection when there isn't one, and leaves the list alone", async () => {
+    await startMyPicklist([9991, 9992])
+    vi.stubGlobal('navigator', { onLine: false })
+    expect(await moveOnMyPicklist(9992, 1)).toEqual({ ok: false, error: expect.stringMatching(/No connection/) })
+    expect(mine()).toEqual([[9991, 1], [9992, 2]])
+  })
+
+  it("keeps each person's list separate", async () => {
+    await startMyPicklist([9991])
+    expect(myPicklist(DEMO_PEOPLE.jordan).map((r) => r.team_number)).toEqual([9994, 9991, 9993, 9992])
+    expect(myPicklist(DEMO_PEOPLE.alex).map((r) => r.team_number)).toEqual([9991])
+  })
+})
+
+describe('the team picklist', () => {
+  let next = 0
+  // One person's list: teams best first.
+  const list = (person: string, teams: number[], notes: Record<number, string> = {}): MyPicklistRow[] =>
+    teams.map((team, i) => ({
+      id: `tp-${++next}`, event_key: EVENT_KEY, team_number: team, rank: i + 1, note: notes[team] ?? null,
+      created_at: '2026-11-07T21:00:00Z', created_by: person, updated_at: '2026-11-07T21:00:00Z',
+    }))
+
+  it('turns each place into a share of its list, so lists of different lengths count the same', () => {
+    // 9991 is 1st of 2 for one person and 1st of 5 for the other: both the top.
+    const lines = teamPicklist([...list('a', [9991, 9992]), ...list('b', [9991, 9993, 9994, 9995, 9992])])
+    expect(lines[0]).toMatchObject({ rank: 1, team: 9991, share: 0, averagePlace: 1, best: 1, worst: 1, onLists: 2, lists: 2 })
+    // 9992 is last on both lists, whatever their lengths.
+    expect(lines.find((l) => l.team === 9992)).toMatchObject({ share: 1, averagePlace: 3.5, best: 2, worst: 5 })
+  })
+
+  it("leaves a team out of a list it isn't on, rather than counting it last", () => {
+    const lines = teamPicklist([...list('a', [9991, 9992, 9993]), ...list('b', [9992, 9993])])
+    // 9991 is only on a's list, at the top: it isn't pushed down for b leaving it off.
+    expect(lines.map((l) => [l.team, l.share, l.onLists])).toEqual([[9991, 0, 1], [9992, 0.25, 2], [9993, 1, 2]])
+  })
+
+  it('puts equal averages in team number order', () => {
+    const lines = teamPicklist([...list('a', [9993, 9991]), ...list('b', [9991, 9993])])
+    expect(lines.map((l) => l.team)).toEqual([9991, 9993])
+  })
+
+  it('shows where each person put a team, best first, with their notes', () => {
+    const lines = teamPicklist([...list('a', [9992, 9991], { 9991: 'Slow climb' }), ...list('b', [9991], { 9991: 'Best auto' })])
+    expect(lines.find((l) => l.team === 9991)?.placements).toEqual([{ by: 'b', place: 1, of: 1, note: 'Best auto' }, { by: 'a', place: 2, of: 2, note: 'Slow climb' }])
+  })
+
+  it('has nothing when nobody has made a list, and averages the example lists in demo mode', () => {
+    expect(teamPicklist([])).toEqual([])
+    myPicklistTable.reset()
+    const lines = teamPicklist(myPicklistTable.rows())
+    expect(lines[0]).toMatchObject({ team: 9994, lists: 3, onLists: 3 })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The strategy team (#167). In demo mode Jordan and Sam are on it; Alex
+// (the demo student) isn't. Student leaders, mentors and admins always count.
+
+describe('the strategy team', () => {
+  beforeEach(() => {
+    strategyTable.reset()
+  })
+
+  it('counts strategy members, student leaders, mentors and admins, but not other students, or nobody signed in', () => {
+    const members = strategyTable.rows()
+    expect(isStrategy({ id: DEMO_PEOPLE.sam, role: 'student' }, members)).toBe(true)
+    expect(isStrategy({ id: DEMO_PEOPLE.casey, role: 'leader' }, members)).toBe(true)
+    expect(isStrategy({ id: DEMO_PEOPLE.alex, role: 'student' }, members)).toBe(false)
+    expect(isStrategy({ id: DEMO_PEOPLE.sam, role: 'mentor' }, members)).toBe(true)
+    expect(isStrategy({ id: DEMO_PEOPLE.sam, role: 'admin' }, [])).toBe(true)
+    expect(isStrategy(null, members)).toBe(false)
+  })
+
+  it('keeps the forms, schedule and rankings open to everyone', () => {
+    for (const path of ['match', 'pit', 'schedule', 'rankings']) expect(STRATEGY_PATHS).not.toContain(path)
+    for (const path of ['', 'team', 'picklist', 'shared-picklist', 'simulate', 'stats']) expect(STRATEGY_PATHS).toContain(path)
+  })
+
+  it('lets a mentor add and remove people, once each, but not a student', async () => {
+    setDemoRole('student')
+    expect(await addStrategyMember(DEMO_PEOPLE.casey)).toEqual({ ok: false, error: 'Only mentors choose the strategy team.' })
+    setDemoRole('mentor')
+    expect(await addStrategyMember(DEMO_PEOPLE.casey)).toMatchObject({ ok: true, value: { member_id: DEMO_PEOPLE.casey } })
+    expect(await addStrategyMember(DEMO_PEOPLE.casey)).toMatchObject({ ok: false, error: expect.stringMatching(/already/) })
+    expect(await removeStrategyMember(DEMO_PEOPLE.casey)).toMatchObject({ ok: true })
+    expect(await removeStrategyMember(DEMO_PEOPLE.casey)).toMatchObject({ ok: false })
+    setDemoRole('student')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Match 13's simulation and a team's events (#152, #153), and Nexus's live
+// status (#165). The readers take what they can from each answer and leave
+// out the rest.
+
+describe("Match 13's simulation and a team's events", () => {
+  it("reads each team's likely final rank and ranking points, from stats objects or flat fields", () => {
+    expect(readSim({ teams: [{ teamNumber: 9991, rank: { mean: 3.2, p5: 1, p50: 3, p95: 7 }, rp: { mean: 24.5 } }] })).toEqual([
+      { team: 9991, rank: 3.2, rankLow: 1, rankHigh: 7, rp: 24.5 },
+    ])
+    expect(readSim([{ team: 9992, meanRank: 8, rankP5: 4, rankP95: 12, meanRp: 15 }])).toEqual([{ team: 9992, rank: 8, rankLow: 4, rankHigh: 12, rp: 15 }])
+  })
+
+  it('leaves out teams with nothing readable, and answers that are not a list', () => {
+    expect(readSim({ teams: [{ teamNumber: 9991, xpEnd: 40 }, { rank: { mean: 1 } }] })).toEqual([])
+    expect(readSim(null)).toEqual([])
+    expect(readSim({ teams: 'none' })).toEqual([])
+  })
+
+  it("puts each team's simulation on its rating, leaving teams without one alone", () => {
+    const ratings: Match13Rating[] = [9991, 9992].map((teamNumber) => ({ teamNumber, xpStart: 30, xpEnd: 40, xAuto: null, xTele: null, xEnd: null, epa: null, opr: null, dpr: null }))
+    const merged = withSim(ratings, [{ team: 9991, rank: 2.5, rankLow: 1, rankHigh: 5, rp: 20 }])
+    expect(merged[0]).toMatchObject({ simRank: 2.5, simRankLow: 1, simRankHigh: 5, simRp: 20 })
+    expect(merged[1]).toBe(ratings[1])
+  })
+
+  it("reads a team's xP and rank at each event, and has example ones in demo mode", async () => {
+    expect(readTeamEvents({ events: [{ eventKey: '2026ilch', xpEnd: 41.7, rank: 3 }, { key: '2026mndu', xp: 38 }, { xpEnd: 1 }] })).toEqual([
+      { event: '2026ilch', xp: 41.7, rank: 3 },
+      { event: '2026mndu', xp: 38, rank: null },
+    ])
+    const demo = await getTeamSeasonRatings(9991, 2026)
+    expect(demo.ok && demo.value.length).toBeGreaterThan(0)
+    const sim = await getEventSim()
+    expect(sim.ok && sim.value.every((s) => s.rank !== null)).toBe(true)
+  })
+})
+
+describe('Nexus live status', () => {
+  const now = 1_700_000_000_000
+  const answer = {
+    dataAsOfTime: now,
+    nowQueuing: 'Qualification 20',
+    matches: [
+      { label: 'Qualification 17', status: 'Completed', redTeams: ['4096', '9991', '9992'], blueTeams: ['9993', '9994', '9995'] },
+      { label: 'Qualification 18', status: 'On field', redTeams: ['9991', '9992', '9993'], blueTeams: ['9994', '9995', '9996'] },
+      { label: 'Qualification 22', status: 'Queuing soon', redTeams: ['9991', '9992', '9993'], blueTeams: ['9994', '4096', '9996'], times: { estimatedQueueTime: now + 600_000 } },
+    ],
+    announcements: [{ announcement: 'Older', postedTime: now - 1000 }, { announcement: 'Newer', postedTime: now }],
+  }
+
+  it("reads what's on the field, what's queuing, our next match with its queue time, and announcements newest first", () => {
+    expect(readNexus(answer, 4096)).toEqual({
+      onField: 'Qualification 18',
+      nowQueuing: 'Qualification 20',
+      ourNext: { label: 'Qualification 22', status: 'Queuing soon', alliance: 'blue', queueAt: now + 600_000 },
+      announcements: ['Newer', 'Older'],
+      asOf: now,
+    })
+  })
+
+  it('reads an empty or odd answer as nothing, rather than guessing', () => {
+    expect(readNexus(null)).toEqual({ onField: null, nowQueuing: null, ourNext: null, announcements: [], asOf: null })
+    expect(readNexus({ matches: 'soon', nowQueuing: 5 })).toMatchObject({ onField: null, nowQueuing: null, ourNext: null })
+  })
+
+  it('keeps the last status on the phone, for this event, and says why with no connection', async () => {
+    nexusStore.reset()
+    const result = await refreshNexus(EVENT_KEY)
+    expect(result.ok && result.value.status.onField).toBe('Qualification 3')
+    expect(nexusStore.get()?.event).toBe(EVENT_KEY)
+    vi.stubGlobal('navigator', { onLine: false })
+    expect(await refreshNexus(EVENT_KEY)).toEqual({ ok: false, error: 'No connection.' })
+    expect(nexusStore.get()?.status.onField).toBe('Qualification 3')
+    vi.unstubAllGlobals()
+    const demo = await getNexusStatus(EVENT_KEY)
+    expect(demo.ok && demo.value.ourNext?.label).toBe('Qualification 3')
   })
 })
