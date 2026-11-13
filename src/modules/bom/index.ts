@@ -1,5 +1,5 @@
 import type { ModuleDefinition } from '../../core/registry'
-import { useBomSummary } from './data'
+import { useRobotSummary } from './stats'
 
 export const bom: ModuleDefinition = {
   id: 'bom',
@@ -7,5 +7,6 @@ export const bom: ModuleDefinition = {
   purpose: 'The bill of materials from Onshape, checked against the shelf.',
   group: 'build',
   load: () => import('./BomPage'),
-  useSummary: useBomSummary,
+  // "Robot 62% built" on the home page tile (#23).
+  useSummary: useRobotSummary,
 }

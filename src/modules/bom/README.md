@@ -6,11 +6,13 @@ The bill of materials for each robot, checked against Inventory, so the team can
 
 | File | What it does |
 |:--|:--|
-| `index.ts` | Tells the app about the module, and puts "2 systems · 12 parts" on the home page tile. |
+| `index.ts` | Tells the app about the module, and puts "Robot 62% built" on the home page tile (from `stats.ts`). |
 | `data.ts` | The four tables (`bom_robots`, `bom_systems`, `bom_parts`, `bom_steps`), their example rows, adding and changing them, moving stages along, assigning them, and reading a system from Onshape. |
 | `onshape.ts` | Works out what an import from Onshape changes: `planOnshapeImport()`. |
-| `data.test.ts`, `onshape.test.ts` | Tests for both. |
+| `stats.ts` | How close each system, and the whole robot, is to being built: `systemStats()`, `robotStats()`, and the home page tile's `useRobotSummary()` (see [Dashboard](#dashboard)). |
+| `data.test.ts`, `onshape.test.ts`, `stats.test.ts` | Tests for them. |
 | `BomPage.tsx` | Pick a system, then see its parts in a table with their stages, change them, and import from Onshape. Below, the robot's To order list. |
+| `Dashboard.tsx` | The page's **Dashboard** view: the robot's total, then a card for each system. |
 
 The tables are made by `supabase/migrations/20261027150000_bom.sql`, and their permission rules are tested in `supabase/tests/bom.test.ts`.
 
@@ -86,6 +88,24 @@ Under each COTS part, the page shows what Inventory has, in plain text: "On the 
 At the bottom of the page, **To order** lists the COTS parts the whole robot is short of, grouped by vendor (#17). Each line shows how many the robot needs, how many are on the shelf, how many are already in Purchasing, and how many are left to order. **Copy as CSV** copies the list (vendor, vendor part number, part, quantity to order) to paste into a spreadsheet or an order.
 
 `toOrder()` in `data.ts` builds it from `shortages()`. To stop a part being ordered twice, it takes off what's already on a request in Purchasing for those BOM lines. Requests that are cancelled or Out of Stock don't count. Requests that are In Shop don't count either: they're put away, so Inventory's count should include them. **If something is In Shop but Inventory wasn't updated, it shows here again**, so update Inventory when parts are put away. Vendors are named the way Purchasing names them (`vendorFor()`), so "REV" and "REV Robotics" are one group.
+
+## Dashboard
+
+At the top of the page, **View: Parts / Dashboard** switches between one system's parts and the dashboard (#23). The dashboard shows how far along the whole robot is, then a card for each system with a progress bar and how many parts are waiting at each stage, like "3 waiting for CNC router". Tap one of those to see the parts: it opens that system's parts with the station filter set. The home page's BOM tile says the same in a few words: "Robot 62% built". With more than one robot, it names the one the page opens on.
+
+It updates straight away when anyone moves a stage along or Inventory changes, because it reads the same rows as the rest of the page.
+
+The numbers come from `stats.ts`. What counts as done:
+
+- **A stage** is finished when it's marked **Done**. A Done stage counts all of the part's quantity as through it, even if nobody counted them with +.
+- **A piece of a Custom part is made** when it's through every one of the part's stages. A part with 4 through the lathe but 1 through post-process has 1 of 4 made.
+- **A Custom part is done** when it has at least one stage and every stage is Done. A Custom part with no stages yet isn't done (nobody's said how it's made), and the card says how many there are.
+- **A COTS part is on the shelf** when Inventory has enough for the whole robot. A part used in more than one system is added up first, the same way **To order** does (`shortages()`), so 7 bearings aren't counted as enough for the intake's 6 and again for the drivetrain's 4. If the robot has 7 of the 10, each system's line counts as 70% there. Only Inventory counts: a part that's arrived but isn't in Inventory yet doesn't.
+- **The percent** counts quantities: 3 of 4 made counts as 75% of that part, and 6 of 8 wheels on the shelf as 75%. **Each part counts the same**, so 120 rivets don't count for more than the whole intake. The robot's total counts every part in the robot, so a system with more parts counts for more. It's rounded down, so it only says 100% when everything is done.
+- **Waiting** counts parts (lines), not pieces, the same as the station filter: a part is waiting for a stage while that stage isn't Done. The process stages are counted by their machine.
+- **Parts removed in Onshape** don't count anywhere.
+
+If every piece has been counted through a stage but it isn't marked Done, the part counts as made in the percent but still shows as waiting. Mark the stage Done when the last one's through.
 
 ## Importing from Onshape
 
