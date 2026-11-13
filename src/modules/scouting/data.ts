@@ -36,8 +36,10 @@ import { isMentor } from '../../core/roles'
 import { currentUser, onSignedIn } from '../../core/session'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore, type Store } from '../../core/store'
+import { supabase } from '../../core/supabase'
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row, type Table } from '../../core/table'
 import { toCsv } from '../attendance/data'
+import { forgetFile, keepFile, readFile } from './photoFiles'
 import { AUTO_SIDES, BREAKDOWN_PARTS, COUNTERS, DRIVETRAINS, ENDGAME, ENDGAME_POINTS, EVENT_KEY, RANKING_POINTS, ROLES, type Counter } from './season'
 
 /** The event we're at until a mentor picks one in the app, from season.ts, for other modules. */
@@ -447,9 +449,9 @@ export function syncEntries(): Promise<Result<number>> {
   return inFlight
 }
 
-/** Whether any match or pit entry on this device is Waiting. */
+/** Whether any match or pit entry, or robot photo, on this device is Waiting. */
 function hasWaiting(): boolean {
-  return entryStore.get().some((e) => !e.synced) || pitStore.get().some((e) => !e.synced)
+  return [entryStore, pitStore, photoStore].some((store) => store.get().some((e) => !e.synced))
 }
 
 /** Stop sending, and show why on the page. */
@@ -458,7 +460,7 @@ function stopSending(problem: string): Result<number> {
   return fail(problem)
 }
 
-// Sends match entries, then pit entries.
+// Sends match entries, then pit entries, then robot photos.
 async function send(): Promise<Result<number>> {
   if (!hasWaiting()) return ok(0)
   if (globalThis.navigator?.onLine === false) return stopSending(NO_CONNECTION)
@@ -469,8 +471,10 @@ async function send(): Promise<Result<number>> {
   if (!matches.ok) return stopSending(matches.error)
   const pits = await sendWaiting(pitStore, pitTable, pitToRow)
   if (!pits.ok) return stopSending(pits.error)
+  const photos = await sendPhotos()
+  if (!photos.ok) return stopSending(photos.error)
   syncStatus.set({ sending: false, problem: null })
-  return ok(matches.value + pits.value)
+  return ok(matches.value + pits.value + photos.value)
 }
 
 /**
@@ -714,6 +718,222 @@ export function blankOrNumber(text: string): number | null {
 export function numberOnly(text: string): string {
   const [whole, ...rest] = text.replace(/[^0-9.]/g, '').split('.')
   return rest.length === 0 ? whole : `${whole}.${rest.join('')}`
+}
+
+// ---------------------------------------------------------------------------
+// Robot photos (#164): taken from the pit form, shown on the team page.
+//
+// Like entries, a photo is saved on this phone first and marked Waiting,
+// then sent by syncEntries() when there's a connection: the file goes to
+// the private robot-photos bucket, then a row goes in scouting_robot_photos
+// (supabase/migrations/..._scouting_robot_photos.sql). The files wait in
+// IndexedDB (photoFiles.ts), since localStorage is too small for photos;
+// photoStore only lists them. Each photo is shrunk to a JPEG first, so it
+// uploads quickly on venue Wi-Fi. Demo mode has no file storage: photos
+// still show on the phone that took them.
+
+/** One robot photo taken on this phone. The file itself is in photoFiles.ts. */
+export interface PhotoEntry {
+  /** Made on the phone, so sending a photo twice can't make two rows. */
+  id: string
+  /** ISO date and time it was taken. */
+  created_at: string
+  event_key: string
+  team: number
+  size_bytes: number
+  /** Who took it. Show their name with useMemberNames(). */
+  taken_by: string | null
+  /** False while it's only on this phone (Waiting). */
+  synced: boolean
+}
+
+// Newest first. keepOnReset and the version: see entryStore above.
+export const photoStore = createStore<PhotoEntry[]>('scouting-photos', 1, () => [], { keepOnReset: true })
+
+/** Every robot photo taken on this phone, newest first. */
+export function usePhotoEntries(): PhotoEntry[] {
+  return useStore(photoStore)
+}
+
+/** One row of scouting_robot_photos: a photo that reached the team database. */
+export interface RobotPhoto extends Row {
+  event_key: string
+  team_number: number
+  /** Where the file is in the robot-photos bucket: see photoPath(). */
+  path: string
+  size_bytes: number
+  /** Who took it, and when, on their phone. */
+  taken_by: string | null
+  taken_at: string
+  /** Who sent it. */
+  created_by: string | null
+}
+
+// No example rows: demo mode has no files to show for them.
+export const photosTable = createTable<RobotPhoto>('scouting_robot_photos', { demo: [], sort: newestFirst })
+
+const PHOTO_BUCKET = 'robot-photos'
+/** Photos are shrunk so their longest side is at most this many pixels. */
+export const PHOTO_MAX_SIDE = 1280
+/** The bucket takes files up to 5 MB. A shrunk photo is far smaller. */
+export const MAX_PHOTO_BYTES = 5 * 1024 * 1024
+/** How long a link to a photo works, in seconds. */
+const PHOTO_LINK_SECONDS = 60 * 60
+
+/** Where a photo goes in the bucket: event, team, then its id. The database checks it's exactly this. */
+export function photoPath(event: string, team: number, id: string): string {
+  return `${event}/${team}/${id}.jpg`
+}
+
+/** A photo's size once shrunk: its longest side at most `max`, the same shape. Small photos stay as they are. */
+export function shrunkSize(width: number, height: number, max = PHOTO_MAX_SIDE): { width: number; height: number } {
+  const scale = Math.min(1, max / Math.max(width, height))
+  return { width: Math.round(width * scale), height: Math.round(height * scale) }
+}
+
+/** Shrink a photo from the camera to a JPEG (see shrunkSize()). Only works in a browser. */
+export async function shrinkPhoto(file: Blob): Promise<Result<Blob>> {
+  try {
+    const bitmap = await createImageBitmap(file)
+    const { width, height } = shrunkSize(bitmap.width, bitmap.height)
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    canvas.getContext('2d')?.drawImage(bitmap, 0, 0, width, height)
+    bitmap.close()
+    const jpeg = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.8))
+    return jpeg ? ok(jpeg) : fail("Couldn't shrink that photo. Try taking it again.")
+  } catch {
+    return fail("Couldn't read that photo. Try taking it again.")
+  }
+}
+
+/**
+ * Save a photo of team `team`'s robot on this phone, marked Waiting, and
+ * send it if there's a connection. `shrink` is for tests, which can't draw
+ * pictures.
+ */
+export async function addPhoto(team: number, file: Blob, shrink: (file: Blob) => Promise<Result<Blob>> = shrinkPhoto): Promise<Result<PhotoEntry>> {
+  if (!isCount(team) || team > MAX_TEAM) return fail('Enter the team number first, then add the photo.')
+  if (!file.type.startsWith('image/')) return fail("That isn't a photo. Choose a photo, or take one with the camera.")
+  const shrunk = await shrink(file)
+  if (!shrunk.ok) return shrunk
+  if (shrunk.value.size > MAX_PHOTO_BYTES) return fail('That photo is too big, even shrunk. Try taking it again.')
+  const photo: PhotoEntry = {
+    id: newId(),
+    created_at: new Date().toISOString(),
+    event_key: currentEvent(),
+    team,
+    size_bytes: shrunk.value.size,
+    taken_by: currentUser()?.id ?? null,
+    synced: false,
+  }
+  await keepFile(photo.id, shrunk.value)
+  photoStore.set((photos) => [photo, ...photos])
+  void syncEntries()
+  return ok(photo)
+}
+
+/** A photo from this phone, as a row for the team database. */
+export function photoToRow(photo: PhotoEntry): Omit<RobotPhoto, 'created_at' | 'created_by'> {
+  return {
+    id: photo.id,
+    event_key: photo.event_key,
+    team_number: photo.team,
+    path: photoPath(photo.event_key, photo.team, photo.id),
+    size_bytes: photo.size_bytes,
+    taken_by: photo.taken_by,
+    taken_at: photo.created_at,
+  }
+}
+
+/**
+ * Send every Waiting photo: the file, then its row, then mark it Synced and
+ * forget the file on this phone. A file that's already uploaded (an earlier
+ * try that didn't hear back) counts as uploaded.
+ */
+async function sendPhotos(): Promise<Result<number>> {
+  let sent = 0
+  for (const photo of photoStore.get().filter((p) => !p.synced)) {
+    const file = await readFile(photo.id)
+    if (!file) {
+      // Kept in memory (no IndexedDB) and the app was closed: it's gone.
+      photoStore.set((photos) => photos.filter((p) => p.id !== photo.id))
+      continue
+    }
+    const row = photoToRow(photo)
+    if (supabase) {
+      const { error } = await supabase.storage.from(PHOTO_BUCKET).upload(row.path, file, { upsert: false, contentType: 'image/jpeg' })
+      if (error && !/exists|duplicate/i.test(error.message)) return fail("Couldn't upload a robot photo. It will try again by itself.")
+    }
+    const added = await photosTable.insertOnce([row])
+    if (!added.ok) return added
+    photoStore.set((photos) => photos.map((p) => (p.id === photo.id ? { ...p, synced: true } : p)))
+    await forgetFile(photo.id)
+    sent += 1
+  }
+  return ok(sent)
+}
+
+/** One photo for the team page: the newest first. `url` is null until it can be shown. */
+export interface TeamPhoto {
+  id: string
+  url: string | null
+  taken_by: string | null
+  taken_at: string
+  /** True while it's only on this phone. */
+  waiting: boolean
+}
+
+/**
+ * A team's robot photos at this event (or `eventKey`, for prescouting), newest first: the team database's,
+ * and this phone's Waiting ones. The Waiting ones show from the phone, so
+ * they show with no Wi-Fi; sent ones need a connection, through links that
+ * stop working after an hour.
+ */
+export function useTeamPhotos(team: number, eventKey?: string): TeamPhoto[] {
+  const current = useCurrentEvent().key
+  const event = eventKey ?? current
+  const sent = photosTable.useRows()
+  const onPhone = usePhotoEntries()
+  const list = useMemo(() => {
+    const rows = sent.filter((p) => p.event_key === event && p.team_number === team).map((p) => ({ id: p.id, path: p.path, taken_by: p.taken_by, taken_at: p.taken_at, waiting: false }))
+    const have = new Set(rows.map((p) => p.id))
+    const waiting = onPhone
+      .filter((p) => !p.synced && p.event_key === event && p.team === team && !have.has(p.id))
+      .map((p) => ({ id: p.id, path: photoPath(p.event_key, p.team, p.id), taken_by: p.taken_by, taken_at: p.created_at, waiting: true }))
+    return [...rows, ...waiting].sort((a, b) => b.taken_at.localeCompare(a.taken_at))
+  }, [sent, onPhone, event, team])
+
+  const [urls, setUrls] = useState<Record<string, string>>({})
+  useEffect(() => {
+    let current = true
+    const made: string[] = []
+    void (async () => {
+      const found: Record<string, string> = {}
+      // From this phone: Waiting photos, and in demo mode any photo still here.
+      for (const photo of list) {
+        const file = await readFile(photo.id)
+        if (file && typeof URL.createObjectURL === 'function') {
+          found[photo.id] = URL.createObjectURL(file)
+          made.push(found[photo.id])
+        }
+      }
+      // From the team database's bucket: the rest, in one request.
+      const rest = list.filter((p) => !found[p.id] && !p.waiting)
+      if (supabase && rest.length > 0) {
+        const { data } = await supabase.storage.from(PHOTO_BUCKET).createSignedUrls(rest.map((p) => p.path), PHOTO_LINK_SECONDS)
+        for (const [i, link] of (data ?? []).entries()) if (link.signedUrl) found[rest[i].id] = link.signedUrl
+      }
+      if (current) setUrls(found)
+    })()
+    return () => {
+      current = false
+      for (const url of made) URL.revokeObjectURL(url)
+    }
+  }, [list])
+
+  return list.map((p) => ({ id: p.id, url: urls[p.id] ?? null, taken_by: p.taken_by, taken_at: p.taken_at, waiting: p.waiting }))
 }
 
 // Keep sending Waiting match and pit entries, in a browser. (The tests call

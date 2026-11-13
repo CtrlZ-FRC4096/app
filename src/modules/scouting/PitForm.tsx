@@ -1,7 +1,7 @@
-import { useState, type FormEvent } from 'react'
+import { useState, type ChangeEvent, type FormEvent } from 'react'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
-import { blankOrNumber, numberOnly, savePitEntry, usePitEntries } from './data'
+import { addPhoto, blankOrNumber, numberOnly, savePitEntry, usePhotoEntries, usePitEntries } from './data'
 import FormSection from './FormSection'
 import SavedOnDevice from './SavedOnDevice'
 import { TeamLink } from './TeamPage'
@@ -45,6 +45,8 @@ function TextBox(props: { id: string; label: string; value: string; onChange: (v
 // database whenever there's a connection, the same way as match entries.
 export default function PitForm() {
   const entries = usePitEntries()
+  const photos = usePhotoEntries()
+  const [addingPhoto, setAddingPhoto] = useState(false)
   const [match, setMatch] = useState('')
   const [team, setTeam] = useState('')
   // '' until the scout chooses, so no button is pressed.
@@ -61,6 +63,19 @@ export default function PitForm() {
   const [autoPath, setAutoPath] = useState('')
   const [partnersDo, setPartnersDo] = useState('')
   const [theyDo, setTheyDo] = useState('')
+
+  // A photo saves straight away, for the team typed above, separately from
+  // the rest of the form. A team can have several.
+  async function photo(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    // Clear the box, so the same photo can be chosen again after a problem.
+    event.target.value = ''
+    if (!file) return
+    setAddingPhoto(true)
+    const result = await addPhoto(Number(team), file)
+    setAddingPhoto(false)
+    toast(result.ok ? `Saved a photo of team ${result.value.team}'s robot.` : result.error)
+  }
 
   function save(event: FormEvent) {
     event.preventDefault()
@@ -131,6 +146,14 @@ export default function PitForm() {
               <input id="pit-vision-notes" className="input" style={BOX} value={visionNotes} onChange={(e) => setVisionNotes(e.target.value)} placeholder="Like: two cameras on the shooter" />
             </label>
           </FormSection>
+          <FormSection title="Photos">
+            <p className="note" style={{ margin: 0 }}>Type the team number above first. Each photo saves straight away, and sends by itself once there's a connection.</p>
+            <label className="btn btn-lg" style={{ cursor: 'pointer', position: 'relative' }} aria-disabled={addingPhoto}>
+              {addingPhoto ? 'Saving the photo…' : 'Add a photo'}
+              {/* Opens the back camera on a phone. Hidden: the label is the button. */}
+              <input type="file" accept="image/*" capture="environment" style={{ position: 'absolute', opacity: 0, width: 1, height: 1 }} disabled={addingPhoto} onChange={(e) => void photo(e)} />
+            </label>
+          </FormSection>
           <FormSection title="Preferred auto">
             <div className="field">
               Starting side
@@ -151,6 +174,13 @@ export default function PitForm() {
         rows={entries.map((e) => ({ id: e.id, label: <><TeamLink team={e.team} />{e.drivetrain ? ` · ${e.drivetrain === 'Other' && e.drivetrain_other ? e.drivetrain_other : e.drivetrain}` : ''}</>, created_at: e.created_at, synced: e.synced }))}
         emptyText="No pit entries yet. Fill in the form and press Save Entry."
       />
+      {photos.length > 0 && (
+        <SavedOnDevice
+          title="Photos on this device"
+          rows={photos.map((p) => ({ id: p.id, label: <>Photo · <TeamLink team={p.team} /></>, created_at: p.created_at, synced: p.synced }))}
+          emptyText=""
+        />
+      )}
     </>
   )
 }

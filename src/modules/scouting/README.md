@@ -35,6 +35,7 @@
 - The final picklist (#43, `SharedPicklist.tsx`, at `#/scouting/shared-picklist`): the order the strategy team wants to pick teams in, shared by every phone. See "Shared picklist" below.
 - The match simulator (#166, `Simulator.tsx`, at `#/scouting/simulate`): see "Average points and the simulator" below.
 - The stats table (#152, `StatsTable.tsx`, at `#/scouting/stats`): every team's Match 13 numbers in one table. See "More of Match 13's numbers" below.
+- Robot photos (#164): see "Robot photos" below.
 - The overview (#160, `Overview.tsx`, at `#/scouting`): a card for each page, in the switch's order, that opens it. Each says how that page is going: entries waiting to send (and why), how many of the event's teams are pit scouted, our next match with its prediction and our last result, our rank and record, teams with no match entries yet, the top 3 of each picklist, and how many teams Match 13 has rated. `scoutingOverview()` in `data.ts` works these out from what's saved on the phone (`useScoutingOverview()` gathers it), so the overview never asks The Blue Alliance or Match 13 for anything, and a card with nothing saved says so. `eventTeams()` gives every team we know is at the event from the saved schedule, rankings and ratings. The home page tile also shows our rank, like "3 entries waiting · Rank 6".
 - The Competition menu lists Overview, Match, Pit, Schedule, Rankings, Teams, Picklist, Final picklist, Simulator and Stats under Scouting (`pages` in `index.ts`).
 - Match videos (#41): `useTeamQualVideos(team)` in `data.ts` gives a team's qualification matches in order, each with its alliance, Won / Lost / Tied (or not played yet), the scores, and a YouTube link for each video. A played match with no links has no video on The Blue Alliance yet. It loads when the page opens, and `reload()` is for a "Check again" button. The **Match videos** panel on the team page (`TeamVideos.tsx`) shows one line per qual, like "Qual 12 · Red · Won 84–71", with a **Watch ↗** button that opens the video in YouTube in a new tab ("Watch (2) ↗" for a second video), "No video yet", or "Not played yet". It's only links, no video players or thumbnails, to keep the page light on venue Wi-Fi. `VideoList` draws the lines from rows, so tests can use made-up ones.
@@ -133,6 +134,32 @@ picklists are for it, and new entries are saved under it.
   picked**, before going somewhere with no Wi-Fi.
 - **Until a mentor picks one,** it's `EVENT_KEY` in `season.ts`, and the
   top of the page says so.
+
+## Robot photos (#164)
+
+The pit form has an **Add a photo** button that opens the phone's camera.
+Each photo saves straight away, for the team typed in the form, and a team
+can have several. The pit form lists the photos on the phone, Waiting or
+Synced. The team page shows the newest photo big and the rest in a row
+below (`TeamPhotos.tsx`), and the team's Prescouting page shows them too.
+Tap one to open it full size.
+
+- **Shrinking:** `addPhoto()` shrinks each photo to a JPEG with its longest
+  side at most 1280 pixels (`shrinkPhoto()`, `shrunkSize()`), so it
+  uploads quickly on venue Wi-Fi.
+- **No Wi-Fi:** photos wait on the phone like entries, and `syncEntries()`
+  sends them along with match and pit entries. The files wait in the
+  browser's IndexedDB (`photoFiles.ts`), because localStorage only holds
+  about 5 MB; `photoStore` lists them. Once a photo is sent, the phone
+  forgets its file.
+- **Where they go:** the private `robot-photos` bucket, at
+  `event/team/id.jpg` (`photoPath()`), and a row in `scouting_robot_photos`
+  (`supabase/migrations/..._scouting_robot_photos.sql`, rules tested in
+  `supabase/tests/scouting-robot-photos.test.ts`). Signed-in members see and
+  add photos; only mentors delete them; nobody changes one. Sent photos show
+  through links that stop working after an hour, so they need a connection.
+- **Demo mode** has no file storage: photos show only on the phone that took
+  them, until they're sent.
 
 ## Nexus
 

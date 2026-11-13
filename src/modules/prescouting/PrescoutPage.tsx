@@ -3,7 +3,7 @@ import { href, useRoute } from '../../core/router'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
 import type { Result } from '../../core/table'
-import { MAX_TEAM, tbaTeamUrl } from '../scouting/data'
+import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../scouting/data'
 import {
   NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, firstLine, isEventKey, prescoutOverview, reloadPrescoutTeams, savePrescout,
   setPrescoutEvent, toggleMark, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams,
@@ -223,8 +223,35 @@ export function TeamPage(props: { event: string; team: number }) {
           The Blue Alliance
         </a>
       </div>
+      <RobotPhotos event={event} team={team} />
       <NotesForm event={event} team={team} saved={notes ?? NO_ANSWERS} />
     </>
+  )
+}
+
+/**
+ * Photos of the team's robot from pit scouting (#164), newest first. Tap one
+ * to open it full size. Only shown once someone's taken one; the photos
+ * come from the Scouting module's useTeamPhotos().
+ */
+function RobotPhotos(props: { event: string; team: number }) {
+  const photos = useTeamPhotos(props.team, props.event)
+  if (photos.length === 0) return null
+  return (
+    <Panel title="Robot photos" aside={<span className="note">From pit scouting</span>}>
+      {/* Only this row scrolls sideways, never the page. */}
+      <div className="panel-body" style={{ display: 'flex', gap: 8, overflowX: 'auto' }}>
+        {photos.map((photo, i) =>
+          photo.url ? (
+            <a key={photo.id} href={photo.url} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
+              <img src={photo.url} alt={`Team ${props.team}'s robot, photo ${i + 1}`} style={{ width: i === 0 ? 200 : 120, height: i === 0 ? 150 : 90, objectFit: 'cover', borderRadius: 'var(--radius)', display: 'block' }} />
+            </a>
+          ) : (
+            <span key={photo.id} className="note" style={{ flexShrink: 0 }}>{photo.waiting ? 'On a phone, not sent yet' : 'Needs a connection'}</span>
+          ),
+        )}
+      </div>
+    </Panel>
   )
 }
 

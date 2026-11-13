@@ -21,6 +21,8 @@ import { addMissingTeams, byPosition, moveTeam, picklist, picklistTable, positio
 import { COUNTERS, DRIVETRAINS, EVENT_KEY } from './season'
 import { loadSchedule, positionStore, setPosition, teamFor, type SavedSchedule } from './data'
 import { rankOf } from './data'
+import { addPhoto, photoPath, photoStore, photoToRow, photosTable, shrunkSize, MAX_PHOTO_BYTES } from './data'
+import { readFile } from './photoFiles'
 import { nexusEventUrl, eventTeams, scoutingOverview, type OverviewInput, type Entry, type PitEntry } from './data'
 import { STAT_COLUMNS, ratingComponents, sortStats, statColumns, statText, statValue } from './data'
 import { MIN_MATCHES, allianceScore, entryPoints, pointsRange, redWinChance, teamAps, teamPoints, upcomingMatches } from './data'
@@ -1863,5 +1865,71 @@ describe('Nexus (#165)', () => {
   it("links to the current event's page on Nexus, or another event's", () => {
     expect(nexusEventUrl()).toBe(`https://frc.nexus/en/event/${EVENT_KEY}`)
     expect(nexusEventUrl('2026mndu2')).toBe('https://frc.nexus/en/event/2026mndu2')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Robot photos (#164). The tests can't draw pictures, so they pass addPhoto()
+// a pretend shrink. Node has no IndexedDB, so files are kept in memory.
+
+describe('robot photos', () => {
+  const jpeg = (bytes = 1000) => new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' })
+  const shrink = async (file: Blob) => ({ ok: true as const, value: jpeg(Math.min(file.size, 2000)) })
+
+  beforeEach(async () => {
+    await syncEntries()
+    photoStore.reset()
+    photosTable.reset()
+    entryStore.reset()
+    pitStore.reset()
+    syncStatus.reset()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('shrinks a photo so its longest side is at most 1280 pixels, keeping its shape, and leaves small ones alone', () => {
+    expect(shrunkSize(4032, 3024)).toEqual({ width: 1280, height: 960 })
+    expect(shrunkSize(3024, 4032)).toEqual({ width: 960, height: 1280 })
+    expect(shrunkSize(800, 600)).toEqual({ width: 800, height: 600 })
+  })
+
+  it("puts each photo in its event and team's folder, named by its id", () => {
+    expect(photoPath('2026ilch', 9991, 'abc')).toBe('2026ilch/9991/abc.jpg')
+  })
+
+  it('needs a team number and a photo', async () => {
+    expect(await addPhoto(0, jpeg(), shrink)).toEqual({ ok: false, error: 'Enter the team number first, then add the photo.' })
+    expect(await addPhoto(9991, new Blob(['hi'], { type: 'text/plain' }), shrink)).toEqual({ ok: false, error: expect.stringMatching(/isn't a photo/) })
+    expect(await addPhoto(9991, jpeg(), async () => ({ ok: false, error: "Couldn't read that photo." }))).toEqual({ ok: false, error: "Couldn't read that photo." })
+    expect(await addPhoto(9991, jpeg(), async () => ({ ok: true, value: jpeg(MAX_PHOTO_BYTES + 1) }))).toMatchObject({ ok: false })
+    expect(photoStore.get()).toEqual([])
+  })
+
+  it('keeps a photo Waiting on this phone with no connection, then sends it and forgets the file', async () => {
+    vi.stubGlobal('navigator', { onLine: false })
+    const added = await addPhoto(9991, jpeg(5000), shrink)
+    if (!added.ok) throw new Error(added.error)
+    expect(added.value).toMatchObject({ team: 9991, event_key: EVENT_KEY, size_bytes: 2000, synced: false })
+    expect(await readFile(added.value.id)).not.toBeNull()
+    expect(photosTable.rows()).toEqual([])
+
+    vi.stubGlobal('navigator', { onLine: true })
+    expect(await syncEntries()).toEqual({ ok: true, value: 1 })
+    expect(photoStore.get()[0].synced).toBe(true)
+    expect(photosTable.rows()).toEqual([expect.objectContaining(photoToRow(added.value))])
+    expect(photosTable.rows()[0].path).toBe(`${EVENT_KEY}/9991/${added.value.id}.jpg`)
+    expect(await readFile(added.value.id)).toBeNull()
+  })
+
+  it('never sends a photo twice, even if the phone sends it again', async () => {
+    const added = await addPhoto(9991, jpeg(), shrink)
+    if (!added.ok) throw new Error(added.error)
+    await syncEntries()
+    photoStore.set((photos) => photos.map((p) => ({ ...p, synced: false })))
+    // The file is already forgotten, so a second send just drops it from the list.
+    await syncEntries()
+    expect(photosTable.rows()).toHaveLength(1)
   })
 })
