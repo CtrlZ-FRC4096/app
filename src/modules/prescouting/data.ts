@@ -16,7 +16,10 @@ import { createStore, useStore } from '../../core/store'
 import { isMentor } from '../../core/roles'
 import { currentUser } from '../../core/session'
 import { createTable, fail, ok, type Result, type Row } from '../../core/table'
-import { EVENT_KEY, MAX_TEAM, getEventTeams, getRatings, tbaTeamUrl, type Match13Rating, type TbaTeam } from '../scouting/data'
+import {
+  COUNTERS, ENDGAME, EVENT_KEY, MAX_TEAM, getEventTeams, getRatings, matchLabel, tbaTeamUrl, videoLink,
+  type Counter, type Match13Rating, type TbaMatchWithVideos, type TbaTeam,
+} from '../scouting/data'
 
 // ---------------------------------------------------------------------------
 // The teams at an event (#116).
@@ -118,6 +121,8 @@ export function usePrescoutTeams(event: string): Result<PrescoutTeam[]> | null {
 export interface PrescoutNotes extends Row {
   event_key: string
   team_number: number
+  /** A summary, like "Strong scorer, inconsistent climb, good second pick" (#153). */
+  overall: string
   strengths: string
   weaknesses: string
   /** The main job they do in a match, like scoring in auto or playing defense. */
@@ -137,10 +142,11 @@ export interface PrescoutNotes extends Row {
 }
 
 /** The answers to the prescouting questions. */
-export type PrescoutAnswers = Pick<PrescoutNotes, 'strengths' | 'weaknesses' | 'key_task' | 'auto_paths' | 'performance' | 'other_notes'>
+export type PrescoutAnswers = Pick<PrescoutNotes, 'overall' | 'strengths' | 'weaknesses' | 'key_task' | 'auto_paths' | 'performance' | 'other_notes'>
 
 /** The questions, in the order the page asks them. */
 export const PRESCOUT_QUESTIONS: { key: keyof PrescoutAnswers; label: string; hint: string }[] = [
+  { key: 'overall', label: 'Overall', hint: 'A summary, like: strong scorer, inconsistent climb, good second pick' },
   { key: 'strengths', label: 'Strengths', hint: 'What they do well' },
   { key: 'weaknesses', label: 'Weaknesses', hint: 'What they struggle with' },
   { key: 'key_task', label: 'Key task', hint: 'Their main job in a match, like scoring in auto or playing defense' },
@@ -151,15 +157,16 @@ export const PRESCOUT_QUESTIONS: { key: keyof PrescoutAnswers; label: string; hi
 
 export const MAX_PRESCOUT_ANSWER = 2000
 
-export const NO_ANSWERS: PrescoutAnswers = { strengths: '', weaknesses: '', key_task: '', auto_paths: '', performance: '', other_notes: '' }
+export const NO_ANSWERS: PrescoutAnswers = { overall: '', strengths: '', weaknesses: '', key_task: '', auto_paths: '', performance: '', other_notes: '' }
 
 // Made up, for demo mode. Team numbers in the 9990s, so nobody mistakes them for real scouting.
 const EXAMPLE_PRESCOUT: PrescoutNotes[] = [
-  { id: '00000000-0000-4000-8000-0000000e0101', event_key: EVENT_KEY, team_number: 9991, strengths: 'Fast cycles from the hub. Very consistent driver.\nNever broke down at their last event.', weaknesses: 'Slow to climb', key_task: 'Scoring fuel in teleop', auto_paths: 'Starts center, scores preload, picks up 2 from the middle', performance: 'Won their first event, semifinalist at the second', other_notes: '', marked: false, created_at: '2026-11-05T19:00:00Z', created_by: DEMO_PEOPLE.jordan },
-  { id: '00000000-0000-4000-8000-0000000e0102', event_key: EVENT_KEY, team_number: 9993, strengths: 'Strong defense', weaknesses: '', key_task: 'Playing defense', auto_paths: '', performance: '', other_notes: 'Ask them about their intake in the pits', marked: false, created_at: '2026-11-05T19:20:00Z', created_by: DEMO_PEOPLE.alex },
+  { id: '00000000-0000-4000-8000-0000000e0101', event_key: EVENT_KEY, team_number: 9991, overall: 'Strong scorer, slow climb. Good first pick.', strengths: 'Fast cycles from the hub. Very consistent driver.\nNever broke down at their last event.', weaknesses: 'Slow to climb', key_task: 'Scoring fuel in teleop', auto_paths: 'Starts center, scores preload, picks up 2 from the middle', performance: 'Won their first event, semifinalist at the second', other_notes: '', marked: false, created_at: '2026-11-05T19:00:00Z', created_by: DEMO_PEOPLE.jordan },
+  { id: '00000000-0000-4000-8000-0000000e0102', event_key: EVENT_KEY, team_number: 9993, overall: '', strengths: 'Strong defense', weaknesses: '', key_task: 'Playing defense', auto_paths: '', performance: '', other_notes: 'Ask them about their intake in the pits', marked: false, created_at: '2026-11-05T19:20:00Z', created_by: DEMO_PEOPLE.alex },
 ]
 
-export const prescoutTable = createTable<PrescoutNotes>('prescouting_notes', { demo: EXAMPLE_PRESCOUT })
+// Version 2: the overall summary was added to the rows (#153).
+export const prescoutTable = createTable<PrescoutNotes>('prescouting_notes', { demo: EXAMPLE_PRESCOUT, version: 2 })
 
 /** Every team's notes for an event. */
 export function usePrescoutNotes(event: string): PrescoutNotes[] {
@@ -343,4 +350,131 @@ export function firstLine(text: string, max = 100): string {
   const line = lines[0].trim()
   if (line.length > max) return line.slice(0, max).trimEnd() + '…'
   return lines.length > 1 ? line + ' …' : line
+}
+
+// ---------------------------------------------------------------------------
+// A team's season (#153): their events this year, their matches at each,
+// and scouting those matches from video. The events and matches come from
+// The Blue Alliance through the Scouting module's data.ts. What a scout
+// sees in a video is saved in the prescouting_matches table
+// (supabase/migrations/..._prescouting_matches.sql, rules tested in
+// supabase/tests/prescouting-matches.test.ts), with the same counters,
+// endgame and roles as the match form, from season.ts. Prescouting happens
+// with Wi-Fi, so it saves straight to the table.
+
+/** One of a team's matches at an event, for the prescouting page. */
+export interface SeasonMatch {
+  /** Like 2026ilch_qm12. */
+  key: string
+  /** Like "Qual 12" or "Semifinal 2". */
+  label: string
+  alliance: 'red' | 'blue'
+  /** The team's alliance's score and the other's, or null before it's played. */
+  score: { ours: number; theirs: number } | null
+  /** A link for each video. */
+  videos: string[]
+}
+
+const LEVEL_ORDER = ['qm', 'ef', 'qf', 'sf', 'f']
+
+/** A team's matches at an event, in the order they're played, qualifications then playoffs, with their video links. */
+export function seasonMatches(matches: TbaMatchWithVideos[], team: number): SeasonMatch[] {
+  const key = `frc${team}`
+  return [...matches]
+    .sort((a, b) => LEVEL_ORDER.indexOf(a.comp_level) - LEVEL_ORDER.indexOf(b.comp_level) || a.set_number - b.set_number || a.match_number - b.match_number)
+    .flatMap((m) => {
+      const alliance = m.alliances.red.team_keys.includes(key) ? 'red' : m.alliances.blue.team_keys.includes(key) ? 'blue' : null
+      if (!alliance) return []
+      const ours = m.alliances[alliance].score
+      const theirs = m.alliances[alliance === 'red' ? 'blue' : 'red'].score
+      const played = typeof ours === 'number' && ours >= 0 && typeof theirs === 'number' && theirs >= 0
+      return [{ key: m.key, label: matchLabel(m), alliance, score: played ? { ours, theirs } : null, videos: (m.videos ?? []).map(videoLink).filter((v) => v !== null) }]
+    })
+}
+
+/** One scout's look at one team in one match, from video. */
+export interface PrescoutMatch extends Row {
+  team_number: number
+  /** The event the match was at, like 2026ilch. */
+  event_key: string
+  /** The Blue Alliance's key for the match, like 2026ilch_qm12. */
+  match_key: string
+  /** The count for each counter in season.ts, by its key. */
+  counts: Record<string, number>
+  /** One of ENDGAME in season.ts. */
+  endgame: string
+  /** Any of ROLES in season.ts. */
+  roles: string[]
+  notes: string
+  /** Who scouted it. Show their name with useMemberNames(). */
+  created_by: string | null
+  updated_at: string
+}
+
+/** What a scout fills in for one match. */
+export type PrescoutMatchFields = Pick<PrescoutMatch, 'counts' | 'endgame' | 'roles' | 'notes'>
+
+// Made up, for demo mode: two scouts' looks at team 9991's example matches.
+const EXAMPLE_PRESCOUT_MATCHES: PrescoutMatch[] = [
+  { id: '00000000-0000-4000-8000-0000000e0401', team_number: 9991, event_key: EVENT_KEY, match_key: `${EVENT_KEY}_qm1`, counts: { autoFuel: 4, teleopFuel: 15, fuelMissed: 3 }, endgame: 'Level 2', roles: ['Scorer'], notes: 'Quick cycles from the hub', created_at: '2026-11-04T19:00:00Z', created_by: DEMO_PEOPLE.jordan, updated_at: '2026-11-04T19:00:00Z' },
+  { id: '00000000-0000-4000-8000-0000000e0402', team_number: 9991, event_key: EVENT_KEY, match_key: `${EVENT_KEY}_qm2`, counts: { autoFuel: 2, teleopFuel: 11, fuelMissed: 5 }, endgame: 'Level 1', roles: ['Scorer', 'Feeder'], notes: '', created_at: '2026-11-04T19:30:00Z', created_by: DEMO_PEOPLE.sam, updated_at: '2026-11-04T19:30:00Z' },
+]
+
+export const prescoutMatchesTable = createTable<PrescoutMatch>('prescouting_matches', { demo: EXAMPLE_PRESCOUT_MATCHES, sort: (a, b) => a.match_key.localeCompare(b.match_key) || a.created_at.localeCompare(b.created_at) })
+
+/** Every look at a team's matches, from everyone, for a page. */
+export function usePrescoutMatches(team: number): PrescoutMatch[] {
+  return prescoutMatchesTable.useRows().filter((row) => row.team_number === team)
+}
+
+/**
+ * Save what you saw of a team in one match. The first save adds your row
+ * for that match; later ones change it. Several people can scout the same
+ * match, each with their own row.
+ */
+export async function savePrescoutMatch(team: number, event: string, matchKey: string, fields: PrescoutMatchFields, me: string | null = currentUser()?.id ?? null): Promise<Result<PrescoutMatch>> {
+  if (!me) return fail('Sign in to scout matches.')
+  if (!Number.isInteger(team) || team < 1 || team > MAX_TEAM) return fail('That team number looks wrong. Go back to the list and choose the team again.')
+  if (!isEventKey(event) || !matchKey.startsWith(`${event}_`)) return fail("That match isn't from this event. Choose the match again.")
+  if (!ENDGAME.includes(fields.endgame)) return fail('Choose how the robot finished the match.')
+  const notes = fields.notes.trim()
+  if (notes.length > MAX_PRESCOUT_ANSWER) return fail(`Keep the notes under ${MAX_PRESCOUT_ANSWER.toLocaleString('en-US')} characters.`)
+  const counts = Object.fromEntries(Object.entries(fields.counts).map(([key, n]) => [key, Math.max(0, Math.round(n))]))
+  const tidy = { counts, endgame: fields.endgame, roles: [...new Set(fields.roles)], notes }
+  const mine = prescoutMatchesTable.rows().find((row) => row.match_key === matchKey && row.team_number === team && row.created_by === me)
+  if (mine) return prescoutMatchesTable.update(mine.id, tidy)
+  return prescoutMatchesTable.insert({ team_number: team, event_key: event, match_key: matchKey, ...tidy, updated_at: new Date().toISOString() })
+}
+
+/** A team's averages from the matches scouted from video. */
+export interface PrescoutAverages {
+  /** How many matches it's from. Two scouts on the same match count as one match. */
+  matches: number
+  /** Each counter in season.ts: the average per match, or null if no look has it. */
+  counters: { key: string; label: string; average: number | null }[]
+  /** How often each endgame came up, out of every look, in season.ts's order. */
+  endgame: { option: string; count: number }[]
+}
+
+/**
+ * The averages over these looks, like the Scouting team page's numbers
+ * (teamSummary()). Two scouts' looks at the same match are averaged first,
+ * so that match counts once.
+ */
+export function prescoutAverages(rows: PrescoutMatch[], counters: Counter[] = COUNTERS): PrescoutAverages {
+  const byMatch = new Map<string, PrescoutMatch[]>()
+  for (const row of rows) byMatch.set(row.match_key, [...(byMatch.get(row.match_key) ?? []), row])
+  const mean = (values: number[]) => (values.length === 0 ? null : values.reduce((a, b) => a + b, 0) / values.length)
+  return {
+    matches: byMatch.size,
+    counters: counters.map(({ key, label }) => {
+      // Each match's average for this counter, from the looks that have it.
+      const perMatch = [...byMatch.values()].flatMap((looks) => {
+        const counts = looks.flatMap((l) => (typeof l.counts[key] === 'number' ? [l.counts[key]] : []))
+        return counts.length === 0 ? [] : [mean(counts)!]
+      })
+      return { key, label, average: mean(perMatch) }
+    }),
+    endgame: ENDGAME.map((option) => ({ option, count: rows.filter((r) => r.endgame === option).length })),
+  }
 }

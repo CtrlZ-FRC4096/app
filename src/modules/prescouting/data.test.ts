@@ -4,10 +4,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetAllStores } from '../../core/store'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
-import { EVENT_KEY, tbaTeamUrl } from '../scouting/data'
+import { EVENT_KEY, getTeamEvents, tbaEventUrl, tbaTeamUrl, type TbaMatchWithVideos } from '../scouting/data'
 import {
   MAX_PRESCOUT_ANSWER, NO_ANSWERS, cleanEventKey, firstLine, hasAnswers, isEventKey, loadPrescoutTeams, prescoutEventStore, prescoutList, prescoutOverview,
   prescoutFor, prescoutHref, prescoutTable, savePrescout, setPrescoutEvent, type PrescoutNotes,
+  PRESCOUT_QUESTIONS, prescoutAverages, prescoutMatchesTable, savePrescoutMatch, seasonMatches, type PrescoutMatch,
   MAX_STAR_REASON, removeTeamStar, starTeam, starsTable, unstarTeam, visibleStars, type PrescoutStar,
 } from './data'
 
@@ -230,5 +231,92 @@ describe('prescouting stars', () => {
     setDemoRole('mentor')
     expect(await removeTeamStar(jordans)).toMatchObject({ ok: true })
     expect(starsTable.rows().some((s) => s.id === jordans.id)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A team's season (#153).
+
+describe("a team's season", () => {
+  beforeEach(() => {
+    prescoutMatchesTable.reset()
+    prescoutTable.reset()
+    setDemoRole('student')
+  })
+
+  it("lists a team's events this year, newest first, each linked to The Blue Alliance", async () => {
+    const result = await getTeamEvents(9991, 2026)
+    if (!result.ok) throw new Error(result.error)
+    const starts = result.value.map((e) => e.start_date)
+    expect(starts).toEqual([...starts].sort().reverse())
+    expect(result.value.length).toBeGreaterThan(0)
+    expect(tbaEventUrl('2026ilch')).toBe('https://www.thebluealliance.com/event/2026ilch')
+  })
+
+  it("lists the team's matches at an event in the order they're played, with their alliance, result and videos", () => {
+    const match = (key: string, level: TbaMatchWithVideos['comp_level'], set: number, n: number, red: number[], redScore: number, blueScore: number, videos: TbaMatchWithVideos['videos'] = []): TbaMatchWithVideos => ({
+      key, comp_level: level, set_number: set, match_number: n, winning_alliance: '', predicted_time: null, videos,
+      alliances: { red: { score: redScore, team_keys: red.map((t) => `frc${t}`) }, blue: { score: blueScore, team_keys: ['frc9991', 'frc9992', 'frc9993'].filter((t) => !red.includes(Number(t.slice(3)))) } },
+    })
+    const rows = seasonMatches([
+      match('e_sf2m1', 'sf', 2, 1, [9991], 90, 80, [{ type: 'youtube', key: 'abc' }]),
+      match('e_qm7', 'qm', 1, 7, [9994], 50, 60),
+      match('e_qm3', 'qm', 1, 3, [9995], -1, -1),
+      match('e_qm5', 'qm', 1, 5, [9996], 70, 70),
+    ], 9991)
+    expect(rows.map((r) => [r.label, r.alliance, r.score])).toEqual([
+      ['Qual 3', 'blue', null],
+      ['Qual 5', 'blue', { ours: 70, theirs: 70 }],
+      ['Qual 7', 'blue', { ours: 60, theirs: 50 }],
+      ['Semifinal 2', 'red', { ours: 90, theirs: 80 }],
+    ])
+    expect(rows[3].videos).toEqual(['https://youtu.be/abc'])
+  })
+
+  it('saves what a scout saw in a match, then changes their own row, and keeps other scouts apart', async () => {
+    const match = `${EVENT_KEY}_qm3`
+    const fields = { counts: { autoFuel: 2.4, teleopFuel: -1 }, endgame: 'Level 1', roles: ['Scorer', 'Scorer'], notes: '  Slow intake  ' }
+    const first = await savePrescoutMatch(9991, EVENT_KEY, match, fields)
+    expect(first).toMatchObject({ ok: true, value: { counts: { autoFuel: 2, teleopFuel: 0 }, roles: ['Scorer'], notes: 'Slow intake', match_key: match } })
+    await savePrescoutMatch(9991, EVENT_KEY, match, { ...fields, notes: 'Changed' })
+    const mine = prescoutMatchesTable.rows().filter((r) => r.match_key === match)
+    expect(mine).toHaveLength(1)
+    expect(mine[0].notes).toBe('Changed')
+    // Another scout on the same match gets their own row.
+    setDemoRole('mentor')
+    await savePrescoutMatch(9991, EVENT_KEY, match, fields)
+    expect(prescoutMatchesTable.rows().filter((r) => r.match_key === match)).toHaveLength(2)
+  })
+
+  it('refuses a match from another event, an endgame that is not a choice, and notes that are too long', async () => {
+    const fields = { counts: {}, endgame: 'Level 1', roles: [], notes: '' }
+    expect(await savePrescoutMatch(9991, EVENT_KEY, '2025other_qm1', fields)).toMatchObject({ ok: false, error: expect.stringMatching(/isn't from this event/) })
+    expect(await savePrescoutMatch(9991, EVENT_KEY, `${EVENT_KEY}_qm1`, { ...fields, endgame: 'Flying' })).toMatchObject({ ok: false, error: expect.stringMatching(/Choose how/) })
+    expect(await savePrescoutMatch(9991, EVENT_KEY, `${EVENT_KEY}_qm1`, { ...fields, notes: 'x'.repeat(MAX_PRESCOUT_ANSWER + 1) })).toMatchObject({ ok: false })
+    expect(await savePrescoutMatch(9991, EVENT_KEY, `${EVENT_KEY}_qm1`, fields, null)).toMatchObject({ ok: false, error: expect.stringMatching(/Sign in/) })
+  })
+
+  it('averages each counter per match, counting two scouts on the same match as one match, and tallies the endgame', () => {
+    const look = (match: string, counts: Record<string, number>, endgame: string, by: string): PrescoutMatch => ({
+      id: `${match}-${by}`, team_number: 9991, event_key: EVENT_KEY, match_key: match, counts, endgame, roles: [], notes: '',
+      created_at: '2026-11-04T19:00:00Z', created_by: by, updated_at: '2026-11-04T19:00:00Z',
+    })
+    const averages = prescoutAverages([
+      look('m1', { autoFuel: 2, teleopFuel: 10 }, 'Level 1', 'a'),
+      look('m1', { autoFuel: 4, teleopFuel: 10 }, 'Level 1', 'b'),
+      look('m2', { autoFuel: 6 }, 'Level 3', 'a'),
+    ])
+    expect(averages.matches).toBe(2)
+    expect(averages.counters.find((c) => c.key === 'autoFuel')?.average).toBe(4.5)
+    expect(averages.counters.find((c) => c.key === 'teleopFuel')?.average).toBe(10)
+    expect(averages.counters.find((c) => c.key === 'fuelMissed')?.average).toBeNull()
+    expect(averages.endgame.filter((e) => e.count > 0)).toEqual([{ option: 'Level 1', count: 2 }, { option: 'Level 3', count: 1 }])
+    expect(prescoutAverages([]).matches).toBe(0)
+  })
+
+  it('asks for an overall summary first, and saves it with the other answers', async () => {
+    expect(PRESCOUT_QUESTIONS[0].key).toBe('overall')
+    const result = await savePrescout(EVENT_KEY, 9995, { ...NO_ANSWERS, overall: '  Good second pick  ' })
+    expect(result).toMatchObject({ ok: true, value: { overall: 'Good second pick' } })
   })
 })

@@ -16,6 +16,13 @@
 
 - **Linked to Scouting's team page** (#119): a team's prescouting page has a **Scouting team page →** button, and Scouting's team page has a Prescouting panel with the key task, strengths, weaknesses and expected auto paths, and a link back (or "Not prescouted yet"). Other modules read one team's prescouting with `prescoutFor()` / `usePrescoutFor()`, and link to it with `prescoutHref()`, never the table itself. Scouting's team page uses the event Scouting is on, so the prescouting it shows is for that event.
 
+- **Overall** (#153): the first question on a team's page is a summary, like "Strong scorer, inconsistent climb, good second pick", and it shows first on the overview card. It's the `overall` column, added by `..._prescouting_notes_overall.sql`.
+- **A team's season** (#153), at the bottom of a team's page (`TeamSeason.tsx`): their averages from matches scouted from video this season, then every event they've been to or are going to this year (newest first, each linked to The Blue Alliance). Tap **Matches** on an event to see their matches there in the order they're played, with alliance, result and **Watch ↗** links, the event's averages, and what each scout saw (with their name). **Scout it** on a played match fills in the season's counters, endgame and roles from Scouting's `season.ts`, the same as the match form, and notes. Each scout has their own row per match; saving again changes it.
+  - In `data.ts`: `seasonMatches()` puts a team's matches in order with their video links; `savePrescoutMatch()` saves a look; `usePrescoutMatches(team)` gives everyone's; `prescoutAverages()` averages them, counting two scouts on the same match as one match.
+  - The events come from `getTeamEvents(team, year)` in Scouting's `data.ts`, and the matches from `getTeamMatches()`.
+  - The looks are in `prescouting_matches` (`supabase/migrations/..._prescouting_matches.sql`, rules tested in `supabase/tests/prescouting-matches.test.ts`): every member reads every row, adds their own and changes or removes their own; mentors can remove anyone's. Like the notes, it saves straight to the table, since prescouting happens with Wi-Fi.
+  - Later, optional: Match 13's xP at each of the team's events, which needs a mentor to allow that address in the `match13` server function first (see #152).
+
 ## What it needs next
 
 

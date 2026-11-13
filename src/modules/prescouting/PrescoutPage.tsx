@@ -11,6 +11,7 @@ import {
   type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutStar, type PrescoutTeam,
 } from './data'
 import { useMemberNames } from '../../core/members'
+import TeamSeason from './TeamSeason'
 import { isMentor } from '../../core/roles'
 import { currentUser } from '../../core/session'
 
@@ -149,7 +150,7 @@ function Problem(props: { error: string; retry: () => void }) {
 }
 
 /** The answers the overview shows, in order. The rest are on the team's page. */
-const OVERVIEW_ANSWERS: (keyof PrescoutAnswers)[] = ['key_task', 'strengths', 'weaknesses', 'other_notes']
+const OVERVIEW_ANSWERS: (keyof PrescoutAnswers)[] = ['overall', 'key_task', 'strengths', 'weaknesses', 'other_notes']
 
 /** One team in the overview: a card, not a table row, so nothing scrolls sideways on a phone. */
 export function TeamCard(props: { event: string; team: OverviewTeam }) {
@@ -305,6 +306,7 @@ export function TeamPage(props: { event: string; team: number }) {
       )}
       <RobotPhotos event={event} team={team} />
       <NotesForm event={event} team={team} saved={notes ?? NO_ANSWERS} />
+      <TeamSeason event={event} team={team} />
     </>
   )
 }

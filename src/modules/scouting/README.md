@@ -185,6 +185,7 @@ server function, which holds the team's key (see "Server functions" in
 | `getEventTeams()` | Every team registered for the event, by number, before the schedule is out |
 | `getTeamMatches(team)` | One team's matches at the event, with their videos |
 | `getTeam(team)` | A team's nickname and home |
+| `getTeamEvents(team, year)` | Any team's events in a season, newest first (for Prescouting, #153). `tbaEventUrl(event)` links to one |
 
 Each returns `{ ok: true, value }` or `{ ok: false, error }`. The event is
 the one the team is scouting (see "The event" below). In demo mode they

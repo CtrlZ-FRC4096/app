@@ -44,6 +44,8 @@ import { AUTO_SIDES, BREAKDOWN_PARTS, COUNTERS, DRIVETRAINS, ENDGAME, ENDGAME_PO
 
 /** The event we're at until a mentor picks one in the app, from season.ts, for other modules. */
 export { EVENT_KEY }
+/** This season's counters, endgame choices and roles, for other modules (like Prescouting's video scouting, #153). */
+export { COUNTERS, ENDGAME, ROLES, type Counter }
 
 // ---------------------------------------------------------------------------
 // The event the team is scouting.
@@ -136,6 +138,21 @@ export function lookupSeasons(today = new Date()): number[] {
 export async function getOurEvents(year: number): Promise<Result<TbaEvent[]>> {
   const result = await callFunction<TbaEvent[] | null>('tba', { kind: 'team-events', team: OUR_TEAM, year }, () => demoEvents(year).filter((e) => e.ours))
   return result.ok ? ok(byDate(result.value ?? [])) : result
+}
+
+/**
+ * Any team's events in a season, newest first (#153, for prescouting). The
+ * tba function already allows a team's events, so this needs no server
+ * change. In demo mode every team has the made-up events.
+ */
+export async function getTeamEvents(team: number, year: number): Promise<Result<TbaEvent[]>> {
+  const result = await callFunction<TbaEvent[] | null>('tba', { kind: 'team-events', team, year }, () => demoEvents(year).slice(0, 3))
+  return result.ok ? ok(byDate(result.value ?? []).reverse()) : result
+}
+
+/** An event's page on The Blue Alliance. */
+export function tbaEventUrl(event: string): string {
+  return `https://www.thebluealliance.com/event/${encodeURIComponent(event)}`
 }
 
 /** Every event in a season, soonest first. A few hundred, so search them with searchEvents(). */
