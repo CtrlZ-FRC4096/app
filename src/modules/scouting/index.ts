@@ -16,6 +16,7 @@ export const scouting: ModuleDefinition = {
     { name: 'Teams', path: 'team' },
     { name: 'Picklist', path: 'picklist' },
     { name: 'Final picklist', path: 'shared-picklist' },
+    { name: 'Simulator', path: 'simulate' },
   ],
   useSummary: useEntrySummary,
 }

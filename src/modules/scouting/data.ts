@@ -38,7 +38,7 @@ import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore, type Store } from '../../core/store'
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row, type Table } from '../../core/table'
 import { toCsv } from '../attendance/data'
-import { AUTO_SIDES, BREAKDOWN_PARTS, COUNTERS, DRIVETRAINS, ENDGAME, EVENT_KEY, RANKING_POINTS, ROLES, type Counter } from './season'
+import { AUTO_SIDES, BREAKDOWN_PARTS, COUNTERS, DRIVETRAINS, ENDGAME, ENDGAME_POINTS, EVENT_KEY, RANKING_POINTS, ROLES, type Counter } from './season'
 
 /** The event we're at until a mentor picks one in the app, from season.ts, for other modules. */
 export { EVENT_KEY }
@@ -1332,7 +1332,7 @@ export interface PicklistPart {
 
 /**
  * Everything a team is scored on: Match 13's auto, teleop and endgame xP,
- * then each counter in season.ts. Not Match 13's total as well: it's the
+ * our average points per match (APS, #166), then each counter in season.ts. Not Match 13's total as well: it's the
  * three parts added up, so weighting it too would count xP twice. A new
  * counter in season.ts shows up here by itself.
  */
@@ -1341,6 +1341,7 @@ export function picklistParts(): PicklistPart[] {
     { key: 'xAuto', label: 'Match 13 auto', lowerIsBetter: false },
     { key: 'xTele', label: 'Match 13 teleop', lowerIsBetter: false },
     { key: 'xEnd', label: 'Match 13 endgame', lowerIsBetter: false },
+    { key: 'aps', label: 'Average points (APS)', lowerIsBetter: false },
     ...COUNTERS.map((c) => ({ key: c.key, label: c.label, lowerIsBetter: c.lowerIsBetter ?? false })),
   ]
 }
@@ -1464,6 +1465,7 @@ export function picklistTeams(ratings: Match13Rating[], entries: MatchRow[], pit
         xAuto: rating?.xAuto ?? null,
         xTele: rating?.xTele ?? null,
         xEnd: rating?.xEnd ?? null,
+        aps: teamAps(team, entries)?.average ?? null,
         ...Object.fromEntries(summary.counters.map((c) => [c.key, c.average])),
       },
       matches: matches.size,
@@ -1516,6 +1518,152 @@ export function useRankedPicklist() {
     return rankTeams(teams, weights).map((line): PicklistLine => ({ ...line, matches: known.get(line.team)?.matches ?? 0, rated: known.get(line.team)?.rated ?? false }))
   }, [teams, weights])
   return { ranked, weights, ratings }
+}
+
+// ---------------------------------------------------------------------------
+// Average points scored (APS) and the match simulator (#166).
+//
+// A team's points in a match are worked out from what we scouted: each
+// counter times its points in season.ts, plus its endgame's points. APS is
+// the average over the matches we scouted them in, with a range of one
+// standard deviation either side (about two in three matches land in it).
+// Match 13's xP is a second opinion, used when we've scouted a team in
+// fewer than MIN_MATCHES matches.
+//
+// The simulator adds up each alliance's expected points. That's the simple
+// version: it doesn't count defense or robots getting in each other's way.
+
+/** Fewer scouted matches than this, and a team's APS is only a guess: it's marked, and Match 13's xP is used if there is one. */
+export const MIN_MATCHES = 3
+
+/** The points one match entry is worth to its alliance, from the points in season.ts. */
+export function entryPoints(entry: Pick<MatchRow, 'counts' | 'endgame'>, counters: Counter[] = COUNTERS, endgamePoints: Record<string, number> = ENDGAME_POINTS): number {
+  const scored = counters.reduce((sum, c) => sum + (c.points ?? 0) * (entry.counts[c.key] ?? 0), 0)
+  return scored + (endgamePoints[entry.endgame] ?? 0)
+}
+
+/** A team's points per match from our scouting. */
+export interface Aps {
+  /** Average points per match. */
+  average: number
+  /** One standard deviation below and above the average. low is never below 0. */
+  low: number
+  high: number
+  /** The standard deviation, for adding teams up in the simulator. */
+  spread: number
+  /** How many matches it's from. Two scouts on the same match count as one. */
+  matches: number
+}
+
+/**
+ * A team's APS at the current event, or null if we haven't scouted them in a
+ * match. When two scouts watched the same robot in the same match, their
+ * points are averaged first, so that match counts once.
+ */
+export function teamAps(team: number, entries: MatchRow[], counters: Counter[] = COUNTERS, endgamePoints: Record<string, number> = ENDGAME_POINTS): Aps | null {
+  const byMatch = new Map<number, number[]>()
+  for (const e of thisEvent(entries)) {
+    if (e.team_number !== team) continue
+    byMatch.set(e.match_number, [...(byMatch.get(e.match_number) ?? []), entryPoints(e, counters, endgamePoints)])
+  }
+  const perMatch = [...byMatch.values()].map((points) => points.reduce((a, b) => a + b, 0) / points.length)
+  if (perMatch.length === 0) return null
+  const average = perMatch.reduce((a, b) => a + b, 0) / perMatch.length
+  const spread = Math.sqrt(perMatch.reduce((sum, p) => sum + (p - average) ** 2, 0) / perMatch.length)
+  return { average, low: Math.max(0, average - spread), high: average + spread, spread, matches: perMatch.length }
+}
+
+/** What we expect one team to score, for the simulator. */
+export interface TeamPoints {
+  team: number
+  /** From our scouting, or null if we haven't scouted them in a match. */
+  aps: Aps | null
+  /** Match 13's xP, or null if it hasn't rated them. */
+  xp: number | null
+  /** What the simulator uses: our APS, or Match 13's xP when we have too few matches. Null if we have neither. */
+  expected: number | null
+  /** The spread around `expected`: our APS's, or 0 for xP, which has none. */
+  spread: number
+  /** Where `expected` came from. */
+  source: 'scouting' | 'match13' | null
+  /** True when we've scouted them in fewer than MIN_MATCHES matches, so `expected` is only a guess. */
+  fewMatches: boolean
+}
+
+/** One team's expected points, from our scouting and Match 13. */
+export function teamPoints(team: number, entries: MatchRow[], ratings: Match13Rating[]): TeamPoints {
+  const aps = teamAps(team, entries)
+  const xp = ratings.find((r) => r.teamNumber === team)?.xpEnd ?? null
+  const fewMatches = (aps?.matches ?? 0) < MIN_MATCHES
+  // With few matches, Match 13 has seen more of them than we have.
+  if (aps && (!fewMatches || xp === null)) return { team, aps, xp, expected: aps.average, spread: aps.spread, source: 'scouting', fewMatches }
+  if (xp !== null) return { team, aps, xp, expected: xp, spread: 0, source: 'match13', fewMatches }
+  return { team, aps, xp, expected: null, spread: 0, source: null, fewMatches }
+}
+
+/** One alliance's expected score in the simulator. */
+export interface AllianceScore {
+  /** The teams' expected points added up. Teams we know nothing about count as 0. */
+  expected: number
+  /** One standard deviation below and above. */
+  low: number
+  high: number
+  spread: number
+  /** Teams with no APS and no xP: their points are missing from `expected`. */
+  unknown: number[]
+}
+
+/**
+ * An alliance's expected score: its teams' expected points added up. The
+ * spreads add the way they do in statistics (the square root of the sum of
+ * squares), since teams don't all have a good or bad match at once.
+ */
+export function allianceScore(teams: TeamPoints[]): AllianceScore {
+  const expected = teams.reduce((sum, t) => sum + (t.expected ?? 0), 0)
+  const spread = Math.sqrt(teams.reduce((sum, t) => sum + t.spread ** 2, 0))
+  return { expected, low: Math.max(0, expected - spread), high: expected + spread, spread, unknown: teams.filter((t) => t.expected === null).map((t) => t.team) }
+}
+
+/**
+ * The chance red outscores blue, from 0 to 1, assuming scores spread out in
+ * a bell curve. With no spread at all, the higher expected score wins for
+ * certain, and equal scores are an even chance.
+ */
+export function redWinChance(red: AllianceScore, blue: AllianceScore): number {
+  const spread = Math.sqrt(red.spread ** 2 + blue.spread ** 2)
+  const lead = red.expected - blue.expected
+  if (spread === 0) return lead > 0 ? 1 : lead < 0 ? 0 : 0.5
+  return normalBelow(lead / spread)
+}
+
+// The chance a bell-curve value is below z (in standard deviations), from
+// the Abramowitz and Stegun formula, correct to about 7 decimal places.
+function normalBelow(z: number): number {
+  const x = Math.abs(z) / Math.SQRT2
+  const t = 1 / (1 + 0.3275911 * x)
+  const erf = 1 - t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) * Math.exp(-x * x)
+  return z >= 0 ? (1 + erf) / 2 : (1 - erf) / 2
+}
+
+/** "34 (26–41)": an expected score and its range, rounded. Just "34" when there's no range. */
+export function pointsRange(expected: number, low: number, high: number): string {
+  return low === high ? String(Math.round(expected)) : `${Math.round(expected)} (${Math.round(low)}–${Math.round(high)})`
+}
+
+/** Every team's expected points, for a page: our entries and this phone's Waiting ones, and the saved Match 13 copy, so it works with no Wi-Fi. */
+export function useTeamPoints(): { pointsFor: (team: number) => TeamPoints; ratings: ReturnType<typeof useRatings> } {
+  const ratings = useRatings()
+  const { entries } = useScoutingRows()
+  const pointsFor = useCallback((team: number) => teamPoints(team, entries, ratings.ratings), [entries, ratings.ratings])
+  return { pointsFor, ratings }
+}
+
+/** The qualification matches not played yet, soonest first, from the schedule saved on this phone. For filling in the simulator. */
+export function upcomingMatches(schedule: SavedSchedule | null): TbaMatch[] {
+  if (!schedule) return []
+  return schedule.matches
+    .filter((m) => m.comp_level === 'qm' && !(m.alliances.red.score >= 0 && m.alliances.blue.score >= 0))
+    .sort((a, b) => a.match_number - b.match_number)
 }
 
 // ---------------------------------------------------------------------------

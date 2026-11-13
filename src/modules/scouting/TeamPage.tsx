@@ -4,7 +4,7 @@ import { useMemberNames } from '../../core/members'
 import { href, navigate } from '../../core/router'
 import { toast } from '../../core/toast'
 import { Bar, PageHead, Panel, Pill } from '../../core/ui'
-import { useScoutedTeams, useTeamSummary, type Tally, type TeamSummary } from './data'
+import { MIN_MATCHES, pointsRange, useScoutedTeams, useTeamPoints, useTeamSummary, type Tally, type TeamSummary } from './data'
 import TeamRank from './TeamRank'
 import TeamVideos from './TeamVideos'
 import TeamRatings from './TeamRatings'
@@ -89,12 +89,37 @@ function TeamDetails(props: { team: number }) {
         {summary.matchCount + summary.pitCount === 0 ? `Nothing scouted for team ${props.team} yet.` : `Everything we scouted at this event: ${scouted}.`}
       </PageHead>
       <TeamRank team={props.team} />
+      <AveragePoints team={props.team} />
       {summary.matchCount > 0 && <Numbers summary={summary} />}
       <TeamRatings team={props.team} />
       {summary.matchCount + summary.pitCount > 0 && <HowOften summary={summary} />}
       {summary.written.length > 0 && <WrittenAnswers summary={summary} />}
       <TeamVideos team={props.team} />
     </>
+  )
+}
+
+// The team's average points per match (APS) from our scouting, with its
+// range, and Match 13's xP as a second opinion (#166). teamPoints() in
+// data.ts works them out.
+function AveragePoints(props: { team: number }) {
+  const { pointsFor } = useTeamPoints()
+  const { aps, xp, fewMatches } = pointsFor(props.team)
+  if (!aps && xp === null) return null
+  return (
+    <Panel title="Average points (APS)" aside={xp !== null && <span className="note">{`Match 13 xP: ${xp.toFixed(1)}`}</span>}>
+      <p className="panel-body" style={{ margin: 0 }}>
+        {aps ? (
+          <>
+            <strong className="tnum" style={{ fontSize: 22 }}>{`APS ${pointsRange(aps.average, aps.low, aps.high)}`}</strong>{' '}
+            <span className="note">{`from ${aps.matches} ${aps.matches === 1 ? 'match' : 'matches'}`}</span>
+            {fewMatches && <><br /><span className="note">{`Fewer than ${MIN_MATCHES} matches, so this is only a guess.`}</span></>}
+          </>
+        ) : (
+          <span className="note">Not scouted in a match yet.</span>
+        )}
+      </p>
+    </Panel>
   )
 }
 

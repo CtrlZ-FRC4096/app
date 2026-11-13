@@ -21,6 +21,7 @@ import { addMissingTeams, byPosition, moveTeam, picklist, picklistTable, positio
 import { COUNTERS, DRIVETRAINS, EVENT_KEY } from './season'
 import { loadSchedule, positionStore, setPosition, teamFor, type SavedSchedule } from './data'
 import { rankOf } from './data'
+import { MIN_MATCHES, allianceScore, entryPoints, pointsRange, redWinChance, teamAps, teamPoints, upcomingMatches } from './data'
 import { chooseEvent, currentEvent, eventStore, eventWhenWhere, eventsTable, getOurEvents, latestEvent, lookupSeasons, searchEvents, type TbaEvent } from './data'
 
 // A filled-in pit form. Each test changes only the part it's about.
@@ -722,10 +723,10 @@ describe('picklist score', () => {
     expect(DEFAULT_WEIGHTS).toEqual(Object.fromEntries(picklistParts().map((p) => [p.key, 1])))
   })
 
-  it("scores Match 13's auto, teleop and endgame, then every counter in season.ts", () => {
+  it("scores Match 13's auto, teleop and endgame, our average points, then every counter in season.ts", () => {
     const parts = picklistParts()
-    expect(parts.slice(0, 3).map((p) => p.key)).toEqual(['xAuto', 'xTele', 'xEnd'])
-    expect(parts.slice(3)).toEqual(COUNTERS.map((c) => ({ key: c.key, label: c.label, lowerIsBetter: c.lowerIsBetter ?? false })))
+    expect(parts.slice(0, 4).map((p) => p.key)).toEqual(['xAuto', 'xTele', 'xEnd', 'aps'])
+    expect(parts.slice(4)).toEqual(COUNTERS.map((c) => ({ key: c.key, label: c.label, lowerIsBetter: c.lowerIsBetter ?? false })))
     expect(parts.find((p) => p.key === 'fuelMissed')?.lowerIsBetter).toBe(true)
   })
 
@@ -773,10 +774,10 @@ describe("the picklist page: each team's numbers and the weights", () => {
 
   beforeEach(() => weightsStore.reset())
 
-  it("uses the team page's averages and Match 13's auto, teleop and endgame", () => {
+  it("uses the team page's averages, our average points and Match 13's auto, teleop and endgame", () => {
     const entries = [row(1, { counts: { autoFuel: 1, teleopFuel: 10, fuelMissed: 2 } }), row(2, { counts: { autoFuel: 4, teleopFuel: 6, fuelMissed: 0 } })]
     const [team] = picklistTeams([rated(9991, 12)], entries, [])
-    expect(team).toEqual({ team: 9991, values: { xAuto: 12, xTele: 20, xEnd: 5, autoFuel: 2.5, teleopFuel: 8, fuelMissed: 1 }, matches: 2, rated: true })
+    expect(team).toEqual({ team: 9991, values: { xAuto: 12, xTele: 20, xEnd: 5, aps: 20.5, autoFuel: 2.5, teleopFuel: 8, fuelMissed: 1 }, matches: 2, rated: true })
     const summary = teamSummary(9991, entries, [])
     for (const c of summary.counters) expect(team.values[c.key]).toBe(c.average)
   })
@@ -1645,5 +1646,80 @@ describe('looking up an event', () => {
     if (!result.ok) throw new Error(result.error)
     expect(result.value.map((e) => e.key)[0]).toBe(EVENT_KEY)
     expect(result.value.map((e) => e.start_date)).toEqual([...result.value.map((e) => e.start_date)].sort())
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Average points (APS) and the match simulator (#166).
+
+describe('average points and the match simulator', () => {
+  let next = 0
+  // A match entry worth `fuel` points from teleop fuel, plus its endgame's points.
+  const scored = (team: number, match: number, fuel: number, endgame = 'None', fields: Partial<MatchRow> = {}): MatchRow => ({
+    id: `aps-${++next}`, event_key: EVENT_KEY, match_number: match, team_number: team,
+    counts: { autoFuel: 0, teleopFuel: fuel, fuelMissed: 5 }, endgame,
+    roles: [], role_notes: null, broke_down: false, broke_parts: [], broke_other: null, browned_out: false, stop: 'None', driver_skill: 3,
+    auto_side: null, auto_notes: null, ranking_points: [], notes: null, scouted_by: null, scouted_at: '2026-11-07T15:00:00Z',
+    ...fields,
+  })
+  const xp = (teamNumber: number, xpEnd: number): Match13Rating => ({ teamNumber, xpStart: xpEnd, xpEnd, xAuto: null, xTele: null, xEnd: null, epa: null, opr: null, dpr: null })
+
+  it("adds up each counter's points and the endgame's, with no points for a counter that has none, like fuel missed", () => {
+    expect(entryPoints({ counts: { autoFuel: 3, teleopFuel: 10, fuelMissed: 7 }, endgame: 'Level 2' })).toBe(3 + 10 + 20)
+    expect(entryPoints({ counts: {}, endgame: 'None' })).toBe(0)
+    // A counter missing from an entry counts as 0, and other seasons' settings work too.
+    expect(entryPoints({ counts: { climbs: 2 }, endgame: 'Park' }, [{ key: 'climbs', label: 'Climbs', points: 6 }], { Park: 2 })).toBe(14)
+  })
+
+  it('averages points per match, with a range of one standard deviation, and how many matches', () => {
+    const aps = teamAps(9991, [scored(9991, 1, 20), scored(9991, 2, 40), scored(9992, 2, 99)])
+    expect(aps).toEqual({ average: 30, low: 20, high: 40, spread: 10, matches: 2 })
+    expect(pointsRange(aps!.average, aps!.low, aps!.high)).toBe('30 (20–40)')
+  })
+
+  it('counts two scouts on the same match as one match, averaging their points, and never goes below 0', () => {
+    const aps = teamAps(9991, [scored(9991, 1, 10), scored(9991, 1, 30), scored(9991, 2, 0)])
+    expect(aps).toMatchObject({ average: 10, matches: 2 })
+    expect(aps!.low).toBe(0)
+  })
+
+  it('gives nothing for a team with no match entries, or only entries at another event', () => {
+    expect(teamAps(9991, [])).toBeNull()
+    expect(teamAps(9991, [scored(9991, 1, 20, 'None', { event_key: '2025ilch' })])).toBeNull()
+  })
+
+  it('uses our APS with enough matches, and Match 13 xP with too few, marking those as a guess', () => {
+    const enough = [1, 2, 3].map((m) => scored(9991, m, 30))
+    expect(MIN_MATCHES).toBe(3)
+    expect(teamPoints(9991, enough, [xp(9991, 50)])).toMatchObject({ expected: 30, source: 'scouting', fewMatches: false, xp: 50 })
+    expect(teamPoints(9991, enough.slice(0, 2), [xp(9991, 50)])).toMatchObject({ expected: 50, spread: 0, source: 'match13', fewMatches: true })
+    // With too few matches and no rating, our few matches are still better than nothing.
+    expect(teamPoints(9991, enough.slice(0, 1), [])).toMatchObject({ expected: 30, source: 'scouting', fewMatches: true })
+    expect(teamPoints(9991, [], [])).toMatchObject({ expected: null, source: null, aps: null, xp: null, fewMatches: true })
+  })
+
+  it("adds up an alliance's expected points, with the spreads combined, and lists teams with nothing to go on", () => {
+    const team = (expected: number | null, spread: number) => ({ team: 9990 + spread, aps: null, xp: null, expected, spread, source: null, fewMatches: false })
+    const score = allianceScore([team(30, 3), team(20, 4), team(null, 0)])
+    expect(score).toEqual({ expected: 50, low: 45, high: 55, spread: 5, unknown: [9990] })
+  })
+
+  it('gives the chance red wins: even for equal scores, higher for the bigger lead, and certain with no spread', () => {
+    const alliance = (expected: number, spread: number) => ({ expected, low: expected - spread, high: expected + spread, spread, unknown: [] })
+    expect(redWinChance(alliance(50, 5), alliance(50, 5))).toBeCloseTo(0.5)
+    // A lead of one combined spread is about 84%.
+    expect(redWinChance(alliance(60, 3), alliance(55, 4))).toBeCloseTo(0.8413, 3)
+    expect(redWinChance(alliance(40, 3), alliance(45, 4))).toBeCloseTo(0.1587, 3)
+    expect(redWinChance(alliance(40, 0), alliance(30, 0))).toBe(1)
+    expect(redWinChance(alliance(30, 0), alliance(40, 0))).toBe(0)
+  })
+
+  it('lists the qualification matches not played yet, soonest first, for filling in the simulator', async () => {
+    const result = await getSchedule()
+    if (!result.ok) throw new Error(result.error)
+    const saved: SavedSchedule = { event: EVENT_KEY, matches: [...result.value].reverse(), predictions: [], savedAt: '2026-11-07T15:00:00Z' }
+    // The example schedule's first two matches are played.
+    expect(upcomingMatches(saved).map((m) => m.match_number)).toEqual([3, 4])
+    expect(upcomingMatches(null)).toEqual([])
   })
 })

@@ -14,16 +14,22 @@ export interface Counter {
   label: string
   /** True if fewer is better, like fuel missed. The picklist ranks these the other way round. */
   lowerIsBetter?: boolean
+  /** Points the alliance gets for each one, for a team's average points (APS) and the simulator. Leave out for none. */
+  points?: number
 }
 
+// Points: check them against this season's game manual with the scouting lead.
 export const COUNTERS: Counter[] = [
-  { key: 'autoFuel', label: 'Auto fuel scored' },
-  { key: 'teleopFuel', label: 'Teleop fuel scored' },
+  { key: 'autoFuel', label: 'Auto fuel scored', points: 1 },
+  { key: 'teleopFuel', label: 'Teleop fuel scored', points: 1 },
   { key: 'fuelMissed', label: 'Fuel missed', lowerIsBetter: true },
 ]
 
 /** How the robot finished the match. The first is the starting choice. */
 export const ENDGAME: string[] = ['None', 'Level 1', 'Level 2', 'Level 3']
+
+/** Points for each ENDGAME choice. A choice left out scores 0. */
+export const ENDGAME_POINTS: Record<string, number> = { 'Level 1': 10, 'Level 2': 20, 'Level 3': 30 }
 
 /** What the robot spent the match doing. Scouts can choose more than one, or none. */
 export const ROLES: string[] = ['Scorer', 'Defender', 'Feeder']

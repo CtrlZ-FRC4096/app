@@ -33,7 +33,8 @@
   The sums are `teamSummary()` in `data.ts`, a plain function so the picklist can use the same numbers. Adding a counter to `season.ts` adds it to the page with no other change. It counts this event's match and pit entries from the team database plus this phone's Waiting ones; two scouts watching the same robot count as two entries. `pitAnswers()` and `pitDrivetrain()` are the only code that reads a pit entry's answers. Each panel is its own component, so new ones (like Match 13's numbers or match videos) go below the others.
 - The picklist (#42, `Picklist.tsx`, at `#/scouting/picklist`): every team at the event ranked best first, from our scouting and Match 13. See "Picklist score" below.
 - The final picklist (#43, `SharedPicklist.tsx`, at `#/scouting/shared-picklist`): the order the strategy team wants to pick teams in, shared by every phone. See "Shared picklist" below.
-- The Competition menu lists Match, Pit, Schedule, Rankings, Teams, Picklist and Final picklist under Scouting (`pages` in `index.ts`).
+- The match simulator (#166, `Simulator.tsx`, at `#/scouting/simulate`): see "Average points and the simulator" below.
+- The Competition menu lists Match, Pit, Schedule, Rankings, Teams, Picklist, Final picklist and Simulator under Scouting (`pages` in `index.ts`).
 - Match videos (#41): `useTeamQualVideos(team)` in `data.ts` gives a team's qualification matches in order, each with its alliance, Won / Lost / Tied (or not played yet), the scores, and a YouTube link for each video. A played match with no links has no video on The Blue Alliance yet. It loads when the page opens, and `reload()` is for a "Check again" button. The **Match videos** panel on the team page (`TeamVideos.tsx`) shows one line per qual, like "Qual 12 · Red · Won 84–71", with a **Watch ↗** button that opens the video in YouTube in a new tab ("Watch (2) ↗" for a second video), "No video yet", or "Not played yet". It's only links, no video players or thumbnails, to keep the page light on venue Wi-Fi. `VideoList` draws the lines from rows, so tests can use made-up ones.
 - Prescouting is its own module, just above Scouting in the Competition menu: see [its README](../prescouting/README.md). It gets the teams and EPA from `getEventTeams()` and `getRatings()` here.
 
@@ -66,6 +67,29 @@ The page is `SharedPicklist.tsx`. Everyone signed in sees the list: rank, team (
 - Big up and down buttons on each team, which wait while a move saves, and an Open / Picked / Do not pick choice. Screen readers hear "Moved team 9991 to place 2."
 
 Hiding the buttons is only tidiness: the table's rules are what stop anyone else changing the list.
+
+## Average points and the simulator (#166)
+
+Each counter in `season.ts` can have `points` (what the alliance gets for
+each one), and `ENDGAME_POINTS` gives each endgame choice's points. Check
+them against the game manual with the scouting lead.
+
+| In `data.ts` | Does |
+|:--|:--|
+| `entryPoints(entry)` | One match entry's points: each counter times its points, plus the endgame's |
+| `teamAps(team, entries)` | A team's average points per match (APS) at this event, with a range of one standard deviation either side and how many matches it's from. Two scouts on the same match count once. `null` if not scouted in a match |
+| `teamPoints(team, entries, ratings)` | What we expect a team to score: our APS, or Match 13's xP when we've scouted them in fewer than `MIN_MATCHES` (3) matches. `fewMatches` marks those as a guess |
+| `allianceScore(teams)` | An alliance's expected score and range. Teams with nothing to go on count as 0 and are listed in `unknown` |
+| `redWinChance(red, blue)` | The chance red outscores blue, from 0 to 1, assuming scores spread in a bell curve |
+| `useTeamPoints()` | For a page: `pointsFor(team)` from this event's entries and the saved Match 13 copy, so it works with no Wi-Fi |
+| `upcomingMatches(schedule)` | The qualification matches not played yet, from the saved schedule |
+
+The team page shows "APS 34 (26–41) from 6 matches", with Match 13's xP
+beside it. APS is also a picklist part. The simulator page takes 3 teams a
+side (or one side only), or fills them in from an upcoming match, and shows
+each alliance's expected score and who's likely to win. It only adds teams
+up: it doesn't count defense or robots getting in each other's way, and
+says so.
 
 ## What it needs to do
 
@@ -176,7 +200,7 @@ are from, and if Match 13 couldn't be reached it keeps using the saved copy.
 
 | In `data.ts` | Does |
 |:--|:--|
-| `picklistParts()` | What a team is scored on: Match 13 auto, teleop and endgame xP, then each counter in `season.ts` |
+| `picklistParts()` | What a team is scored on: Match 13 auto, teleop and endgame xP, our average points (APS), then each counter in `season.ts` |
 | `rankTeams(teams, weights)` | Ranks teams best first, with a score from 0 to 100 |
 | `picklistCsv(ranked, parts)` | The list as CSV, for a spreadsheet |
 | `weightsStore` | How much each part counts (0 to 5), saved on this phone |
