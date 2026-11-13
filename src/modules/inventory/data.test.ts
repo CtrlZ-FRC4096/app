@@ -14,6 +14,7 @@ import {
   changesTable,
   checkChanges,
   checkItem,
+  checkLink,
   checkStockChange,
   removeItem,
   isLow,
@@ -107,6 +108,7 @@ const newItem = (changes: Partial<NewItem> = {}): NewItem => ({
   vendor: 'REV',
   vendor_part_number: 'REV-11-2158',
   location: 'Bin E5',
+  link: '',
   quantity: 4,
   low_stock_level: 2,
   ...changes,
@@ -135,13 +137,39 @@ describe('checkItem', () => {
   })
 })
 
+describe('checkLink', () => {
+  it('allows no link, or a whole https:// link up to 2000 characters, when adding or changing a part', () => {
+    const links: [string, boolean][] = [
+      ['', true],
+      ['  ', true],
+      ['https://www.revrobotics.com/rev-11-1850/', true],
+      [' https://example.com/parts/am-3000a ', true], // trimmed
+      ['http://example.com/part', false], // not https
+      ['www.example.com/part', false],
+      ['javascript:alert(1)', false],
+      ['https://', false],
+      ['https://example.com/a part', false], // a space: not a single link
+      [`https://example.com/${'x'.repeat(1981)}`, false], // 2001 characters
+    ]
+    for (const [link, allowed] of links) {
+      const problems = [checkLink(link), checkItem(newItem({ link }), itemsTable.rows()), checkChanges({ quantity: 1, location: 'Bin E2', link })]
+      for (const problem of problems) {
+        if (allowed) expect(problem, link).toBeNull()
+        else expect(problem, link).toMatch(/https:\/\/|under 2000/)
+      }
+    }
+  })
+})
+
 describe('addItem', () => {
-  it('adds a part, trimmed', async () => {
-    const result = await addItem(newItem({ name: '  SPARK MAX ', location: ' Bin E5' }))
+  it('adds a part, trimmed, with its product link or none', async () => {
+    const result = await addItem(newItem({ name: '  SPARK MAX ', location: ' Bin E5', link: ' https://example.com/spark-max ' }))
     expect(result.ok).toBe(true)
     expect(itemsTable.rows().find((i) => i.vendor_part_number === 'REV-11-2158')).toMatchObject({
-      name: 'SPARK MAX', vendor: 'REV', location: 'Bin E5', quantity: 4, low_stock_level: 2,
+      name: 'SPARK MAX', vendor: 'REV', location: 'Bin E5', link: 'https://example.com/spark-max', quantity: 4, low_stock_level: 2,
     })
+    await addItem(newItem({ vendor_part_number: 'REV-11-2159', link: '  ' }))
+    expect(itemsTable.rows().find((i) => i.vendor_part_number === 'REV-11-2159')?.link).toBeNull()
   })
 
   it("doesn't add a part that breaks the rules, and says why", async () => {
@@ -156,25 +184,27 @@ describe('changing and deleting a part', () => {
   const pdh = () => itemsTable.rows().find((i) => i.vendor_part_number === 'REV-11-1850')!
 
   it('checks the location and quantity', () => {
-    expect(checkChanges({ quantity: 0, location: 'Bin E2' })).toBeNull()
-    expect(checkChanges({ quantity: 3, location: '  ' })).toMatch(/where it lives/)
-    expect(checkChanges({ quantity: -1, location: 'Bin E2' })).toMatch(/whole number/)
-    expect(checkChanges({ quantity: 1.5, location: 'Bin E2' })).toMatch(/whole number/)
-    expect(checkChanges({ quantity: 1, location: 'x'.repeat(61) })).toMatch(/under 60/)
+    expect(checkChanges({ quantity: 0, location: 'Bin E2', link: '' })).toBeNull()
+    expect(checkChanges({ quantity: 3, location: '  ', link: '' })).toMatch(/where it lives/)
+    expect(checkChanges({ quantity: -1, location: 'Bin E2', link: '' })).toMatch(/whole number/)
+    expect(checkChanges({ quantity: 1.5, location: 'Bin E2', link: '' })).toMatch(/whole number/)
+    expect(checkChanges({ quantity: 1, location: 'x'.repeat(61), link: '' })).toMatch(/under 60/)
   })
 
-  it("lets a mentor change a part's quantity and location, trimmed", async () => {
+  it("lets a mentor change a part's quantity, location and product link, trimmed", async () => {
     setDemoRole('mentor')
-    expect((await changeItem(pdh(), { quantity: 7, location: ' Shelf E3 ' })).ok).toBe(true)
-    expect(pdh()).toMatchObject({ quantity: 7, location: 'Shelf E3' })
+    expect((await changeItem(pdh(), { quantity: 7, location: ' Shelf E3 ', link: ' https://example.com/pdh ' })).ok).toBe(true)
+    expect(pdh()).toMatchObject({ quantity: 7, location: 'Shelf E3', link: 'https://example.com/pdh' })
+    expect((await changeItem(pdh(), { quantity: 7, location: 'Shelf E3', link: '' })).ok).toBe(true)
+    expect(pdh().link).toBeNull()
   })
 
   it("records a mentor's new count in the history, so the history adds up, and adds nothing when the count is left alone", async () => {
     setDemoRole('mentor')
     const before = changesTable.rows().length
-    await changeItem(pdh(), { quantity: 2, location: 'Shelf E3' })
+    await changeItem(pdh(), { quantity: 2, location: 'Shelf E3', link: '' })
     expect(changesTable.rows()).toHaveLength(before)
-    await changeItem(pdh(), { quantity: 7, location: 'Shelf E1' })
+    await changeItem(pdh(), { quantity: 7, location: 'Shelf E1', link: '' })
     expect(changesTable.rows()).toHaveLength(before + 1)
     expect(changesTable.rows()[0]).toMatchObject({ item_id: pdh().id, change: 5, note: CORRECTED, created_by: DEMO_PEOPLE.pat })
   })
@@ -182,7 +212,7 @@ describe('changing and deleting a part', () => {
   it("doesn't let a student change or delete a part, says who can, and changes nothing", async () => {
     const before = [itemsTable.rows(), changesTable.rows()]
     const tries: [string, () => Promise<unknown>][] = [
-      ['change', () => changeItem(pdh(), { quantity: 7, location: 'Shelf E3' })],
+      ['change', () => changeItem(pdh(), { quantity: 7, location: 'Shelf E3', link: '' })],
       ['delete', () => removeItem(pdh())],
     ]
     for (const [doing, attempt] of tries) expect(await attempt(), doing).toEqual({ ok: false, error: expect.stringMatching(/Only mentors and admins/) })
