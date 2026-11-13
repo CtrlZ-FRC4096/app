@@ -43,6 +43,13 @@ function offlineFiles(): Plugin {
 export default defineConfig({
   base: './',
   plugins: [react(), offlineFiles()],
+  build: {
+    // Warn about any file bigger than this after minifying. The biggest is the
+    // BOM's 3D viewer (three.js, about 504 kB, 127 kB gzipped), which only
+    // loads when someone presses View 3D. The page everyone loads is about
+    // 420 kB, so it still warns if that grows past this.
+    chunkSizeWarningLimit: 550,
+  },
   test: {
     environment: 'node',
     // Tests always run in demo mode, even if .env.local connects your

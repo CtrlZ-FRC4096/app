@@ -4,13 +4,16 @@
 // supabase/tests/onshape-files.test.ts.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { setDemoRole } from '../../core/demo'
+import { shapesTable } from '../cnc/data'
 import { partsTable, stationQueue, stepsFor, stepsTable, type Machine, type Part, type Step } from './data'
-import { downloadPartFile, downloadProblem, downloadQueue, exampleFile, partDownloads, queueFiles, type SavedFile } from './files'
+import { downloadPartFile, downloadProblem, downloadQueue, exampleFile, forgetFetchedFiles, partDownloads, queueFiles, type SavedFile } from './files'
 
 beforeEach(() => {
   setDemoRole('student')
   partsTable.reset()
   stepsTable.reset()
+  shapesTable.reset()
+  forgetFetchedFiles()
 })
 
 const part = (name: string) => partsTable.rows().find((p) => p.name === name)!
@@ -19,17 +22,17 @@ const stepsOf = (name: string) => stepsFor(part(name), stepsTable.rows())
 const plus = (name: string, machine: Machine): Step[] => [...stepsOf(name), { ...stepsOf(name)[0], id: `extra-${machine}`, stage: 'process2', machine }]
 
 describe('partDownloads', () => {
-  it("gives each machine's first kind of file the app can download, each kind once", () => {
+  it("gives every kind of file each machine can use that the app can download, each kind once", () => {
     const cases: [string, Step[], Machine | undefined, { format: string; machines: Machine[]; ready: boolean }[]][] = [
       ['Roller shaft', stepsOf('Roller shaft'), undefined, [{ format: 'step', machines: ['lathe'], ready: true }]],
+      // The 3D printer's STL; it could take a 3MF too, but the app can't make one.
       ['Pivot spacer', stepsOf('Pivot spacer'), undefined, [{ format: 'stl', machines: ['3d_printer'], ready: true }]],
-      // The router's DXF isn't in the app yet, so it gets a STEP, shared with the mill.
-      ['Frame rail', stepsOf('Frame rail'), undefined, [{ format: 'step', machines: ['mill', 'cnc_router'], ready: true }]],
-      // The laser only takes DXF: listed, but not ready.
-      ['Roller shaft', plus('Roller shaft', 'laser'), undefined, [{ format: 'step', machines: ['lathe'], ready: true }, { format: 'dxf', machines: ['laser'], ready: false }]],
+      // The router gets a DXF, and a STEP for pockets, shared with the mill.
+      ['Frame rail', stepsOf('Frame rail'), undefined, [{ format: 'step', machines: ['mill', 'cnc_router'], ready: true }, { format: 'dxf', machines: ['cnc_router'], ready: true }]],
+      ['Roller shaft', plus('Roller shaft', 'laser'), undefined, [{ format: 'step', machines: ['lathe'], ready: true }, { format: 'dxf', machines: ['laser'], ready: true }]],
       ['Roller shaft', plus('Roller shaft', 'hand_tools'), undefined, [{ format: 'step', machines: ['lathe'], ready: true }]],
-      // At one machine's station, only its file.
-      ['Frame rail', stepsOf('Frame rail'), 'cnc_router', [{ format: 'step', machines: ['cnc_router'], ready: true }]],
+      // At one machine's station, only its files, the DXF first.
+      ['Frame rail', stepsOf('Frame rail'), 'cnc_router', [{ format: 'dxf', machines: ['cnc_router'], ready: true }, { format: 'step', machines: ['cnc_router'], ready: true }]],
       ['Frame rail', stepsOf('Frame rail'), 'lathe', []],
       ['Brushless motor', stepsOf('Brushless motor'), undefined, []],
     ]
@@ -62,8 +65,33 @@ describe('downloadPartFile', () => {
     const step = await downloadPartFile(part('Roller shaft'), 'step')
     expect(step).toMatchObject({ ok: true, value: { name: '4096-26-INT-002_revA.step' } })
     expect(await downloadPartFile(part('Pivot spacer'), 'stl')).toMatchObject({ ok: true, value: { name: '4096-26-INT-003_revA.stl' } })
-    expect(await downloadPartFile(part('Intake side plate'), 'dxf')).toMatchObject({ ok: false, error: expect.stringMatching(/export it/) })
+    expect(await downloadPartFile(part('Intake side plate'), '3mf')).toMatchObject({ ok: false, error: expect.stringMatching(/export it/) })
     expect(await downloadPartFile(part('Bellypan'), 'step')).toMatchObject({ ok: false, error: expect.stringMatching(/Import/) })
+  })
+
+  it("makes a DXF from the part's outline, reading the outline from Onshape first if the CNC module doesn't have it yet", async () => {
+    // The CNC module already has the side plate's outline: no Onshape call.
+    const plate = await downloadPartFile(part('Intake side plate'), 'dxf')
+    expect(plate).toMatchObject({ ok: true, value: { name: '4096-26-INT-001_revB.dxf', note: 'In inches.' } })
+    const text = plate.ok ? await plate.value.blob.text() : ''
+    expect(text.match(/\nCIRCLE\n/g)).toHaveLength(6) // its rivet and bearing holes
+    // The shaft's outline isn't read yet: it's read first, and kept for the CNC board too.
+    const before = shapesTable.rows().length
+    const shaft = await downloadPartFile(part('Roller shaft'), 'dxf')
+    expect(shaft).toMatchObject({ ok: true, value: { name: '4096-26-INT-002_revA.dxf', note: expect.stringMatching(/Read its outline from Onshape first \(1 API call\)/) } })
+    expect(shapesTable.rows()).toHaveLength(before + 1)
+  })
+
+  it('fetches an STL once, for View 3D and Download STL, until the part changes', async () => {
+    const spacer = part('Pivot spacer')
+    const first = await downloadPartFile(spacer, 'stl')
+    const again = await downloadPartFile(spacer, 'stl')
+    const newRevision = await downloadPartFile({ ...spacer, revision: 'B' }, 'stl')
+    const steps = [await downloadPartFile(spacer, 'step'), await downloadPartFile(spacer, 'step')]
+    if (!first.ok || !again.ok || !newRevision.ok || !steps[0].ok || !steps[1].ok) throw new Error('A download failed')
+    expect(again.value.blob).toBe(first.value.blob)
+    expect(newRevision.value.blob).not.toBe(first.value.blob)
+    expect(steps[1].value.blob).not.toBe(steps[0].value.blob) // STEPs aren't kept
   })
 })
 
@@ -73,12 +101,12 @@ describe('queueFiles', () => {
     const steps = stepsTable.rows()
     const router = queueFiles(stationQueue(parts, steps, { kind: 'machine', machine: 'cnc_router' }), 'cnc_router')
     expect(router.map((f) => [f.part.name, f.file?.format, f.problem && 'problem'])).toEqual([
-      ['Bellypan', 'step', 'problem'], // typed in, not from Onshape
-      ['Frame rail', 'step', 'problem'],
-      ['Intake side plate', 'step', null], // imported from the example Onshape assembly
+      ['Bellypan', 'dxf', 'problem'], // typed in, not from Onshape
+      ['Frame rail', 'dxf', 'problem'],
+      ['Intake side plate', 'dxf', null], // imported from the example Onshape assembly
     ])
     const laserQueue = [{ part: part('Roller shaft'), steps: plus('Roller shaft', 'laser').filter((s) => s.machine === 'laser') }]
-    expect(queueFiles(laserQueue, 'laser')[0].problem).toMatch(/DXF/)
+    expect(queueFiles(laserQueue, 'laser')).toEqual([expect.objectContaining({ file: expect.objectContaining({ format: 'dxf' }), problem: null })])
     expect(queueFiles(stationQueue(parts, steps, { kind: 'machine', machine: 'hand_tools' }), 'hand_tools')).toEqual([])
   })
 })

@@ -187,14 +187,14 @@ Every part has a team number in the format `4096-<year>-<system code>-<number>`,
 
 ## Files for the machines
 
-Whoever is at a machine can download the part's file without opening Onshape (#24). Under a custom part's stages, **Files:** has a **Download STEP** or **Download STL** button for each file its machines need. Pick a machine in the station filter (say "Lathe only") and **Download all 3 STEP files** at the top gets every part in that queue, one after another (the browser may ask once whether the site can download several files: choose Allow). There's no zip, so no extra package was needed.
+Whoever is at a machine can see the part and download its file without opening Onshape (#24). Under a custom part's stages, **Files:** has a **Download STEP**, **Download STL** or **Download DXF** button for each file its machines need, and **View 3D**. Pick a machine in the station filter (say "Lathe only") and **Download all 3 STEP files** at the top gets every part in that queue, one after another (the browser may ask once whether the site can download several files: choose Allow). There's no zip, so no extra package was needed.
 
 | Machine | File it needs | What the app downloads now |
 |:--|:--|:--|
 | Lathe, mill | STEP | STEP |
 | 3D printer | STL (or 3MF) | STL, in millimeters |
-| CNC router | DXF (or STEP) | STEP, until DXF works |
-| Laser | DXF | Nothing yet: export it from Onshape (**Open CAD**) |
+| CNC router | DXF (or STEP) | DXF, and STEP for parts with pockets |
+| Laser | DXF | DXF |
 | Hand tools | none | |
 
 Files are named by part number and revision, like `4096-26-INT-014_revB.step`.
@@ -202,16 +202,18 @@ Files are named by part number and revision, like `4096-26-INT-014_revB.step`.
 - **Anyone on the team can download.** It changes nothing, and the people at the machines need the files. The server function only fetches parts that are in the BOM: the app sends the part's id, and the function reads its Onshape link from `bom_parts` with the caller's own sign-in.
 - **Only parts imported from Onshape** can be downloaded, because the app has to know which Onshape part each one is (`onshape_id`). Parts typed in by hand say so.
 - **Onshape is only asked when someone presses Download.** An STL is one Onshape API call. A STEP is made by Onshape in the background (a "translation"): one call to start it, a few to check it's done, and one to fetch it, so about 4 to 6. A whole queue is that for each part. Files bigger than 20 MB aren't passed on.
-- **In demo mode** the buttons give a tiny made-up file (a 20 mm cube STL, or a STEP with only a header), so they can be tried without keys.
+- **A DXF comes from the part's outline, not from Onshape's export.** The CNC module reads each part's flat outline from Onshape once and keeps it (`cnc_shapes`), so a DXF uses no Onshape calls. If the outline hasn't been read yet, **Download DXF** reads it first: one call for the part's Part Studio, and then the CNC board has it too. It's in inches. Round holes are real circles, so CAM can drill or bore them; everything else is a closed outline of short straight lines. Pockets that don't go all the way through aren't in an outline, so a part with pockets says to use its STEP for those (`dxf.ts`).
+- **View 3D** shows the part to turn with a finger or mouse, and pinch or scroll to zoom. It shows the part's STL, so it's one Onshape call the first time. The app keeps the STL until the page is reloaded, so looking again, or pressing Download STL after, uses no more. It uses the three.js package (`three`, version 0.170.0, a mentor approved it), which only loads when someone presses View 3D, so the page doesn't get slower for everyone else (`Viewer3D.tsx`).
+- **In demo mode** the buttons give a tiny made-up file (a 20 mm cube STL, or a STEP with only a header), so they can be tried without keys. The example side plate's DXF comes from its example outline.
 
 | File | What it does |
 |:--|:--|
 | `data.ts` | Which file each machine needs (`MACHINE_FILE_FORMATS`), its name (`partFileName()`), and a part's files from its stages (`partFiles()`). |
-| `files.ts` | Which of those the app can download (`partDownloads()`), a machine's queue (`queueFiles()`), and downloading through the `onshape` server function (`downloadPartFile()`, `downloadQueue()`). Tested in `files.test.ts`. |
-| `Downloads.tsx` | The **Files:** buttons under a part, and the queue's download button. |
+| `files.ts` | Which of those the app can download (`partDownloads()`), a machine's queue (`queueFiles()`), and downloading through the `onshape` server function or making the DXF (`downloadPartFile()`, `downloadQueue()`). Tested in `files.test.ts`. |
+| `dxf.ts` | A DXF from a flat outline (`outlineToDxf()`), with round holes as circles (`circleOf()`). Tested in `dxf.test.ts`. |
+| `Downloads.tsx` | The **Files:** buttons and **View 3D** under a part, and the queue's download button. |
+| `Viewer3D.tsx` | The 3D view, with three.js. |
 | `supabase/functions/onshape/files.ts` | What the server function asks Onshape for a part's STEP or STL, and checks on what comes back. Tested with a made-up Onshape in `supabase/tests/onshape-files.test.ts`. |
-
-**View 3D** isn't built yet: it needs a 3D viewer library, which is an npm package, so a mentor decides (see the pull request for #24).
 
 ## Slack reminders
 
@@ -230,7 +232,7 @@ Messages from the team's Slack bot about the stages assigned to people (#22). Th
 
 ## Still to do
 
-- View 3D, and DXF downloads for the laser and router (#24). 3D needs a mentor to pick a viewer library
+- Try **Download STEP/STL** and **View 3D** with the team's real Onshape keys (#24): so far only tested against a made-up Onshape. Check an assembly's parts and configured parts too
 - Try **Write part numbers to Onshape** on the team's real CAD, once a mentor has checked the Onshape keys can write (#21). It's only been tested against a made-up Onshape
 - Slack reminders (#22): the team to confirm the days and who gets the weekly summary (see [Slack reminders](#slack-reminders))
 - Move a part's CNC router stage along when the CNC board marks it cut

@@ -1,11 +1,14 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { toast } from '../../core/toast'
 import { FILE_FORMAT_NAMES, MACHINE_FILE_FORMATS, MACHINE_NAMES, type FileFormat, type Machine, type Part, type Step } from './data'
 import { downloadPartFile, downloadProblem, downloadQueue, partDownloads, queueFiles, type SavedFile } from './files'
 
 // The Download buttons for a part's files, and for a whole machine's queue
-// (#24). The files come from Onshape through files.ts, only when a button
-// is pressed.
+// (#24), and View 3D. The files come from Onshape through files.ts, only when
+// a button is pressed.
+
+// The 3D viewer and three.js load only when someone presses View 3D.
+const Viewer3D = lazy(() => import('./Viewer3D'))
 
 /** Hand a file to the browser to save, under its own name. */
 function saveToDevice(file: SavedFile) {
@@ -27,6 +30,7 @@ const machineList = (machines: Machine[]) => machines.map((m) => MACHINE_NAMES[m
 export function PartDownloads(props: { part: Part; steps: Step[] }) {
   const { part } = props
   const [busy, setBusy] = useState<FileFormat | null>(null)
+  const [viewing, setViewing] = useState(false)
   const files = partDownloads(part, props.steps)
   if (files.length === 0) return null
   const problem = downloadProblem(part)
@@ -35,11 +39,13 @@ export function PartDownloads(props: { part: Part; steps: Step[] }) {
     setBusy(format)
     const answer = await downloadPartFile(part, format)
     setBusy(null)
-    if (answer.ok) saveToDevice(answer.value)
-    else toast(answer.error)
+    if (!answer.ok) return toast(answer.error)
+    saveToDevice(answer.value)
+    if (answer.value.note) toast(`Downloaded ${answer.value.name}. ${answer.value.note}`)
   }
 
   return (
+    <>
     <span className="toolbar" style={{ marginTop: 6, gap: 6 }}>
       <span className="note">Files:</span>
       {problem ? (
@@ -64,7 +70,18 @@ export function PartDownloads(props: { part: Part; steps: Step[] }) {
           ),
         )
       )}
+      {!problem && (
+        <button type="button" className="btn btn-sm" aria-expanded={viewing} onClick={() => setViewing(!viewing)}>
+          {viewing ? 'Hide 3D' : 'View 3D'}
+        </button>
+      )}
     </span>
+    {viewing && (
+      <Suspense fallback={<p className="note">Loading the 3D viewer…</p>}>
+        <Viewer3D key={`${part.id}|${part.onshape_id}|${part.revision ?? ''}`} part={part} onClose={() => setViewing(false)} />
+      </Suspense>
+    )}
+    </>
   )
 }
 

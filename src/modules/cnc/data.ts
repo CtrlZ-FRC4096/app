@@ -32,6 +32,8 @@ import {
   findSpots, flatOutline, footprint, guessStock, inches, isPlate, materialName, materialWords, nextLabel, onSheet, parseInches, quarterTurn, sizeText, snapInches, suggestCode,
   type Box, type Loops, type ShapeGeometry, type Spot, type StockGeometry,
 } from './geometry'
+// For the BOM's DXF downloads (#24): a part's outline lying flat.
+export { flatOutline }
 
 // ---------------------------------------------------------------------------
 // The rows.
