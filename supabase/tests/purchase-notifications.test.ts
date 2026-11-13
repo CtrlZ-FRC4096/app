@@ -1,9 +1,11 @@
 // Notifications for purchase requests (step 5 of #93): when a request is
 // ordered or arrives, whoever asked for it gets a notification in their
 // bell. Nobody gets one for their own change, and people still can't add
-// notifications for anyone else themselves.
+// notifications for anyone else themselves. People who switched off
+// Purchasing -> My requests on the Notifications page (#155) don't get them.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
+import { purchasing } from '../../src/modules/purchasing'
 
 const db = setUpTestDatabase()
 let student: string
@@ -98,6 +100,35 @@ describe('purchase request notifications', () => {
     const item = await ask(student)
     await db.sql("update public.purchase_items set status = 'received' where id = $1", [item])
     expect(await allNotifications()).toEqual([{ member_id: student, title: 'Your request arrived' }])
+  })
+
+  it('say which kind of notification they are', async () => {
+    await setStatus(buyer, await ask(student), 'placed')
+    expect(await db.sql('select topic from public.notifications')).toEqual([{ topic: 'purchasing.request_updates' }])
+  })
+
+  it('skip people who switched off Purchasing -> My requests, and only them', async () => {
+    const choose = (person: string, enabled: boolean) =>
+      db.as(person, "insert into public.notification_settings (key, enabled) values ('purchasing.request_updates', $1) on conflict (member_id, key) do update set enabled = excluded.enabled", [enabled])
+    const mine = await ask(student)
+    const theirs = await ask(other)
+
+    await choose(student, false)
+    await setStatus(buyer, mine, 'placed')
+    await setStatus(buyer, theirs, 'placed')
+    expect(await allNotifications()).toEqual([{ member_id: other, title: 'Your request was ordered' }])
+
+    // Switching it back on sends the next one.
+    await choose(student, true)
+    await setStatus(buyer, mine, 'received')
+    expect(await bell(student)).toMatchObject([{ title: 'Your request arrived' }])
+  })
+
+  it("are on for people who haven't chosen, like Purchasing's default", async () => {
+    const [kind] = purchasing.notifications ?? []
+    expect(kind).toMatchObject({ key: 'purchasing.request_updates', on: true })
+    await setStatus(buyer, await ask(student), 'placed')
+    expect(await bell(student)).toHaveLength(1)
   })
 
   it("can't be set off by a student, who can't place orders", async () => {

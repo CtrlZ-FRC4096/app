@@ -19,7 +19,7 @@ This list is typed in by hand. It's **separate from the BOM**, which comes from 
 - **From the BOM** (#80): a COTS part's **Purchase** button opens **Add new item** filled in from the part (name, vendor, product page link, vendor part number, quantity, and its system as the type), linked to the part. The BOM then shows the request's status, with a link to it here. The BOM's vendor names are matched to the list in `vendorFor()`.
 - **Prices:** Price each is what one costs, and it can be left empty. The list and the form work out the line's total from it and Number needed, like "$12.50 each · $50.00 total" (`priceText()`), so the two can't disagree. Everyone on the team sees prices. Anyone can fill one in or change it while an item is being asked for; once it's ordered, only mentors and purchasers can change it, like everything else about an order. Shipping, tax and a total for a whole order aren't built yet.
 - **Requested by** is always whoever filled in the form (everyone signs in with Slack). Nobody can pick someone else or change it later, not even a mentor. Importing the Slack list (step 3) will need a mentors-only way to keep its names.
-- **Notifications** (#93): when a request is ordered (Order Placed) or arrives (Received), whoever asked for it gets a notification in the bell, which opens the item. Nobody gets one for their own change. The database adds them (`supabase/migrations/..._purchase_notifications.sql`, tested in `supabase/tests/purchase-notifications.test.ts`), so demo mode doesn't show them. They don't go to phones yet.
+- **Notifications** (#93): when a request is ordered (Order Placed) or arrives (Received), whoever asked for it gets a notification in the bell, which opens the item. Nobody gets one for their own change. People can switch these off with **My requests** under "What to notify me about" on the Notifications page (#155); it's listed in `index.ts`. The database adds them (`supabase/migrations/..._purchase_notifications.sql`, and `..._notification_settings.sql` for the switch, tested in `supabase/tests/purchase-notifications.test.ts`), so demo mode doesn't show them. They don't go to phones yet.
 - **Receipts** (#79): once an item is ordered (#168), mentors and purchasers can open it to add a PDF or photo of its receipt, or several. **Add receipt** appears as soon as they pick Order Placed or a later status in the form, along with the other order fields. Existing receipts stay visible if the status goes back to asking; they can still be opened and deleted. On a phone, **Add receipt** offers the camera as well as files. Up to 10 MB each. See [Receipts](#receipts).
 - The home page tile shows "3 to order now (1 high priority)".
 
@@ -27,10 +27,13 @@ The statuses, vendors and types are lists at the top of `data.ts`, so they're ea
 
 | File | What it does |
 |:--|:--|
-| `index.ts` | Tells the app about the module: it's in the Build menu, with the home page tile's status. |
+| `index.ts` | Tells the app about the module: it's in the Build menu, with the home page tile's status and its one kind of notification (My requests). |
 | `data.ts` | The lists, the `purchase_items` table and its example rows, the views, the checks, adding, changing and deleting items, and receipts. |
 | `data.test.ts` | Tests for `data.ts`. |
-| `PurchasingPage.tsx` | The view switch and search, the items under each heading, the form, receipts, and the purchasers. Its address can open a request from a BOM part (`#/purchasing/from-bom/<part id>`) or an item (`#/purchasing/item/<item id>`). |
+| `PurchasingPage.tsx` | The view switch and search, the items under each heading, item forms, and the purchasers list. Its address can open a request from a BOM part (`#/purchasing/from-bom/<part id>`) or an item (`#/purchasing/item/<item id>`). |
+| `receipt-image.ts` | Browser image resizing and encoding. Its settings are 2560px on the longest edge and WebP at 0.85 quality; it never crops, stretches or upscales. |
+| `receipt-image.test.ts` | Tests for the resizing and output-type behavior. |
+| `Receipts.tsx` | Receipt rows, the file picker, and the local preview before adding a photo. Uploads go through the data functions, not directly from the page. |
 
 The tables are made by `supabase/migrations/20261102180000_purchase_items.sql`, `..._purchasing_orders.sql` (purchasers, Ordered by, Shipped to and who changes orders), `..._purchase_items_bom_part.sql` (the link to a BOM part), `..._purchase_items_estimated_arrival.sql` and `..._purchase_items_price.sql`. Their permission rules are tested in `supabase/tests/purchase-items.test.ts` and `purchasing-orders.test.ts`. Receipts have their own migration and tests: see [Receipts](#receipts).
 
@@ -50,6 +53,16 @@ Receipts can show card digits, addresses and names, so:
 - `purchase_receipts` has a row for each file, which is how students can see an item has a receipt. It never holds the file's own name, which can have personal details in it.
 - **An item with a receipt can't be deleted** until a mentor or purchaser deletes the receipt. It's a record of what was spent. Cancel the item instead.
 - Demo mode has no file storage: adding a receipt saves only the row, and Open says so.
+
+### Photo compression (#190)
+
+- A supported photo is resized proportionally to at most **2560px** on its longest edge and encoded as **WebP at 0.85 quality**, using the browser's built-in image tools. Crop, stretch and upscaling are never done. Camera orientation is preserved, and the generated filename comes from the encoded type, not the original filename.
+- `prepareReceipt()` in `data.ts` checks the raw type and size before decoding. It offers the compressed image only if it is genuinely smaller and is still an allowed type and size. Otherwise it preserves the original. PDFs never go through image compression.
+- If the photo changed, nothing uploads until the person inspects the compressed preview, including **Open full-size preview** for close inspection, and chooses **Use compressed photo**, **Keep original** or **Cancel**. Check dates, amounts and small print: a smaller file is not automatically an acceptable receipt. If the browser cannot decode or preview a format such as HEIC, the unchanged original can be used within the same rules.
+- Choosing **Keep original** uploads the original without lossy re-encoding. Cancel uploads nothing. An upload failure leaves the selection available for retry. Temporary local preview URLs are revoked when no longer needed.
+- The actual chosen file goes through the existing `addReceipt()` path into the same private **`purchase-receipts`** bucket, with matching path extension, MIME type and byte count. There is no new provider, database migration or secret key for this feature.
+
+**Capacity and backups:** if more Storage is needed later, a mentor can evaluate upgrading Supabase rather than migrating providers. Its daily **database** backups do not include objects uploaded through Storage, so bucket files need a separate backup and restore plan ([documentation](https://supabase.com/docs/guides/platform/backups)).
 
 ## Still to do (#66)
 
