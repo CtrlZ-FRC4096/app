@@ -17,6 +17,9 @@
  * Post-process), each with a status and how many are through it
  * (..._bom_steps.sql). A stage can be assigned to a person, with a due date
  * (..._bom_steps_assign.sql).
+ *
+ * Team part numbers are made in numbering.ts, which never gives the same
+ * number out twice (..._bom_part_counters.sql, #21).
  */
 import { callFunction } from '../../core/functions'
 import { createTable, fail, ok, type Result, type Row } from '../../core/table'
@@ -28,6 +31,7 @@ import { isLive } from '../../core/supabase'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
 import type { OnshapeBom, OnshapeImportPlan } from './onshape'
+import { countersTable, isTeamNumber, nextPartNumber, rememberNumbers } from './numbering'
 import type { Item } from '../inventory/data'
 import { toCsv } from '../attendance/data'
 import { isAsking, vendorFor, type PurchaseItem, type StatusKey } from '../purchasing/data'
@@ -202,21 +206,116 @@ export function partCountText(parts: Part[]): string {
   return `${made} custom, ${cots} COTS`
 }
 
-/** The start of this season's part numbers: team and year. */
-export const PART_NUMBER_PREFIX = '4096-26'
+// ---------------------------------------------------------------------------
+// Team part numbers (#21), like 4096-26-INT-007. How they're made, and how
+// a number is never given out twice, is in numbering.ts.
+
+export { PART_NUMBER_PREFIX, countersTable, isTeamNumber, nextPartNumber, useCounters, type PartCounter } from './numbering'
 
 /**
- * The next free part number in a system, like 4096-26-INT-007: one more
- * than the highest number already used there.
+ * The custom parts in a system with no team number yet, such as one that
+ * kept the number someone typed into Onshape ("BRKT-1"). Parts removed in
+ * Onshape are left out. COTS parts are too: they're named by the vendor's
+ * number, and every one added or imported already gets a team number.
  */
-export function nextPartNumber(system: BomSystem, parts: Part[]): string {
-  const start = `${PART_NUMBER_PREFIX}-${system.code}-`
-  const used = parts
-    .filter((p) => p.part_number.startsWith(start))
-    .map((p) => Number(p.part_number.slice(start.length)))
-    .filter(Number.isInteger)
-  const next = Math.max(0, ...used) + 1
-  return start + String(next).padStart(3, '0')
+export function partsWithoutTeamNumber(parts: Part[]): Part[] {
+  return parts.filter((p) => p.kind === 'made' && !p.removed_in_onshape && !isTeamNumber(p.part_number))
+}
+
+/**
+ * Give each custom part in a system that has no team number the next one,
+ * in the order they're listed. No two get the same number, and none gets a
+ * number used before. Student leaders, mentors and admins, who change parts.
+ */
+export async function numberParts(system: BomSystem): Promise<Result<string>> {
+  const problem = leadersOnly('give parts team numbers')
+  if (problem) return fail(problem)
+  const todo = partsWithoutTeamNumber(partsTable.rows().filter((p) => p.system_id === system.id))
+  if (todo.length === 0) return ok(`Every custom part in ${system.name} already has a team number.`)
+  // Every number so far, plus each one given out here, so the next is always higher.
+  const numbered: Pick<Part, 'part_number'>[] = [...partsTable.rows()]
+  const given: string[] = []
+  for (const part of todo) {
+    const number = nextPartNumber(system, numbered, countersTable.rows())
+    const result = await partsTable.update(part.id, { part_number: number })
+    if (!result.ok) return fail(`Numbered ${given.length} of ${todo.length}, then couldn't number ${part.name}: ${result.error}`)
+    numbered.push({ part_number: number })
+    given.push(number)
+    await rememberNumbers([number])
+  }
+  const which = given.length === 1 ? given[0] : `${given[0]} to ${given[given.length - 1]}`
+  return ok(`Gave ${plural(given.length, 'part', 'parts')} in ${system.name} team numbers: ${which}.`)
+}
+
+/**
+ * The parts whose team number can be written into Onshape: custom parts
+ * imported from Onshape, still there, with a team number. COTS parts keep
+ * the vendor's number in CAD, so they're left out.
+ */
+export function partsForOnshape(parts: Part[]): Part[] {
+  return parts.filter((p) => p.kind === 'made' && p.onshape_id && !p.removed_in_onshape && isTeamNumber(p.part_number))
+}
+
+/** Is this Onshape link to a workspace (/w/), the only place Onshape lets us change parts? A version (/v/) can't change. */
+export function isWorkspaceLink(url: string): boolean {
+  return isOnshapeLink(url) && /^https:\/\/cad\.onshape\.com\/documents\/[0-9a-f]{24}\/w\//.test(url.trim())
+}
+
+/** What the onshape server function answers after writing part numbers. The same shape is in supabase/functions/onshape/numbers.ts. */
+export interface OnshapeNumbersAnswer {
+  /** How many parts' numbers it changed in Onshape. */
+  written: number
+  /** How many already had the right number, so weren't changed. */
+  unchanged: number
+  /** Parts it couldn't write, and why, like "it's in another Onshape document". */
+  skipped: { onshape_id: string; reason: string }[]
+}
+
+// The server function takes up to this many parts at a time (MOST_NUMBERS in numbers.ts).
+const NUMBERS_PER_CALL = 100
+
+/** Onshape only lets the app change a workspace. */
+const VERSION_LINK = "This system's Onshape link is to a version, which can't be changed. Change system, and paste the workspace's address instead: open the document's Main workspace in Onshape and copy the address (it has /w/ in it)."
+
+/**
+ * Write each custom part's team number into its Part number property in
+ * Onshape, through the onshape server function (#21). The next import then
+ * reads the same numbers back. Only works with a workspace link (/w/), not
+ * a version. Costs one Onshape API call for each Part Studio, plus one for
+ * each part whose number changes. In demo mode it pretends every one was written.
+ */
+export async function writePartNumbersToOnshape(system: BomSystem): Promise<Result<string>> {
+  const problem = leadersOnly('write part numbers to Onshape')
+  if (problem) return fail(problem)
+  if (!system.onshape_url) return fail(`Add ${system.name}'s Onshape link first: Change system, then paste the assembly's address.`)
+  if (!isWorkspaceLink(system.onshape_url)) return fail(VERSION_LINK)
+  const parts = partsForOnshape(partsTable.rows().filter((p) => p.system_id === system.id))
+  if (parts.length === 0) return fail(`No custom parts in ${system.name} came from Onshape with a team number. Import from Onshape first.`)
+
+  const total: OnshapeNumbersAnswer = { written: 0, unchanged: 0, skipped: [] }
+  for (let i = 0; i < parts.length; i += NUMBERS_PER_CALL) {
+    const batch = parts.slice(i, i + NUMBERS_PER_CALL)
+    const answer = await callFunction<OnshapeNumbersAnswer>(
+      'onshape',
+      { kind: 'part-numbers', url: system.onshape_url, parts: batch.map((p) => ({ id: p.onshape_id, part_number: p.part_number })) },
+      () => ({ written: batch.length, unchanged: 0, skipped: [] }),
+    )
+    if (!answer.ok) return i === 0 ? answer : fail(`Wrote ${plural(total.written, 'part number', 'part numbers')}, then: ${answer.error}`)
+    total.written += answer.value.written
+    total.unchanged += answer.value.unchanged
+    total.skipped.push(...answer.value.skipped)
+  }
+  return ok(numbersWrittenText(total, parts))
+}
+
+/** Like "Wrote 5 part numbers into Onshape. 2 already matched. Skipped Roller: it's in another Onshape document." */
+export function numbersWrittenText(answer: OnshapeNumbersAnswer, parts: Part[]): string {
+  const name = (id: string) => parts.find((p) => p.onshape_id === id)?.name ?? 'a part'
+  return [
+    `Wrote ${plural(answer.written, 'part number', 'part numbers')} into Onshape.`,
+    answer.unchanged > 0 && `${answer.unchanged} already matched.`,
+    ...answer.skipped.map((s) => `Skipped ${name(s.onshape_id)}: ${s.reason}.`),
+  ].filter(Boolean).join(' ')
 }
 
 // ---------------------------------------------------------------------------
@@ -595,7 +694,9 @@ function partFields(part: NewPart) {
 export async function addPart(part: NewPart): Promise<Result<Part>> {
   const problem = leadersOnly('add parts') ?? checkPart(part, partsTable.rows())
   if (problem) return fail(problem)
-  return partsTable.insert({ system_id: part.system_id, ...partFields(part), onshape_url: null, onshape_id: null, removed_in_onshape: false })
+  const result = await partsTable.insert({ system_id: part.system_id, ...partFields(part), onshape_url: null, onshape_id: null, removed_in_onshape: false })
+  if (result.ok) await rememberNumbers([result.value.part_number])
+  return result
 }
 
 /**
@@ -607,6 +708,7 @@ export async function changePart(part: Part, changes: NewPart): Promise<Result<P
   const problem = leadersOnly('change parts') ?? checkPart(changes, partsTable.rows(), part.id, Boolean(part.onshape_id))
   if (problem) return fail(problem)
   const result = await partsTable.update(part.id, partFields(changes))
+  if (result.ok) await rememberNumbers([result.value.part_number])
   if (!result.ok || !(part.kind === 'made' && changes.kind === 'cots')) return result
   for (const step of stepsFor(part, stepsTable.rows())) {
     const removed = await stepsTable.remove(step.id)
@@ -971,9 +1073,11 @@ export async function applyOnshapeImport(system: BomSystem, plan: OnshapeImportP
   if (problem) return fail(problem)
   const added = await partsTable.insertMany(plan.add)
   if (!added.ok) return added
+  await rememberNumbers(plan.add.map((p) => p.part_number))
   for (const { part, changes } of plan.change) {
     const result = await partsTable.update(part.id, changes)
     if (!result.ok) return result
+    if (changes.part_number) await rememberNumbers([changes.part_number])
   }
   for (const part of plan.removed) {
     const result = await partsTable.update(part.id, { removed_in_onshape: true })

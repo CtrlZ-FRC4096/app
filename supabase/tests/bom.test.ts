@@ -233,3 +233,34 @@ describe('BOM robots, systems and parts', () => {
     })
   })
 })
+
+// ..._bom_part_counters.sql (#21): the highest number each series (like
+// 4096-26-INT) has used, so a deleted part's number is never given out again.
+describe('BOM part number counters', () => {
+  const counters = () => db.sql('select series, last_number from public.bom_part_counters order by series')
+
+  it('remember the highest team number used in each series, even after that part is deleted', async () => {
+    const [first] = await addMadePart(leader, '4096-26-INT-001')
+    const [highest] = await addMadePart(leader, '4096-26-INT-005')
+    await addMadePart(leader, '4096-26-DRV-002')
+    await addMadePart(leader, 'BRKT-1') // Not a team number: not counted.
+    expect(await counters()).toEqual([{ series: '4096-26-DRV', last_number: 2 }, { series: '4096-26-INT', last_number: 5 }])
+
+    await db.as(leader, 'delete from public.bom_parts where id = $1', [highest.id])
+    await db.as(leader, "update public.bom_parts set part_number = '4096-26-INT-009' where id = $1", [first.id])
+    await db.as(leader, "update public.bom_parts set part_number = '4096-26-INT-002' where id = $1", [first.id])
+    expect(await counters()).toEqual([{ series: '4096-26-DRV', last_number: 2 }, { series: '4096-26-INT', last_number: 9 }])
+  })
+
+  it("can be read by anyone on the team, but changed by nobody, so they can't be turned back", async () => {
+    await addMadePart(leader, '4096-26-INT-004')
+    expect(await db.as(student, 'select last_number from public.bom_part_counters')).toEqual([{ last_number: 4 }])
+    for (const person of [student, leader, mentor]) {
+      await expect(db.as(person, 'update public.bom_part_counters set last_number = 0')).rejects.toThrow(PERMISSION_DENIED)
+      await expect(db.as(person, 'delete from public.bom_part_counters')).rejects.toThrow(PERMISSION_DENIED)
+      await expect(db.as(person, "insert into public.bom_part_counters (series, last_number) values ('4096-26-SHO', 0)")).rejects.toThrow(PERMISSION_DENIED)
+    }
+    await expect(db.as(null, 'select * from public.bom_part_counters')).rejects.toThrow(PERMISSION_DENIED)
+    expect(await counters()).toEqual([{ series: '4096-26-INT', last_number: 4 }])
+  })
+})

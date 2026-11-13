@@ -7,7 +7,7 @@ import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import { membersTable } from '../../core/members'
 import {
   addPart, addRobot, addSystem, bomSummary, canEditRobotsAndParts, changePart, changeSystem, checkPart, checkSystem, countParts, filterParts, kindChangeWarning, kindLabel,
-  nextPartNumber, partCountText, partsTable, identifyCots, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, shortageFor, shortages, systemsTable, toOrder, toOrderCsv, NO_VENDOR,
+  numberParts, partCountText, partsTable, identifyCots, writePartNumbersToOnshape, removePart, removeSystem, renameRobot, robotsTable, shelfItem, shelfText, shortageFor, shortages, systemsTable, toOrder, toOrderCsv, NO_VENDOR,
   type NewPart, type Part,
 } from './data'
 import { itemsTable, type Item } from '../inventory/data'
@@ -84,15 +84,6 @@ const newMadePart = (changes: Partial<NewPart> = {}): NewPart => ({
   ...changes,
 })
 
-describe('nextPartNumber', () => {
-  it('is one more than the highest number in the system, starting at 001, and skips past gaps instead of filling them', () => {
-    const [first] = parts()
-    expect(nextPartNumber(intake(), parts())).toBe('4096-26-INT-007')
-    expect(nextPartNumber({ ...intake(), code: 'SHO' }, parts())).toBe('4096-26-SHO-001')
-    expect(nextPartNumber(intake(), [first, { ...first, part_number: '4096-26-INT-010' }])).toBe('4096-26-INT-011')
-  })
-})
-
 describe('checkPart', () => {
   it('allows a complete made part, and a COTS part with a vendor but no material', () => {
     expect(checkPart(newMadePart(), parts())).toBeNull()
@@ -132,6 +123,8 @@ describe('who can change robots and parts', () => {
       ['add robots', () => addRobot('2027 competition robot')],
       ['rename robots', () => renameRobot(robot, 'Renamed')],
       ['delete a system', () => removeSystem(intake())],
+      ['give parts team numbers', () => numberParts(intake())],
+      ['write part numbers to Onshape', () => writePartNumbersToOnshape(intake())],
     ]
     for (const [doing, attempt] of tries) {
       expect(await attempt(), doing).toEqual({ ok: false, error: expect.stringContaining(`Only student leaders and mentors can ${doing}`) })

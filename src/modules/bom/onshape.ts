@@ -23,8 +23,11 @@
  *   details (#169).
  * - Parts no longer in Onshape are marked "Removed in Onshape", not
  *   deleted, so their history stays. If they come back, the mark goes.
+ * - A new part gets a team number that's never been used, even by a deleted
+ *   part (numbering.ts). A part that already has a team number keeps it,
+ *   whatever Onshape says: for part numbers the app wins (#21).
  */
-import { identifyCots, nextPartNumber, partsTable, type BomSystem, type Part, type PartKind } from './data'
+import { countersTable, identifyCots, isTeamNumber, nextPartNumber, partsTable, type BomSystem, type Part, type PartCounter, type PartKind } from './data'
 
 /** One part from Onshape. The same shape is in supabase/functions/onshape/onshape.ts. */
 export interface OnshapeLine {
@@ -72,14 +75,14 @@ export interface OnshapeImportPlan {
 
 /** For the page: what importing `bom` into `system` would change, against every part now. */
 export function planImport(system: BomSystem, bom: OnshapeBom): OnshapeImportPlan {
-  return planOnshapeImport(system, bom, partsTable.rows())
+  return planOnshapeImport(system, bom, partsTable.rows(), countersTable.rows())
 }
 
 // The database's length limits (see the bom migration).
 const fit = (value: string | null, max: number) => (value ? value.slice(0, max).trim() || null : null)
 
 /** Work out what importing `bom` into `system` would change. `allParts` is every part, so new part numbers are free. */
-export function planOnshapeImport(system: BomSystem, bom: OnshapeBom, allParts: Part[]): OnshapeImportPlan {
+export function planOnshapeImport(system: BomSystem, bom: OnshapeBom, allParts: Part[], counters: PartCounter[] = []): OnshapeImportPlan {
   const mine = allParts.filter((p) => p.system_id === system.id)
   const byOnshapeId = new Map(mine.filter((p) => p.onshape_id).map((p) => [p.onshape_id!, p]))
   const typedIn = new Map(mine.filter((p) => !p.onshape_id).map((p) => [p.part_number, p]))
@@ -88,10 +91,10 @@ export function planOnshapeImport(system: BomSystem, bom: OnshapeBom, allParts: 
   const numbered: Pick<Part, 'part_number'>[] = [...allParts]
 
   function newNumber(): string {
-    let number = nextPartNumber(system, numbered as Part[])
+    let number = nextPartNumber(system, numbered, counters)
     while (owner.has(number)) {
       numbered.push({ part_number: number })
-      number = nextPartNumber(system, numbered as Part[])
+      number = nextPartNumber(system, numbered, counters)
     }
     claim(number, 'new')
     return number
@@ -116,7 +119,10 @@ export function planOnshapeImport(system: BomSystem, bom: OnshapeBom, allParts: 
     const kind: PartKind = line.standard || line.vendor || recognized || existing?.kind === 'cots' ? 'cots' : 'made'
     // A made part's Onshape part number is ours, if no other part has it. A
     // bought part's is usually the vendor's, so it gets a team number too.
-    const fromOnshape = kind === 'made' ? fit(line.part_number, 40) : null
+    // Once a part has a team number in the app, the app's number wins (#21):
+    // change it here, then write it into Onshape.
+    const keepOurs = existing !== undefined && isTeamNumber(existing.part_number)
+    const fromOnshape = kind === 'made' && !keepOurs ? fit(line.part_number, 40) : null
     const freeNumber = fromOnshape && (!owner.has(fromOnshape) || owner.get(fromOnshape) === existing?.id) ? fromOnshape : null
 
     // A part that was already COTS keeps the vendor details we typed (#169).

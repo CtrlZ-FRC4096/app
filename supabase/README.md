@@ -200,7 +200,7 @@ the functions can read.
 | `hello` | The example to copy. Answers members with their name and which secrets are set |
 | `tba` | The Blue Alliance for scouting: an event's schedule, rankings and teams, a team's matches and name, and the season's events (ours, or all of them) for picking the event |
 | `match13` | Match 13 for scouting: each team's rating (xP) at an event, and who's predicted to win each match |
-| `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio. For the CNC module: parts' sizes and outlines, and where parts sit in a sheet's layout assembly |
+| `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio, and writing team part numbers into custom parts' Part number property (student leaders, mentors and admins, workspaces only: `numbers.ts`). For the CNC module: parts' sizes and outlines, and where parts sit in a sheet's layout assembly |
 | `slack` | Slack messages from the team's bot: to yourself (anyone), or to people and a channel (mentors). Used through `src/core/slack.ts` |
 | `calendar` | The team's Google Calendar: everyone sees its events; student leaders, mentors and admins add events, and change or remove the ones the app added. Used through `src/core/calendar.ts` |
 | `push` | Phone notifications (Web Push): the public key browsers need to turn them on, and a test to your own devices. Uses the `web-push` package (a mentor approved it). Used through `src/core/push.ts`. The same notifications are kept in the app too, in the `notifications` table behind the bell (`src/core/notifications.ts`) |
@@ -270,7 +270,9 @@ paste a key anywhere else, including chat.
 
    Onshape limits API calls per year, counted against that account. The
    app only calls Onshape when someone clicks **Import from Onshape** (two
-   calls each time) or **Check them** (one).
+   calls each time), **Write part numbers to Onshape** (one for each Part
+   Studio, plus one for each part whose number changes) or **Check them**
+   (one).
 4. **Let the Slack bot send messages.** This is the same Slack app people
    sign in with, and the same bot the attendance pull uses.
    - At [api.slack.com/apps](https://api.slack.com/apps), open **Ctrl-Z

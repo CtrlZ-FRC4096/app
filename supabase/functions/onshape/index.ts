@@ -26,17 +26,33 @@ import {
   type OnshapeShapes,
 } from './onshape.ts'
 import { readBodies, shapeFromEdges } from './shape.ts'
+import { createOnshapeWriter, partNumbersRequest, writePartNumbers } from './numbers.ts'
 
 const accessKey = Deno.env.get('ONSHAPE_ACCESS_KEY') ?? ''
 const secretKey = Deno.env.get('ONSHAPE_SECRET_KEY') ?? ''
 const onshape = createOnshape(accessKey, secretKey)
+// Only the part-numbers request changes anything in Onshape.
+const writeOnshape = createOnshapeWriter(accessKey, secretKey)
 
 export default {
-  fetch: forMembers(async (req) => {
+  fetch: forMembers(async (req, member) => {
     if (!accessKey || !secretKey) {
       return reply({ error: "The Onshape keys aren't set up yet. A mentor adds ONSHAPE_ACCESS_KEY and ONSHAPE_SECRET_KEY: see supabase/README.md." }, 503)
     }
-    const request = onshapeRequest(await req.json().catch(() => null))
+    const body = await req.json().catch(() => null)
+
+    // part-numbers: write the BOM's team part numbers into each part's Part
+    // number property (#21). Student leaders, mentors and admins only, and
+    // only into a workspace: see numbers.ts. One call for each Part Studio,
+    // plus one for each part whose number changes.
+    if ((body as { kind?: unknown } | null)?.kind === 'part-numbers') {
+      const asked = partNumbersRequest(body, member.role)
+      if ('error' in asked) return reply({ error: asked.error }, asked.status)
+      const result = await writePartNumbers(asked, onshape, writeOnshape)
+      return result.ok ? reply(result.answer) : reply({ error: result.error }, result.status)
+    }
+
+    const request = onshapeRequest(body)
     if ('error' in request) return reply({ error: request.error }, 400)
 
     if (request.kind === 'check') {
