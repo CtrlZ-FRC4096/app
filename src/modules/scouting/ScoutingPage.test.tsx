@@ -175,9 +175,10 @@ describe('the pit form', () => {
 
   it('has the number boxes and text boxes', () => {
     const html = renderToString(<ScoutingPage />)
-    for (const id of ['pit-match', 'pit-team','pit-weight', 'pit-length', 'pit-width', 'pit-height', 'pit-motors', 'pit-auto-path', 'pit-partners', 'pit-they-do']) {
+    for (const id of ['pit-team', 'pit-weight', 'pit-length', 'pit-width', 'pit-height', 'pit-motors', 'pit-auto-path', 'pit-partners', 'pit-they-do']) {
       expect(html).toContain(`id="${id}"`)
     }
+    expect(html).not.toContain('id="pit-match"')
   })
 })
 

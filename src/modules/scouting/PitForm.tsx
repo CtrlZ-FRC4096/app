@@ -44,7 +44,6 @@ function TextBox(props: { id: string; label: string; value: string; onChange: (v
 // database whenever there's a connection, the same way as match entries.
 export default function PitForm() {
   const entries = usePitEntries()
-  const [match, setMatch] = useState('')
   const [team, setTeam] = useState('')
   // '' until the scout chooses, so no button is pressed.
   const [drivetrain, setDrivetrain] = useState('')
@@ -62,7 +61,6 @@ export default function PitForm() {
     event.preventDefault()
     const result = savePitEntry({
       team: Number(team),
-      match: blankOrNumber(match),
       drivetrain,
       weight: blankOrNumber(weight),
       length: blankOrNumber(length),
@@ -79,7 +77,7 @@ export default function PitForm() {
       return
     }
     // Ready for the next team.
-    for (const clear of [setMatch, setTeam, setDrivetrain, setWeight, setLength, setWidth, setHeight, setMotors, setAutoSide, setAutoPath, setPartnersDo, setTheyDo]) clear('')
+    for (const clear of [setTeam, setDrivetrain, setWeight, setLength, setWidth, setHeight, setMotors, setAutoSide, setAutoPath, setPartnersDo, setTheyDo]) clear('')
     toast(`Saved pit entry for team ${result.value.team}.`)
   }
 
@@ -91,10 +89,7 @@ export default function PitForm() {
       <form onSubmit={save}>
         <Panel>
           <FormSection title="Team" first>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-              <NumberBox id="pit-match" label="Match number" value={match} onChange={setMatch} placeholder="12" wholeNumber />
-              <NumberBox id="pit-team" label="Team number" value={team} onChange={setTeam} placeholder="4096" wholeNumber />
-            </div>
+            <NumberBox id="pit-team" label="Team number" value={team} onChange={setTeam} placeholder="4096" wholeNumber />
           </FormSection>
           <FormSection title="Robot">
             <div className="field">
