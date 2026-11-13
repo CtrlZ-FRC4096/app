@@ -182,10 +182,17 @@ describe('isCurrent', () => {
 })
 
 describe('groupItems', () => {
-  it('Current: what is in progress, by status, in the order of the statuses', () => {
+  it('Current: what is in progress, newest first under one heading, with no status grouping', () => {
     const groups = groupItems(itemsTable.rows(), 'Current')
-    expect(groups.map((g) => g.title)).toEqual(['Order Low Priority', 'Order', 'Order High Priority', 'Order Placed', 'Backordered', 'Received'])
-    expect(groups.flatMap((g) => g.items).some((i) => ['wait', 'in_shop', 'cancelled'].includes(i.status))).toBe(false)
+    expect(groups.map((g) => g.title)).toEqual(['In progress'])
+    expect(groups[0].status).toBeUndefined()
+    expect(groups[0].items).toHaveLength(6)
+    expect(groups[0].items[0].name).toBe('Compliant wheel, 2 in')
+    expect(groups[0].items.at(-1)!.name).toBe('Motor controller')
+    const dates = groups[0].items.map((i) => i.created_at)
+    expect(dates).toEqual([...dates].sort((a, b) => b.localeCompare(a)))
+    expect(groups[0].items.every(isCurrent)).toBe(true)
+    expect(groups[0].items.some((i) => ['wait', 'in_shop', 'cancelled'].includes(i.status))).toBe(false)
   })
 
   it('All: everything, newest first, under one heading', () => {

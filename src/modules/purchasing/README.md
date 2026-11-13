@@ -8,7 +8,7 @@ This list is typed in by hand. It's **separate from the BOM**, which comes from 
 
 - **The Slack list's columns:** name, status, vendor, type, link, part/item number, number needed, price, requested by and notes.
 - **Its 10 statuses, in order:** Wait to Order, Order Low Priority, Order, Order High Priority, Order Placed, Out of Stock, Backordered, Received, In Shop, Cancel Item.
-- **Its views:** **Current** (what's in progress, by status: the one people work from, and it includes Backordered), **All**, **By status** and **By vendor**.
+- **Its views:** **Current** (what's in progress, newest first under "In progress", with each item's status shown; it includes Backordered), **All**, **By status** and **By vendor**.
 - **Search** (#75): narrows every view to items whose name, vendor, type, part number or notes contain every word typed.
 - **Asking for something:** the button at the top, next to Search. You pick its priority (Wait to Order, or one of the three "Order" statuses).
 - **Duplicate** (#76) on an item opens Ask for something filled in from it, to buy it again.

@@ -523,7 +523,7 @@ export function isCurrent(item: PurchaseItem): boolean {
 /**
  * The items for a view, under headings:
  *
- *   - Current: what's in progress, by status. The one people work from.
+ *   - Current: what's in progress, newest first, under one heading. Each item shows its status.
  *   - All: everything, newest first.
  *   - By status: everything, by status.
  *   - By vendor: everything, by vendor, for putting one order together per vendor.
@@ -531,13 +531,16 @@ export function isCurrent(item: PurchaseItem): boolean {
  * Headings with nothing under them are left out.
  */
 export function groupItems(items: PurchaseItem[], view: View): Group[] {
+  if (view === 'Current') {
+    const current = items.filter(isCurrent).sort(newestFirst)
+    return current.length > 0 ? [{ title: 'In progress', items: current }] : []
+  }
   if (view === 'All') return items.length > 0 ? [{ title: 'All items', items }] : []
   if (view === 'By vendor') {
     const vendors = [...VENDORS, ...[...new Set(items.map((i) => i.vendor))].filter((v) => !VENDORS.includes(v)).sort()]
     return vendors.map((vendor) => ({ title: vendor, items: items.filter((i) => i.vendor === vendor) })).filter((g) => g.items.length > 0)
   }
-  const shown = view === 'Current' ? items.filter(isCurrent) : items
-  return STATUSES.map((status) => ({ title: status.label, status, items: shown.filter((i) => i.status === status.key) })).filter((g) => g.items.length > 0)
+  return STATUSES.map((status) => ({ title: status.label, status, items: items.filter((i) => i.status === status.key) })).filter((g) => g.items.length > 0)
 }
 
 /**
