@@ -21,7 +21,6 @@ interface PrescoutRow {
   id: string
   team_number: number
   strengths: string
-  marked: boolean
   created_by: string
 }
 
@@ -29,9 +28,9 @@ const add = (person: string, team = 9991, strengths = 'Fast cycles') =>
   db.as<PrescoutRow>(person, "insert into public.prescouting_notes (event_key, team_number, strengths) values ('2026test', $1, $2) returning *", [team, strengths])
 
 describe('prescouting notes', () => {
-  it('lets a member add notes for a team, signed with their own id, with empty answers and no mark to start', async () => {
+  it('lets a member add notes for a team, signed with their own id, with empty answers to start', async () => {
     const [row] = await add(student)
-    expect(row).toMatchObject({ team_number: 9991, strengths: 'Fast cycles', marked: false, created_by: student })
+    expect(row).toMatchObject({ team_number: 9991, strengths: 'Fast cycles', created_by: student })
   })
 
   it("doesn't let anyone add notes as someone else", async () => {
@@ -46,10 +45,10 @@ describe('prescouting notes', () => {
     expect(await add(other, 9992)).toHaveLength(1)
   })
 
-  it("lets any member change anyone's answers and mark", async () => {
+  it("lets any member change anyone's answers", async () => {
     const [row] = await add(student)
-    const changed = await db.as<PrescoutRow>(other, "update public.prescouting_notes set strengths = 'Great auto', marked = true where id = $1 returning *", [row.id])
-    expect(changed).toMatchObject([{ strengths: 'Great auto', marked: true }])
+    const changed = await db.as<PrescoutRow>(other, "update public.prescouting_notes set strengths = 'Great auto' where id = $1 returning *", [row.id])
+    expect(changed).toMatchObject([{ strengths: 'Great auto' }])
   })
 
   it("doesn't let anyone change which team a row is for, or who started it", async () => {
