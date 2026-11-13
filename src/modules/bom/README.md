@@ -11,7 +11,7 @@ The bill of materials for each robot, checked against Inventory, so the team can
 | `onshape.ts` | Works out what an import from Onshape changes: `planOnshapeImport()`. |
 | `stats.ts` | How close each system, and the whole robot, is to being built: `systemStats()`, `robotStats()`, and the home page tile's `useRobotSummary()` (see [Dashboard](#dashboard)). |
 | `numbering.ts` | Team part numbers: `nextPartNumber()`, and the `bom_part_counters` table that remembers every number used (see [Part numbers](#part-numbers-21)). |
-| `catalog.ts`, `Catalog.tsx` | The catalog of bought parts (`bom_catalog`): see [Catalog of bought parts](#catalog-of-bought-parts). |
+| `catalog.ts`, `CatalogPanel.tsx` | The catalog of bought parts (`bom_catalog`): see [Catalog of bought parts](#catalog-of-bought-parts). The screens file isn't called `Catalog.tsx`: Windows treats `Catalog` and `catalog` as the same name, so `'./Catalog'` found `catalog.ts` there and the page crashed. |
 | `data.test.ts`, `onshape.test.ts`, `stats.test.ts`, `numbering.test.ts`, `catalog.test.ts` | Tests for them. |
 | `BomPage.tsx` | Pick a system, then see its parts in a table with their stages, change them, and import from Onshape. Below, the robot's To order list. |
 | `Dashboard.tsx` | The page's **Dashboard** view: the robot's total, then a card for each system. |
