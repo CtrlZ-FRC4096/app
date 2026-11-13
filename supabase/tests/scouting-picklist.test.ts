@@ -1,5 +1,6 @@
 // Permission rules for the Scouting module's shared picklist (#43): signed-in
-// members read it; only mentors and admins add, move, mark and remove teams.
+// members read it; student leaders, mentors and admins add, move, mark and
+// remove teams.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
@@ -36,9 +37,16 @@ describe('the shared picklist', () => {
     expect(second).toMatchObject({ team_number: 9992, created_by: admin })
   })
 
-  it("doesn't let a student or a student leader add a team", async () => {
+  it("doesn't let a student add a team", async () => {
     await expect(add(student)).rejects.toThrow(PERMISSION_DENIED)
-    await expect(add(leader)).rejects.toThrow(PERMISSION_DENIED)
+  })
+
+  it('lets a student leader add, move, mark and remove their own pick', async () => {
+    const [pick] = await add(leader)
+    expect(pick.created_by).toBe(leader)
+    expect(await db.as(leader, 'update public.scouting_picklist set position = 500 where id = $1 returning position', [pick.id])).toEqual([{ position: 500 }])
+    expect(await db.as(leader, "update public.scouting_picklist set status = 'Do not pick' where id = $1 returning status", [pick.id])).toEqual([{ status: 'Do not pick' }])
+    expect(await db.as(leader, 'delete from public.scouting_picklist where id = $1 returning id', [pick.id])).toEqual([{ id: pick.id }])
   })
 
   it("doesn't let anyone add a team as if someone else added it", async () => {

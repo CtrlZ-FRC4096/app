@@ -137,7 +137,7 @@ describe('the final picklist', () => {
     expect(html).toContain('href="#/scouting/team/9991"')
     expect(html).not.toContain('Move team')
     expect(html).not.toContain('Start from the ranked list')
-    expect(html).toContain('Only mentors can change it.')
+    expect(html).toContain('Only student leaders, mentors and admins can change it.')
   })
 
   it('gives a mentor up and down buttons, and a status for each team', () => {
@@ -149,6 +149,14 @@ describe('the final picklist', () => {
     // The top team can't go up, and the bottom one can't go down.
     expect(html).toMatch(/aria-label="Move team 9991 up" disabled=""/)
     expect(html).toMatch(/aria-label="Move team 9994 down" disabled=""/)
+  })
+
+  it('gives a student leader up and down buttons and a status for each team', () => {
+    setDemoRole('leader')
+    const html = renderToString(<SharedPicklist />)
+    expect(html).toContain('aria-label="Move team 9992 up"')
+    expect(html).toContain('aria-label="Move team 9992 down"')
+    expect(html).toContain('aria-label="Team 9992&#x27;s status"')
   })
 
   it('keeps Picked and Do not pick teams in their place, with their status', () => {
@@ -266,11 +274,16 @@ describe('the event picker', () => {
   beforeEach(() => eventStore.reset())
   afterEach(() => setDemoRole('student'))
 
-  it("shows a student which event it is, and that a mentor picks it, with no way to change it", () => {
+  it("shows a student which event it is, and who can pick it, with no way to change it", () => {
     const html = renderToString(<EventPicker />)
     expect(html).toContain(EVENT_KEY)
-    expect(html).toContain('A mentor picks the event for the whole team.')
+    expect(html).toContain('A student leader, mentor or admin picks the event for the whole team.')
     expect(html).not.toContain('Change event')
+  })
+
+  it('lets a student leader change it', () => {
+    setDemoRole('leader')
+    expect(renderToString(<EventPicker />)).toContain('Change event')
   })
 
   it('lets a mentor change it, and says when nobody has picked one yet', () => {

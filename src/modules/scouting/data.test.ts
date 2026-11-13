@@ -1489,8 +1489,15 @@ describe('the event the team is scouting', () => {
   })
 
   it("doesn't let a student pick it, and says who can", async () => {
-    expect(await chooseEvent(regional)).toEqual({ ok: false, error: 'Only a mentor can change the event. Ask a mentor to pick it.' })
+    expect(await chooseEvent(regional)).toMatchObject({ ok: false, error: expect.stringMatching('Only student leaders, mentors, and admins') })
     expect(currentEvent()).toBe(EVENT_KEY)
+  })
+
+  it('lets a student leader pick it for everyone', async () => {
+    setDemoRole('leader')
+    expect(await chooseEvent(regional)).toEqual({ ok: true, value: { key: '2027ilpe', name: 'Example Peoria Regional' } })
+    expect(currentEvent()).toBe('2027ilpe')
+    expect(latestEvent(eventsTable.rows())).toEqual({ key: '2027ilpe', name: 'Example Peoria Regional' })
   })
 })
 
