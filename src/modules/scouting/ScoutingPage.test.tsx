@@ -40,10 +40,19 @@ describe('the team page', () => {
 })
 
 describe('the Match / Pit switch', () => {
-  it('starts on the match form, with the pit form hidden', () => {
+  it('starts on the overview (#160), with both forms on the page but hidden, so going back to one keeps what was typed', () => {
     const html = renderToString(<ScoutingPage />)
-    expect(html).toContain('aria-pressed="true">Match</button>')
+    expect(html).toContain('aria-pressed="true">Overview</button>')
+    expect(html).toContain('Scouting overview')
+    expect(html).toMatch(/<div hidden="">.*Match form/)
     expect(html).toMatch(/<div hidden="">.*Pit form/)
+  })
+
+  it('has a card for every page, each linking to it, with the match form at #/scouting/match', () => {
+    const html = renderToString(<ScoutingPage />)
+    for (const path of ['match', 'pit', 'schedule', 'rankings', 'team', 'picklist', 'shared-picklist', 'simulate', 'stats']) {
+      expect(html).toContain(`href="#/scouting/${path}"`)
+    }
   })
 })
 

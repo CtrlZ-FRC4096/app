@@ -9,7 +9,8 @@ export const scouting: ModuleDefinition = {
   load: () => import('./ScoutingPage'),
   // In the Competition menu, under Scouting. ScoutingPage reads which is open.
   pages: [
-    { name: 'Match', path: '' },
+    { name: 'Overview', path: '' },
+    { name: 'Match', path: 'match' },
     { name: 'Pit', path: 'pit' },
     { name: 'Schedule', path: 'schedule' },
     { name: 'Rankings', path: 'rankings' },

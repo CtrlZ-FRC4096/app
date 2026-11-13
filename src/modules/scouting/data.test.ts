@@ -21,6 +21,7 @@ import { addMissingTeams, byPosition, moveTeam, picklist, picklistTable, positio
 import { COUNTERS, DRIVETRAINS, EVENT_KEY } from './season'
 import { loadSchedule, positionStore, setPosition, teamFor, type SavedSchedule } from './data'
 import { rankOf } from './data'
+import { eventTeams, scoutingOverview, type OverviewInput, type Entry, type PitEntry } from './data'
 import { STAT_COLUMNS, ratingComponents, sortStats, statColumns, statText, statValue } from './data'
 import { MIN_MATCHES, allianceScore, entryPoints, pointsRange, redWinChance, teamAps, teamPoints, upcomingMatches } from './data'
 import { chooseEvent, currentEvent, eventStore, eventWhenWhere, eventsTable, getOurEvents, latestEvent, lookupSeasons, searchEvents, type TbaEvent } from './data'
@@ -1774,5 +1775,86 @@ describe("more of Match 13's numbers", () => {
     const result = await getRatings()
     if (!result.ok) throw new Error(result.error)
     expect(result.value.every((r) => statValue(r, 'xVar') !== null && ratingComponents(r).length > 0)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The overview page (#160).
+
+describe('the scouting overview', () => {
+  const NOW = new Date('2026-03-13T18:00:00Z')
+  // A phone's entry, Waiting or Synced.
+  const onPhone = (synced: boolean) => ({ synced }) as Entry
+  const pitOnPhone = (synced: boolean) => ({ synced }) as PitEntry
+  const match = (n: number, red: number[], blue: number[], redScore = -1, blueScore = -1): TbaMatch => ({
+    key: `${EVENT_KEY}_qm${n}`, comp_level: 'qm', set_number: 1, match_number: n,
+    alliances: { red: { score: redScore, team_keys: red.map((t) => `frc${t}`) }, blue: { score: blueScore, team_keys: blue.map((t) => `frc${t}`) } },
+    winning_alliance: '', predicted_time: null,
+  })
+  const schedule = (matches: TbaMatch[], predictions: MatchPrediction[] = []): SavedSchedule => ({ event: EVENT_KEY, matches, predictions, savedAt: '2026-03-13T17:50:00Z' })
+  const ranking = (team: number, rank: number) => ({ rank, team_key: `frc${team}`, record: { wins: 5, losses: 2, ties: 0 }, matches_played: 7, extra_stats: [15] })
+  const row = (team: number): MatchRow => ({
+    id: `ov-${team}`, event_key: EVENT_KEY, match_number: 1, team_number: team, counts: {}, endgame: 'None', roles: [], role_notes: null,
+    broke_down: false, broke_parts: [], broke_other: null, browned_out: false, stop: 'None', driver_skill: 3, auto_side: null, auto_notes: null,
+    ranking_points: [], notes: null, scouted_by: null, scouted_at: '2026-03-13T15:00:00Z',
+  })
+  const nothing: OverviewInput = {
+    entries: [], pitEntries: [], sync: { sending: false, problem: null }, matchRows: [], pitRows: [], schedule: null, rankings: null, ratings: [], ranked: [], finalPicklist: [], now: NOW,
+  }
+  const card = (input: Partial<OverviewInput>, view: string) => scoutingOverview({ ...nothing, ...input }, 4096).find((c) => c.view === view)!
+
+  it('has a card for every page, in the order of the switch, and says plainly when nothing is saved yet', () => {
+    const cards = scoutingOverview(nothing, 4096)
+    expect(cards.map((c) => c.view)).toEqual(['Match', 'Pit', 'Schedule', 'Rankings', 'Teams', 'Picklist', 'Final picklist', 'Simulator', 'Stats'])
+    expect(cards.map((c) => c.lines[0])).toEqual([
+      'No match entries on this phone yet', 'No pit entries on this phone yet', 'No schedule saved yet', 'No rankings saved yet', 'No teams scouted yet',
+      'No teams to rank yet', 'Not started yet', "Pick 6 teams to see the score we'd expect, and who's likely to win", 'No Match 13 ratings saved yet',
+    ])
+  })
+
+  it('says how many entries are waiting to send, and why, or that they all sent', () => {
+    const waiting = card({ entries: [onPhone(false), onPhone(false), onPhone(false), onPhone(true)], sync: { sending: false, problem: 'No connection.' } }, 'Match')
+    expect(waiting).toEqual({ view: 'Match', tone: 'info', lines: ['3 match entries waiting to send', '1 sent', 'No connection.'] })
+    expect(card({ entries: [onPhone(true), onPhone(true)] }, 'Match')).toEqual({ view: 'Match', tone: 'plain', lines: ['All 2 match entries sent'] })
+  })
+
+  it("counts how many of the event's teams have a pit entry", () => {
+    const pit = card({ pitEntries: [pitOnPhone(true)], pitRows: [{ team_number: 9991 } as PitRow], rankings: { event: EVENT_KEY, rankings: [ranking(9991, 1), ranking(9992, 2), ranking(4096, 3)], checked_at: '2026-03-13T17:00:00Z' } }, 'Pit')
+    expect(pit.lines).toEqual(['All 1 pit entry sent', '1 of 3 teams pit scouted'])
+  })
+
+  it("gives our next match with its alliance and prediction, and our last result", () => {
+    const saved = schedule(
+      [match(1, [4096, 9991, 9992], [9993, 9994, 9995], 84, 71), match(2, [9991, 9992, 9993], [9994, 9995, 9996]), match(3, [9993, 9994, 9995], [4096, 9991, 9992])],
+      [{ key: `${EVENT_KEY}_qm3`, redWinChance: 0.64, redScore: 70, blueScore: 60 }],
+    )
+    expect(card({ schedule: saved }, 'Schedule').lines).toEqual(['Next: Qual 3 · Blue · Red 64%', 'Last: Qual 1 · Won 84–71', 'Saved 10 minutes ago'])
+    // Every match played: only the last result.
+    expect(card({ schedule: schedule([match(1, [9991, 9992, 9993], [4096, 9994, 9995], 90, 60)]) }, 'Schedule').lines[0]).toBe('Last: Qual 1 · Lost 60–90')
+    expect(card({ schedule: schedule([match(1, [9991, 9992, 9993], [9994, 9995, 9996])]) }, 'Schedule').lines[0]).toBe("4096 isn't on the schedule")
+    expect(card({ schedule: schedule([]) }, 'Schedule').lines[0]).toBe("The Blue Alliance doesn't have the schedule yet")
+  })
+
+  it('gives our rank and record, or says we are not in the rankings', () => {
+    const rankings = { event: EVENT_KEY, rankings: [ranking(9991, 1), ranking(4096, 2)], checked_at: '2026-03-13T17:30:00Z' }
+    expect(card({ rankings }, 'Rankings').lines).toEqual(['Rank 2 of 2 · 5-2-0', 'Updated 30 minutes ago'])
+    expect(card({ rankings: { ...rankings, rankings: [ranking(9991, 1)] } }, 'Rankings').lines[0]).toBe("4096 isn't in the rankings yet")
+  })
+
+  it("lists the event's teams with no match entries yet", () => {
+    const teams = card({ matchRows: [row(9991)], ratings: [9991, 9992, 9993].map((t) => ({ teamNumber: t, xpStart: 1, xpEnd: 1, xAuto: null, xTele: null, xEnd: null, epa: null, opr: null, dpr: null })) }, 'Teams')
+    expect(teams.lines).toEqual(['1 team scouted', 'No match entries yet: 9992, 9993'])
+  })
+
+  it('gives the top 3 of each picklist, only Open teams on the final one', () => {
+    expect(card({ ranked: [{ team: 9994 }, { team: 9991 }, { team: 9992 }, { team: 9993 }] }, 'Picklist').lines).toEqual(['Top 3: 9994, 9991, 9992'])
+    const final = (team: number, status: PicklistRow['status']) => ({ team_number: team, status }) as PicklistRow
+    expect(card({ finalPicklist: [final(9991, 'Picked'), final(9992, 'Open'), final(9993, 'Do not pick'), final(9994, 'Open')] }, 'Final picklist').lines).toEqual(['Top 2: 9992, 9994', '4 teams on the list'])
+  })
+
+  it("knows the event's teams from the saved schedule, rankings and ratings, each once", () => {
+    const saved = schedule([match(1, [4096, 9991, 9992], [9993, 9994, 9995])])
+    expect(eventTeams(saved, { event: EVENT_KEY, rankings: [ranking(9996, 1)], checked_at: '' }, [])).toEqual([4096, 9991, 9992, 9993, 9994, 9995, 9996])
+    expect(eventTeams(null, null, [])).toEqual([])
   })
 })

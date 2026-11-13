@@ -267,12 +267,16 @@ export function useEntries(): Entry[] {
   return useStore(entryStore)
 }
 
-/** The home page tile's status. Pit entries count too. */
+/** The home page tile's status, like "3 entries waiting · Rank 6". Pit entries count too. The rank is from the rankings saved on this phone. */
 export function useEntrySummary(): Notice {
   const entries = [...useEntries(), ...usePitEntries()]
+  const event = useCurrentEvent().key
+  const rankings = useStore(rankingsStore)
+  const ours = rankings?.event === event ? rankOf(rankings.rankings, OUR_TEAM) : null
+  const rank = ours ? ` · Rank ${ours.rank}` : ''
   const waiting = entries.filter((e) => !e.synced).length
-  if (waiting > 0) return { tone: 'info', text: plural(waiting, 'entry waiting', 'entries waiting') }
-  return { tone: 'plain', text: entries.length === 0 ? 'No entries on this device' : `${plural(entries.length, 'entry', 'entries')} saved` }
+  if (waiting > 0) return { tone: 'info', text: plural(waiting, 'entry waiting', 'entries waiting') + rank }
+  return { tone: 'plain', text: (entries.length === 0 ? 'No entries on this device' : `${plural(entries.length, 'entry', 'entries')} saved`) + rank }
 }
 
 const isCount = (value: number) => Number.isInteger(value) && value > 0
@@ -1598,6 +1602,156 @@ export function useRankedPicklist() {
     return rankTeams(teams, weights).map((line): PicklistLine => ({ ...line, matches: known.get(line.team)?.matches ?? 0, rated: known.get(line.team)?.rated ?? false }))
   }, [teams, weights])
   return { ranked, weights, ratings }
+}
+
+// ---------------------------------------------------------------------------
+// The overview page (#160): one card for each scouting page, with its
+// status and latest results. scoutingOverview() is a plain function that
+// takes what's saved on this phone, so it needs nothing from the network
+// and can be tested. useScoutingOverview() gathers it for the page.
+
+/** One card on the overview: which page it opens, how it's going, and what to say. */
+export interface OverviewCard {
+  /** The page's name in the switch at the top of Scouting, like "Match" or "Final picklist". */
+  view: string
+  tone: Notice['tone']
+  /** Short lines, most important first. */
+  lines: string[]
+}
+
+/** What the overview is worked out from: everything already saved on this phone. */
+export interface OverviewInput {
+  /** This phone's match and pit entries. */
+  entries: Entry[]
+  pitEntries: PitEntry[]
+  sync: SyncStatus
+  /** This event's match and pit entries from the team database and this phone (see useScoutingRows()). */
+  matchRows: MatchRow[]
+  pitRows: PitRow[]
+  schedule: SavedSchedule | null
+  rankings: SavedRankings | null
+  ratings: Match13Rating[]
+  /** The Picklist page's list with this phone's weights, best first. */
+  ranked: { team: number }[]
+  /** The final picklist, top first. */
+  finalPicklist: PicklistRow[]
+  now?: Date
+}
+
+/** Every team we know is at the event, from the saved schedule, rankings and Match 13 ratings, lowest first. */
+export function eventTeams(schedule: SavedSchedule | null, rankings: SavedRankings | null, ratings: Match13Rating[]): number[] {
+  const teams = new Set<number>([
+    ...(schedule?.matches ?? []).flatMap((m) => [...m.alliances.red.team_keys, ...m.alliances.blue.team_keys].map(teamNumber)),
+    ...(rankings?.rankings ?? []).map((r) => teamNumber(r.team_key)),
+    ...ratings.map((r) => r.teamNumber),
+  ])
+  return [...teams].sort((a, b) => a - b)
+}
+
+/** "3 waiting · 12 synced", and a line for a sync problem. */
+function entryLines(entries: { synced: boolean }[], kind: string, sync: SyncStatus): string[] {
+  if (entries.length === 0) return [`No ${kind} entries on this phone yet`]
+  const waiting = entries.filter((e) => !e.synced).length
+  const lines = [waiting > 0 ? `${plural(waiting, `${kind} entry`, `${kind} entries`)} waiting to send` : `All ${plural(entries.length, `${kind} entry`, `${kind} entries`)} sent`]
+  if (waiting > 0 && entries.length > waiting) lines.push(`${entries.length - waiting} sent`)
+  if (waiting > 0 && sync.problem) lines.push(sync.problem)
+  return lines
+}
+
+/** The overview's cards, in the same order as the switch at the top of Scouting. */
+export function scoutingOverview(input: OverviewInput, team = OUR_TEAM): OverviewCard[] {
+  const now = input.now ?? new Date()
+  const teams = eventTeams(input.schedule, input.rankings, input.ratings)
+  const waitingTone = (entries: { synced: boolean }[]) => (entries.some((e) => !e.synced) ? ('info' as const) : ('plain' as const))
+
+  // Pit: how many of the event's teams have a pit entry.
+  const pitTeams = new Set(input.pitRows.map((p) => p.team_number))
+  const pitLines = entryLines(input.pitEntries, 'pit', input.sync)
+  if (teams.length > 0) pitLines.push(`${teams.filter((t) => pitTeams.has(t)).length} of ${teams.length} teams pit scouted`)
+  else if (pitTeams.size > 0) pitLines.push(`${plural(pitTeams.size, 'team', 'teams')} pit scouted`)
+
+  // Schedule: our next match, or our last result.
+  let schedule: OverviewCard
+  if (!input.schedule) schedule = { view: 'Schedule', tone: 'plain', lines: ['No schedule saved yet'] }
+  else {
+    const ours = matchesWithPredictions(input.schedule.matches, input.schedule.predictions, team).filter((m) => m.ours)
+    const next = ours.find((m) => !m.score)
+    const last = [...ours].reverse().find((m) => m.score)
+    const side = (m: ScheduleRow) => (m.red.includes(team) ? 'Red' : 'Blue')
+    const lines: string[] = []
+    if (next) lines.push(`Next: ${next.label} · ${side(next)} · ${next.prediction ? likelyWinner(next.prediction) : 'No prediction yet'}`)
+    if (last?.score) {
+      const [us, them] = side(last) === 'Red' ? [last.score.red, last.score.blue] : [last.score.blue, last.score.red]
+      lines.push(`Last: ${last.label} · ${us > them ? 'Won' : us < them ? 'Lost' : 'Tied'} ${us}–${them}`)
+    }
+    if (lines.length === 0) lines.push(input.schedule.matches.length === 0 ? "The Blue Alliance doesn't have the schedule yet" : `${team} isn't on the schedule`)
+    lines.push(`Saved ${updatedAgo(input.schedule.savedAt, now)}`)
+    schedule = { view: 'Schedule', tone: 'plain', lines }
+  }
+
+  // Rankings: our rank and record.
+  let rankings: OverviewCard
+  if (!input.rankings) rankings = { view: 'Rankings', tone: 'plain', lines: ['No rankings saved yet'] }
+  else {
+    const ours = rankOf(input.rankings.rankings, team)
+    const record = ours?.record ? ` · ${ours.record.wins}-${ours.record.losses}-${ours.record.ties}` : ''
+    rankings = {
+      view: 'Rankings',
+      tone: 'plain',
+      lines: [ours ? `Rank ${ours.rank} of ${input.rankings.rankings.length}${record}` : `${team} isn't in the rankings yet`, `Updated ${updatedAgo(input.rankings.checked_at, now)}`],
+    }
+  }
+
+  // Teams: who we've scouted, and who we haven't.
+  const scouted = scoutedTeams(input.matchRows, input.pitRows)
+  const matchScouted = new Set(input.matchRows.map((e) => e.team_number))
+  const notYet = teams.filter((t) => !matchScouted.has(t))
+  const teamLines = [scouted.length === 0 ? 'No teams scouted yet' : `${plural(scouted.length, 'team', 'teams')} scouted`]
+  if (teams.length > 0) teamLines.push(notYet.length === 0 ? 'Every team has a match entry' : `No match entries yet: ${notYet.join(', ')}`)
+
+  const top = (list: number[]) => (list.length === 0 ? null : `Top ${Math.min(3, list.length)}: ${list.slice(0, 3).join(', ')}`)
+  const finalOpen = input.finalPicklist.filter((row) => row.status === 'Open').map((row) => row.team_number)
+
+  return [
+    { view: 'Match', tone: waitingTone(input.entries), lines: entryLines(input.entries, 'match', input.sync) },
+    { view: 'Pit', tone: waitingTone(input.pitEntries), lines: pitLines },
+    schedule,
+    rankings,
+    { view: 'Teams', tone: 'plain', lines: teamLines },
+    { view: 'Picklist', tone: 'plain', lines: [top(input.ranked.map((t) => t.team)) ?? 'No teams to rank yet'] },
+    {
+      view: 'Final picklist',
+      tone: 'plain',
+      lines: input.finalPicklist.length === 0 ? ['Not started yet'] : [top(finalOpen) ?? 'Every team is picked or marked Do not pick', `${plural(input.finalPicklist.length, 'team', 'teams')} on the list`],
+    },
+    { view: 'Simulator', tone: 'plain', lines: ["Pick 6 teams to see the score we'd expect, and who's likely to win"] },
+    { view: 'Stats', tone: 'plain', lines: [input.ratings.length === 0 ? 'No Match 13 ratings saved yet' : `${plural(input.ratings.length, 'team', 'teams')} rated by Match 13`] },
+  ]
+}
+
+/**
+ * The overview's cards, for the page. It only reads what's saved on this
+ * phone (the schedule, rankings and Match 13 copies, and the tables the
+ * other pages use), so opening it never asks The Blue Alliance or Match 13
+ * for anything.
+ */
+export function useScoutingOverview(): OverviewCard[] {
+  const event = useCurrentEvent().key
+  const entries = useEntries()
+  const pitEntries = usePitEntries()
+  const sync = useSyncStatus()
+  const { entries: matchRows, pitEntries: pitRows } = useScoutingRows()
+  const schedule = useSavedSchedule()
+  const savedRankings = useStore(rankingsStore)
+  const savedRatings = useStore(ratingsStore)
+  const weights = useStore(weightsStore)
+  const finalPicklist = usePicklist()
+  return useMemo(() => {
+    const rankings = savedRankings?.event === event ? savedRankings : null
+    const ratings = savedRatings.event === event ? savedRatings.ratings : []
+    const ranked = rankTeams(picklistTeams(ratings, matchRows, pitRows), weights)
+    return scoutingOverview({ entries, pitEntries, sync, matchRows, pitRows, schedule, rankings, ratings, ranked, finalPicklist })
+  }, [event, entries, pitEntries, sync, matchRows, pitRows, schedule, savedRankings, savedRatings, weights, finalPicklist])
 }
 
 // ---------------------------------------------------------------------------

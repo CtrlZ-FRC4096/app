@@ -6,6 +6,7 @@ import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
 import EventPicker from './EventPicker'
 import FormSection from './FormSection'
 import MatchTeamFields from './MatchTeamFields'
+import Overview from './Overview'
 import PickMany from './PickMany'
 import Picklist from './Picklist'
 import PitForm from './PitForm'
@@ -46,12 +47,14 @@ function ShortAnswer(props: { id: string; label: string; value: string; onChange
   )
 }
 
-const VIEWS = ['Match', 'Pit', 'Schedule', 'Rankings', 'Picklist', 'Final picklist', 'Simulator', 'Stats']
+const VIEWS = ['Overview', 'Match', 'Pit', 'Schedule', 'Rankings', 'Picklist', 'Final picklist', 'Simulator', 'Stats']
 /** Each view's address after #/scouting/. */
-const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule', Rankings: 'rankings', Picklist: 'picklist', 'Final picklist': 'shared-picklist', Simulator: 'simulate', Stats: 'stats' }
+const PATHS: Record<string, string> = { Overview: '', Match: 'match', Pit: 'pit', Schedule: 'schedule', Rankings: 'rankings', Picklist: 'picklist', 'Final picklist': 'shared-picklist', Simulator: 'simulate', Stats: 'stats' }
 
-// A Match / Pit / Schedule / Rankings / Picklist / Final picklist / Simulator / Stats switch at
-// the top. The choice is in the address, so #/scouting/pit opens the pit form
+// An Overview / Match / Pit / Schedule / Rankings / Picklist / Final picklist /
+// Simulator / Stats switch at the top. #/scouting is the overview (#160),
+// and #/scouting/match the match form. The choice is in the address, so
+// #/scouting/pit opens the pit form
 // straight away: a menu or a bookmark can link to any of them. Both forms
 // stay on the page, and the one not chosen is hidden, so switching doesn't
 // lose what's typed. The other pages are only on the page while they're
@@ -62,7 +65,7 @@ const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedu
 // database, and the forms must work with no connection.
 export default function ScoutingPage() {
   const [rest = '', teamText] = useRoute().rest
-  const view = rest === 'team' ? 'Team' : VIEWS.find((v) => PATHS[v] === rest) ?? 'Match'
+  const view = rest === 'team' ? 'Team' : VIEWS.find((v) => PATHS[v] === rest) ?? 'Overview'
   const team = Number(teamText)
   return (
     <>
@@ -70,6 +73,7 @@ export default function ScoutingPage() {
       <div style={{ marginBottom: 12 }}>
         <Pick label="Which page" options={VIEWS} value={view} onChange={(v) => navigate('scouting', PATHS[v])} />
       </div>
+      {view === 'Overview' && <Overview paths={{ ...PATHS, Teams: 'team' }} />}
       <div hidden={view !== 'Match'}><MatchForm /></div>
       <div hidden={view !== 'Pit'}><PitForm /></div>
       {view === 'Schedule' && <Schedule />}
