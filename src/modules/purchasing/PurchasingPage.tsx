@@ -56,13 +56,13 @@ const FIELD: CSSProperties = { minWidth: 0 }
 const BOX: CSSProperties = { minWidth: 0, width: '100%' }
 
 const EMPTY_TEXT: Record<View, string> = {
-  Current: 'Nothing in progress. Ask for something above, or look at All.',
-  All: 'Nothing on the list yet. Ask for the first thing above.',
-  'By status': 'Nothing on the list yet. Ask for the first thing above.',
-  'By vendor': 'Nothing on the list yet. Ask for the first thing above.',
+  Current: 'Nothing in progress. Add a new item above, or look at All.',
+  All: 'Nothing on the list yet. Add the first item above.',
+  'By status': 'Nothing on the list yet. Add the first item above.',
+  'By vendor': 'Nothing on the list yet. Add the first item above.',
 }
 
-/** The Ask for something form, when it's open: what it starts with, and the BOM part it's for. */
+/** The Add new item form, when it's open: what it starts with, and the BOM part it's for. */
 interface Asking {
   start: NewItem
   bomPartId: string | null
@@ -74,7 +74,7 @@ interface Asking {
 // functions from data.ts. It never saves anything itself.
 //
 // Its address can say what to open, for the BOM page's links:
-//   #/purchasing/from-bom/<part id>   Ask for something, filled in from a BOM part
+//   #/purchasing/from-bom/<part id>   Add new item, filled in from a BOM part
 //   #/purchasing/item/<item id>       That item, open for changing
 export default function PurchasingPage() {
   const items = useItems()
@@ -125,14 +125,14 @@ export default function PurchasingPage() {
         </label>
         {!form && (
           <button type="button" className="btn btn-primary" onClick={() => setAsking({ start: EMPTY_ITEM, bomPartId: null, key: 'new' })}>
-            Ask for something
+            Add new item
           </button>
         )}
       </div>
 
       {form && (
         <InView key={form.key}>
-          <Panel title="Ask for something">
+          <Panel title="Add new item">
             <ItemForm item={null} start={form.start} bomPartId={form.bomPartId} onDone={closeForm} />
           </Panel>
         </InView>
@@ -184,7 +184,7 @@ export default function PurchasingPage() {
   )
 }
 
-/** The Ask for something form for a link from the BOM, or null when the address isn't one. */
+/** The Add new item form for a link from the BOM, or null when the address isn't one. */
 function useBomRequest(rest: string[]): Asking | null {
   const parts = partsTable.useRows()
   const systems = systemsTable.useRows()
@@ -254,7 +254,7 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
 }
 
 /**
- * Ask for something, or change an item when `item` is given. A new
+ * Add a new item, or change one when `item` is given. A new
  * request can start filled in (`start`), for Duplicate and the BOM's
  * Purchase button.
  */

@@ -715,7 +715,7 @@ const itemFields = (item: NewItem) => ({
 })
 
 /**
- * Ask for something, as the person who asked for it. `bomPartId` is the
+ * Add a new item as the person who asked for it. `bomPartId` is the
  * BOM part it's for, when it's asked for from the BOM page.
  */
 export async function addItem(item: NewItem, bomPartId: string | null = null): Promise<Result<PurchaseItem>> {
