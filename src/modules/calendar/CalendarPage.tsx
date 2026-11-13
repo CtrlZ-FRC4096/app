@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { canChangeEvent, EVENT_LIMITS, type CalendarEvent } from '../../core/calendar'
+import { canChangeEvent, canSetSignUps, EVENT_LIMITS, type CalendarEvent } from '../../core/calendar'
 import { plural } from '../../core/format'
 import { useMemberNames, useMembers } from '../../core/members'
 import { isLeader, useSession, type User } from '../../core/session'
@@ -12,6 +12,7 @@ import {
   addEvent,
   blankEventForm,
   canManageSignUps,
+  canTakeSignUps,
   cancelSignUp,
   changeEvent,
   eventsByDay,
@@ -20,6 +21,7 @@ import {
   loadEvents,
   notSignedUp,
   removeEvent,
+  setSignUps,
   shownDescription,
   signUp,
   signUpLink,
@@ -126,9 +128,12 @@ function EventRow(props: { event: CalendarEvent; user: User; signUps: SignUp[]; 
   const going = signUpsFor(props.signUps, event)
   const imGoing = going.some((s) => s.created_by === user.id)
   const open = event.signUps && !hasEnded(event)
-  // Only student leaders and mentors see Change, Remove and Edit list. The server function and the database check this too.
+  // Only student leaders and mentors see Change, Remove, Edit list, and Take or Stop sign-ups. The server function and the database check this too.
   const canChange = canChangeEvent(event, user)
   const canEditList = open && canManageSignUps(user)
+  // Any event, including ones made in Google Calendar: only its sign-ups change.
+  const canTake = canSetSignUps(user) && canTakeSignUps(event)
+  const canStop = canSetSignUps(user) && open
   const [editingList, setEditingList] = useState(false)
 
   async function toggleSignUp() {
@@ -136,6 +141,17 @@ function EventRow(props: { event: CalendarEvent; user: User; signUps: SignUp[]; 
     const result = imGoing ? await cancelSignUp(event) : await signUp(event)
     setBusy(false)
     toast(result.ok ? (imGoing ? "You're off the list." : "You're signed up.") : result.error)
+  }
+
+  async function turnSignUps(on: boolean) {
+    if (!on && going.length > 0) {
+      const who = plural(going.length, 'person has', 'people have')
+      if (!window.confirm(`Stop sign-ups for ${event.title}? ${who} signed up. They stay on the list, hidden, and come back if you take sign-ups again.`)) return
+    }
+    setBusy(true)
+    const result = await setSignUps(event, on)
+    setBusy(false)
+    toast(result.ok ? (on ? 'Taking sign-ups. Everyone can sign up for it now.' : 'Sign-ups stopped.') : result.error)
   }
 
   async function remove() {
@@ -187,6 +203,16 @@ function EventRow(props: { event: CalendarEvent; user: User; signUps: SignUp[]; 
         {canEditList && (
           <button type="button" className="btn btn-sm" aria-expanded={editingList} onClick={() => setEditingList(!editingList)}>
             {editingList ? 'Done' : 'Edit list'}
+          </button>
+        )}
+        {canTake && (
+          <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void turnSignUps(true)}>
+            Take sign-ups
+          </button>
+        )}
+        {canStop && (
+          <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void turnSignUps(false)}>
+            Stop sign-ups
           </button>
         )}
         {event.url && (

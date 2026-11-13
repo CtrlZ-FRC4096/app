@@ -13,6 +13,7 @@ import {
   blankEventForm,
   calendarNow,
   canManageSignUps,
+  canTakeSignUps,
   cancelSignUp,
   changeEvent,
   chicagoClock,
@@ -30,6 +31,7 @@ import {
   plainText,
   removeEvent,
   resetCalendar,
+  setSignUps,
   shownDescription,
   signUp,
   signUpLink,
@@ -405,6 +407,7 @@ describe('only student leaders and mentors', () => {
       ['add events', () => addEvent(tonight('Pizza after build'))],
       ['sign someone else up', () => signUp(outreach, DEMO_PEOPLE.morgan)],
       ['take someone else off', () => cancelSignUp(outreach, DEMO_PEOPLE.jordan)],
+      ['turn sign-ups on or off', () => setSignUps(outreach, false)],
     ]
     for (const [doing, attempt] of tries) {
       expect(await attempt(), doing).toEqual({ ok: false, error: expect.stringContaining(`Only student leaders and mentors can ${doing}`) })
@@ -413,6 +416,72 @@ describe('only student leaders and mentors', () => {
     expect(going()).toEqual([DEMO_PEOPLE.jordan, DEMO_PEOPLE.pat])
     // Signing yourself up is the same as leaving the person out.
     expect(await signUp(outreach, DEMO_PEOPLE.alex)).toMatchObject({ ok: true })
+  })
+})
+
+describe('sign-ups on any event (#159)', () => {
+  /** A made-up build session, made in Google Calendar: no sign-ups, no link. */
+  const madeInGoogle = () => {
+    const found = calendarNow().events.find((e) => !e.fromApp && !e.signUps && !signUpLink(e.description))
+    if (!found) throw new Error('No made-up build session')
+    return found
+  }
+  const loadedOutreach = () => calendarNow().events.find((e) => e.id === 'demo-outreach')!
+
+  it('lets a student leader take sign-ups on an event made in Google Calendar, changing nothing else, so students can sign up', async () => {
+    await loadEvents()
+    const build = madeInGoogle()
+    setDemoRole('leader')
+    expect(await setSignUps(build, true)).toEqual({ ok: true, value: { ...build, signUps: true } })
+    // Still on after loading the events again.
+    await loadEvents()
+    expect(calendarNow().events.find((e) => e.id === build.id)).toEqual({ ...build, signUps: true })
+    setDemoRole('student')
+    expect(await signUp({ ...build, signUps: true })).toMatchObject({ ok: true })
+  })
+
+  it('keeps who signed up when sign-ups stop, hidden, and brings them back when they start again', async () => {
+    await loadEvents()
+    setDemoRole('leader')
+    expect(await setSignUps(loadedOutreach(), false)).toMatchObject({ ok: true, value: { signUps: false } })
+    setDemoRole('student')
+    expect(renderToString(createElement(CalendarPage))).not.toContain('Going (2)')
+    expect(await signUp(loadedOutreach())).toEqual({ ok: false, error: expect.stringContaining("doesn't take sign-ups") })
+    expect(going()).toEqual([DEMO_PEOPLE.jordan, DEMO_PEOPLE.pat])
+
+    setDemoRole('leader')
+    expect(await setSignUps(loadedOutreach(), true)).toMatchObject({ ok: true })
+    expect(renderToString(createElement(CalendarPage))).toContain('Going (2)')
+  })
+
+  it("doesn't take sign-ups on an event that's over", async () => {
+    setDemoRole('leader')
+    const over = event('g-over', { start: '2020-11-03T18:00:00-06:00', end: '2020-11-03T21:00:00-06:00' })
+    expect(await setSignUps(over, true)).toEqual({ ok: false, error: expect.stringContaining('over') })
+  })
+
+  it('offers Take sign-ups on events still to come without sign-ups in the app or a sign-up link', () => {
+    const cases: [string, CalendarEvent, boolean][] = [
+      ['made in Google Calendar', event('a', {}), true],
+      ['already taking them', event('b', { signUps: true }), false],
+      ['over', event('c', { end: '2026-11-03T14:00:00-06:00', start: '2026-11-03T12:00:00-06:00' }), false],
+      ['with a sign-up link', event('d', { description: 'Sign up: https://forms.gle/abc123' }), false],
+    ]
+    for (const [what, e, offered] of cases) expect(canTakeSignUps(e, now), what).toBe(offered)
+  })
+
+  it('shows Take sign-ups and Stop sign-ups only to student leaders and mentors', async () => {
+    await loadEvents()
+    const student = renderToString(createElement(CalendarPage))
+    expect(student).not.toContain('>Take sign-ups<')
+    expect(student).not.toContain('>Stop sign-ups<')
+    for (const role of ['leader', 'mentor'] as const) {
+      setDemoRole(role)
+      const page = renderToString(createElement(CalendarPage))
+      expect(page, role).toContain('>Take sign-ups<')
+      // Only the made-up outreach night takes sign-ups in the app.
+      expect(page.match(/>Stop sign-ups</g), role).toHaveLength(1)
+    }
   })
 })
 
