@@ -1,6 +1,6 @@
 import { useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
 import { useMemberNames, useMembers, type Member } from '../../core/members'
-import { navigate, useRoute } from '../../core/router'
+import { href, navigate, useRoute } from '../../core/router'
 import { isMentor, useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { shortDate } from '../../core/format'
@@ -13,7 +13,7 @@ import {
   TYPES,
   VENDORS,
   VIEWS,
-  addBuyer,
+  canChooseBuyers,
   addItem,
   arrivalText,
   addReceipt,
@@ -32,7 +32,6 @@ import {
   receiptLink,
   receiptText,
   receiptAddingShown,
-  removeBuyer,
   removeItem,
   removeReceipt,
   requestFromBomPart,
@@ -548,58 +547,33 @@ function Receipts(props: { item: PurchaseItem; showAdd: boolean }) {
   )
 }
 
+/**
+ * Who the purchasers are, so people know who to ask: the error messages point
+ * here. Mentors and admins choose them on the Members page (#144).
+ */
 function Purchasers() {
   const buyers = useBuyers()
-  const members = useMembers()
   const nameOf = useMemberNames()
-  const me = useSession()
-  const [adding, setAdding] = useState('')
-  const mentor = isMentor(me.role)
-  const others = members.filter((m) => m.active && !isMentor(m.role) && !buyers.some((b) => b.member_id === m.id))
-
-  async function add(event: FormEvent) {
-    event.preventDefault()
-    const result = await addBuyer(adding)
-    toast(result.ok ? `${nameOf(adding)} is now a purchaser.` : result.error)
-    if (result.ok) setAdding('')
-  }
+  const chooser = canChooseBuyers(useSession().role)
+  const where = chooser
+    ? <>Choose them on the <a href={href('members')}>Members page</a>.</>
+    : 'Mentors choose them on the Members page.'
 
   return (
     <Panel title="Purchasers" aside={<span className="note">Place and change orders, with mentors and admins</span>}>
       {buyers.length === 0 ? (
-        <p className="panel-body muted">No purchasers yet{mentor ? '. Add someone below.' : ': ask a mentor to place orders.'}</p>
+        <p className="panel-body muted">No purchasers yet: ask a mentor to place orders. {where}</p>
       ) : (
-        <div className="row-list">
-          {buyers.map((buyer) => (
-            <div key={buyer.id}>
-              <span style={{ flex: 1, minWidth: 0 }}>{nameOf(buyer.member_id)}</span>
-              {mentor && (
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  onClick={async () => {
-                    const result = await removeBuyer(buyer)
-                    toast(result.ok ? `${nameOf(buyer.member_id)} is no longer a purchaser.` : result.error)
-                  }}
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      {mentor && others.length > 0 && (
-        <form className="panel-body" onSubmit={add}>
-          <label className="field" style={FIELD} htmlFor="purchase-add-buyer">
-            Add a purchaser
-            <select id="purchase-add-buyer" className="input" style={BOX} value={adding} onChange={(e) => setAdding(e.target.value)}>
-              <option value="">Pick someone</option>
-              {others.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </select>
-          </label>
-          <div className="toolbar"><button type="submit" className="btn btn-primary" disabled={!adding}>Add</button></div>
-        </form>
+        <>
+          <div className="row-list">
+            {buyers.map((buyer) => (
+              <div key={buyer.id}>
+                <span style={{ flex: 1, minWidth: 0 }}>{nameOf(buyer.member_id)}</span>
+              </div>
+            ))}
+          </div>
+          <p className="panel-body note">{where}</p>
+        </>
       )}
     </Panel>
   )
