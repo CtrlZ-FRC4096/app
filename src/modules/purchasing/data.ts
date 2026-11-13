@@ -469,6 +469,7 @@ export function receiptCountText(count: number): string {
  * way round, where the list would say there's a receipt that isn't there.
  */
 export async function addReceipt(item: PurchaseItem, file: File): Promise<Result<Receipt>> {
+  if (!receiptAddingShown(item.status)) return fail('Mark the item Order Placed before adding a receipt.')
   if (!canOrder(currentUser(), buyersTable.rows())) return fail('Only mentors and purchasers add receipts. Ask one of them: they\'re listed at the bottom of this page.')
   const problem = checkReceipt(file)
   if (problem) return fail(problem)
@@ -618,6 +619,11 @@ export function orderFieldsShown(form: Pick<NewItem, 'status' | 'ordered_by' | '
     shipped_to: placed || !!form.shipped_to,
     estimated_arrival: placed || !!form.estimated_arrival,
   }
+}
+
+/** Whether to offer a new receipt: only once the item has been ordered. Existing receipts stay visible at any status. */
+export function receiptAddingShown(status: StatusKey): boolean {
+  return !isAsking(status)
 }
 
 /**

@@ -45,6 +45,7 @@ import {
   priceProblem,
   priceText,
   receiptBody,
+  receiptAddingShown,
   receiptCountText,
   receiptLink,
   receiptText,
@@ -558,6 +559,13 @@ describe('estimated arrival', () => {
   })
 })
 
+describe('receiptAddingShown', () => {
+  it('allows new receipts for every ordered status, but none of the asking statuses', () => {
+    for (const status of STATUSES.filter((s) => s.ask)) expect(receiptAddingShown(status.key), status.label).toBe(false)
+    for (const status of STATUSES.filter((s) => !s.ask)) expect(receiptAddingShown(status.key), status.label).toBe(true)
+  })
+})
+
 describe('orderFieldsShown', () => {
   const empty = { ordered_by: '', shipped_to: '', estimated_arrival: '' }
 
@@ -671,6 +679,23 @@ describe('receipts', () => {
       const result = await addReceipt(item, receiptFile())
       expect(result.ok && result.value.path).toMatch(new RegExp(`^${item.id}/[0-9a-f-]{36}\\.pdf$`))
       expect(result.ok && result.value.created_by).toBe(DEMO_PEOPLE.alex)
+    })
+
+    it('refuses a new receipt while an item is still being asked for', async () => {
+      setDemoRole('mentor')
+      const item = find('Zip ties, 8 in (pack of 100)')
+      expect(await addReceipt(item, receiptFile())).toMatchObject({ ok: false, error: expect.stringMatching(/Order Placed/) })
+      expect(receiptsOf(item)).toHaveLength(0)
+    })
+
+    it('keeps an existing receipt removable when an ordered item goes back to asking', async () => {
+      setDemoRole('mentor')
+      const item = find('Motor controller')
+      const moved = { ...item, status: 'order' as const }
+      expect(receiptAddingShown(moved.status)).toBe(false)
+      expect(receiptsOf(moved)).toHaveLength(2)
+      expect((await removeReceipt(receiptsOf(moved)[0])).ok).toBe(true)
+      expect(receiptsOf(moved)).toHaveLength(1)
     })
 
     it('refuses a file that is not a receipt', async () => {

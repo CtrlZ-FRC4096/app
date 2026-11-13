@@ -31,6 +31,7 @@ import {
   receiptCountText,
   receiptLink,
   receiptText,
+  receiptAddingShown,
   removeBuyer,
   removeItem,
   removeReceipt,
@@ -376,7 +377,7 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
         </label>
       )}
       {item && <OrderDetails item={item} form={form} canOrder={canOrder} set={set} id={id} people={people} orderers={orderers} />}
-      {item && <Receipts item={item} />}
+      {item && <Receipts item={item} showAdd={receiptAddingShown(form.status)} />}
       <div className="toolbar">
         {!locked && <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : item ? 'Save' : 'Add to the list'}</button>}
         <button type="button" className="btn" onClick={props.onDone}>{locked ? 'Close' : 'Cancel'}</button>
@@ -468,7 +469,7 @@ function OrderDetails(props: {
  * Mentors, admins and purchasers add, open and delete them.
  * The buttons are only tidiness: the database's rules are what stop people.
  */
-function Receipts(props: { item: PurchaseItem }) {
+function Receipts(props: { item: PurchaseItem; showAdd: boolean }) {
   const nameOf = useMemberNames()
   const canManage = useCanOrder()
   const receipts = useReceipts(props.item.id)
@@ -543,7 +544,7 @@ function Receipts(props: { item: PurchaseItem }) {
           {receipts.length > 0 ? `${receiptCountText(receipts.length)} added. ` : ''}Only mentors and purchasers can open receipts, because they can show card digits and addresses.
         </span>
       )}
-      {canManage && (
+      {canManage && props.showAdd && (
         <div className="toolbar">
           <button type="button" className="btn btn-sm" disabled={uploading} onClick={() => picker.current?.click()}>
             {uploading ? 'Uploading…' : 'Add receipt'}
