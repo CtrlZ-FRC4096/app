@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import type { Member } from '../../core/members'
+import type { Item as InventoryItem } from '../inventory/data'
 import {
   EMPTY_ITEM,
   MAX_NAME_LENGTH,
@@ -38,6 +39,7 @@ import {
   removeBuyer,
   setBuyer,
   requestFromBomPart,
+  requestFromInventoryItem,
   requestsByBomPart,
   searchItems,
   vendorFor,
@@ -497,6 +499,30 @@ describe('only mentors and purchasers', () => {
       expect(await run(), action).toMatchObject({ ok: false, error: expect.stringMatching(/^Only mentors and (purchasers|admins)/) })
     }
     expect(everything()).toEqual(before)
+  })
+})
+
+describe('ordering more of an Inventory part', () => {
+  const part = (more: Partial<InventoryItem>): InventoryItem => ({
+    id: 'inv', name: 'Power Distribution Hub (PDH)', vendor: 'REV', vendor_part_number: 'REV-11-1850', location: 'Shelf E1',
+    link: 'https://example.com/parts/REV-11-1850', quantity: 1, low_stock_level: 1, created_at: '2026-10-20T18:00:00Z', created_by: null, ...more,
+  })
+
+  it("fills in the part's name, vendor from the list, part number and link, with 1 needed", () => {
+    const cases: [string, InventoryItem, Partial<NewItem>][] = [
+      ['a vendor on the list, by another name', part({}), {
+        name: 'Power Distribution Hub (PDH)', vendor: 'REV Robotics', part_number: 'REV-11-1850', link: 'https://example.com/parts/REV-11-1850', notes: '',
+      }],
+      ['written differently', part({ name: 'roboRIO 2.0', vendor: 'AndyMark', vendor_part_number: 'am-3000a' }), { vendor: 'Andy Mark', part_number: 'am-3000a' }],
+      ['no product link', part({ link: null }), { vendor: 'REV Robotics', part_number: 'REV-11-1850', link: '' }],
+      // Left to pick, not filled in wrong.
+      ['a vendor not on the list', part({ name: 'Battery, 12V 18Ah', vendor: 'MK Battery', vendor_part_number: 'ES17-12' }), {
+        vendor: '', part_number: 'ES17-12', notes: 'Vendor in Inventory: MK Battery',
+      }],
+    ]
+    for (const [label, item, expected] of cases) {
+      expect(requestFromInventoryItem(item), label).toEqual({ ...EMPTY_ITEM, name: item.name, link: item.link ?? '', notes: '', quantity: 1, ...expected })
+    }
   })
 })
 
