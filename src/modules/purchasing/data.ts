@@ -776,7 +776,7 @@ function typeFor(systemName: string | undefined): string {
 
 /**
  * A request filled in from a BOM part, for the person to finish: the name,
- * vendor, vendor part number and quantity, and the system as the type when
+ * vendor, product page, vendor part number and quantity, and the system as the type when
  * it's one of the types. A vendor that isn't in the list becomes Other,
  * with the BOM's vendor in the notes.
  */
@@ -787,6 +787,8 @@ export function requestFromBomPart(part: Part, system: BomSystem | undefined): N
     name: part.name,
     vendor: vendor ?? 'Other',
     type: typeFor(system?.name),
+    // The product page from the BOM, if it has one (#169).
+    link: part.product_url ?? '',
     part_number: part.vendor_part_number ?? '',
     quantity: Math.min(Math.max(part.quantity, 1), MAX_QUANTITY),
     notes: !vendor && part.vendor ? `Vendor in the BOM: ${part.vendor}` : '',

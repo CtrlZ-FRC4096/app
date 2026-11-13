@@ -465,7 +465,7 @@ describe('only mentors and purchasers', () => {
 describe('asking for a BOM part', () => {
   const bomPart = {
     id: 'part', system_id: 'system', part_number: '4096-26-INT-006', name: 'Flanged bearing, 1/2 in hex', revision: null, kind: 'cots' as const,
-    material: null, quantity: 6, vendor: 'WCP', vendor_part_number: 'EXAMPLE-BRG-12', onshape_url: null, onshape_id: null,
+    material: null, quantity: 6, vendor: 'WCP', vendor_part_number: 'EXAMPLE-BRG-12', product_url: null, onshape_url: null, onshape_id: null,
     removed_in_onshape: false, created_at: '2026-10-20T18:00:00Z', created_by: null,
   }
   const intake = { id: 'system', robot_id: 'robot', name: 'Intake', code: 'INT', onshape_url: null, onshape_imported_at: null, created_at: '2026-10-20T18:00:00Z', created_by: null }
@@ -492,6 +492,11 @@ describe('asking for a BOM part', () => {
     })
     expect(requestFromBomPart(bomPart, { ...intake, name: 'Superstructure' }).type).toBe('')
     expect(requestFromBomPart(bomPart, undefined).type).toBe('')
+  })
+
+  it("fills in the link from the part's product page, if it has one", () => {
+    expect(requestFromBomPart({ ...bomPart, product_url: 'https://example.com/bearing' }, intake).link).toBe('https://example.com/bearing')
+    expect(requestFromBomPart(bomPart, intake).link).toBe('')
   })
 
   it('uses Other for a vendor not in the list, with the BOM vendor in the notes, and Drive Base for the Drivetrain', () => {

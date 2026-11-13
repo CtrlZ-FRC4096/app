@@ -71,6 +71,8 @@ export interface Part extends Row {
   /** COTS parts only. */
   vendor: string | null
   vendor_part_number: string | null
+  /** COTS parts only: the product's page, where we buy it (#169). Always an https:// link. */
+  product_url: string | null
   onshape_url: string | null
   /** Which Onshape part this is, for parts imported from Onshape. Null for parts typed in. */
   onshape_id: string | null
@@ -101,7 +103,7 @@ function made(system_id: string, part_number: string, name: string, revision: st
   return {
     id: `00000000-0000-4000-8000-0000000b1${String(partCount).padStart(3, '0')}`,
     system_id, part_number, name, revision, kind: 'made', material, quantity,
-    vendor: null, vendor_part_number: null, onshape_url: null, onshape_id: null, removed_in_onshape: false, ...CREATED,
+    vendor: null, vendor_part_number: null, product_url: null, onshape_url: null, onshape_id: null, removed_in_onshape: false, ...CREATED,
   }
 }
 function cots(system_id: string, part_number: string, name: string, vendor: string, vendor_part_number: string, quantity: number): Part {
@@ -109,7 +111,7 @@ function cots(system_id: string, part_number: string, name: string, vendor: stri
   return {
     id: `00000000-0000-4000-8000-0000000b1${String(partCount).padStart(3, '0')}`,
     system_id, part_number, name, revision: null, kind: 'cots', material: null, quantity,
-    vendor, vendor_part_number, onshape_url: null, onshape_id: null, removed_in_onshape: false, ...CREATED,
+    vendor, vendor_part_number, product_url: null, onshape_url: null, onshape_id: null, removed_in_onshape: false, ...CREATED,
   }
 }
 
@@ -139,10 +141,11 @@ EXAMPLE_PARTS.filter((p) => p.system_id === INTAKE).forEach((part, i) => {
 
 export const robotsTable = createTable<Robot>('bom_robots', { demo: EXAMPLE_ROBOTS })
 // Version 2: systems and parts gained their Onshape import columns.
+// Version 3: parts gained product_url (#169).
 export const systemsTable = createTable<BomSystem>('bom_systems', { demo: EXAMPLE_SYSTEMS, version: 2 })
 export const partsTable = createTable<Part>('bom_parts', {
   demo: EXAMPLE_PARTS,
-  version: 2,
+  version: 3,
   sort: (a, b) => a.part_number.localeCompare(b.part_number),
 })
 
@@ -538,10 +541,12 @@ export interface NewPart {
   quantity: number
   vendor: string
   vendor_part_number: string
+  /** COTS parts only, and optional: the product's page. */
+  product_url: string
 }
 
-// The database has the same limits: see the checks in the bom migration.
-const LIMITS = { part_number: 40, name: 100, revision: 10, material: 100, vendor: 100, vendor_part_number: 100 }
+// The database has the same limits: see the checks in the bom migrations.
+const LIMITS = { part_number: 40, name: 100, revision: 10, material: 100, vendor: 100, vendor_part_number: 100, product_url: 2000 }
 
 /**
  * Why a part can't be saved, or null if it can. `parts` is every part, to
@@ -556,7 +561,12 @@ export function checkPart(part: NewPart, parts: Part[], id?: string, imported = 
   if (!imported && part.kind === 'made' && !part.material.trim()) return 'Add the material, like "6061 aluminum, 1/4 in plate".'
   if (!imported && part.kind === 'cots' && !part.vendor.trim()) return 'Add the vendor you buy it from, like WCP or REV Robotics.'
   if (!Number.isInteger(part.quantity) || part.quantity < 1) return 'The quantity needs to be a whole number, 1 or more.'
-  const names = { part_number: 'part number', name: 'name', revision: 'revision', material: 'material', vendor: 'vendor', vendor_part_number: 'vendor part number' }
+  if (part.kind === 'cots' && part.product_url.trim() && !/^https:\/\/\S+$/.test(part.product_url.trim())) {
+    return "The product page needs to be a whole link starting with https://. Open the product's page and copy its address."
+  }
+  const names = {
+    part_number: 'part number', name: 'name', revision: 'revision', material: 'material', vendor: 'vendor', vendor_part_number: 'vendor part number', product_url: 'product page link',
+  }
   for (const [field, limit] of Object.entries(LIMITS) as [keyof typeof LIMITS, number][]) {
     const length = part[field].trim().length
     if (length > limit) return `Keep the ${names[field]} under ${limit} characters. This one is ${length}.`
@@ -564,7 +574,7 @@ export function checkPart(part: NewPart, parts: Part[], id?: string, imported = 
   return null
 }
 
-/** The columns saved for a part. Made parts keep only the material; COTS parts keep only the vendor details. */
+/** The columns saved for a part. Made parts keep only the material; COTS parts keep only the vendor details and product page. */
 function partFields(part: NewPart) {
   const text = (value: string) => value.trim() || null
   const made = part.kind === 'made'
@@ -577,6 +587,7 @@ function partFields(part: NewPart) {
     quantity: part.quantity,
     vendor: made ? null : text(part.vendor),
     vendor_part_number: made ? null : text(part.vendor_part_number),
+    product_url: made ? null : text(part.product_url),
   }
 }
 
@@ -587,11 +598,39 @@ export async function addPart(part: NewPart): Promise<Result<Part>> {
   return partsTable.insert({ system_id: part.system_id, ...partFields(part), onshape_url: null, onshape_id: null, removed_in_onshape: false })
 }
 
-/** Change a part. It stays in its system. The next import from Onshape updates what Onshape has. */
+/**
+ * Change a part. It stays in its system. The next import from Onshape updates what Onshape has.
+ * Changing a Custom part to COTS removes its stages, so it drops out of the station queues (#169):
+ * kindChangeWarning() says so first.
+ */
 export async function changePart(part: Part, changes: NewPart): Promise<Result<Part>> {
   const problem = leadersOnly('change parts') ?? checkPart(changes, partsTable.rows(), part.id, Boolean(part.onshape_id))
   if (problem) return fail(problem)
-  return partsTable.update(part.id, partFields(changes))
+  const result = await partsTable.update(part.id, partFields(changes))
+  if (!result.ok || !(part.kind === 'made' && changes.kind === 'cots')) return result
+  for (const step of stepsFor(part, stepsTable.rows())) {
+    const removed = await stepsTable.remove(step.id)
+    if (!removed.ok) return fail(`Saved ${part.name} as COTS, but couldn't remove its stages: ${removed.error} Remove them with Change stages before saving it as COTS, or try again.`)
+  }
+  return result
+}
+
+/**
+ * What changing a Custom part to COTS will do, to show before saving, or null
+ * when there's nothing to say. `steps` are every stage; `onBoard` is how many
+ * of the part are on the CNC board.
+ */
+export function kindChangeWarning(part: Part, kind: PartKind, steps: Step[], onBoard: number): string | null {
+  if (part.kind !== 'made' || kind !== 'cots') return null
+  const mine = stepsFor(part, steps)
+  const done = mine.filter((s) => s.status === 'done').length
+  const parts = [
+    mine.length > 0 && `This part has ${plural(mine.length, 'stage', 'stages')} (${done} done). Changing it to COTS removes them.`,
+    onBoard > 0 && (onBoard === 1
+      ? "1 is on the CNC board: that stays, so take it off there if it won't be cut."
+      : `${onBoard} are on the CNC board: that stays, so take them off there if they won't be cut.`),
+  ].filter(Boolean)
+  return parts.length ? parts.join(' ') : null
 }
 
 export async function removePart(part: Part): Promise<Result> {

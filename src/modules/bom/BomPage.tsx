@@ -3,9 +3,9 @@ import { plural, shortDate } from '../../core/format'
 import { useMemberNames, useMembers } from '../../core/members'
 import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
-import { InView, PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
+import { Callout, InView, PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
 import {
-  PART_FILTERS, addPart, addRobot, addSystem, applyOnshapeImport, canEditRobotsAndParts, changePart, changeSystem, filterParts, getOnshapeBom, kindLabel,
+  PART_FILTERS, addPart, addRobot, addSystem, applyOnshapeImport, canEditRobotsAndParts, changePart, changeSystem, filterParts, getOnshapeBom, kindChangeWarning, kindLabel,
   nextPartNumber, partCountText, removePart, removeSystem, renameRobot, shelfText, shortageFor, shortages, toOrder, toOrderCsv, useParts, useRobotParts, useRobots, useSystems,
   type Shortage, type VendorOrder,
   type BomSystem, type Part, type PartFilter, type PartKind, type Robot,
@@ -155,7 +155,14 @@ export default function BomPage() {
       )}
       {editing?.form === 'part' && system && (
         <InView key={editing.part?.id ?? `new-${system.id}`}>
-          <PartForm system={system} parts={parts} part={editing.part} onDone={close} />
+          <PartForm
+            system={system}
+            parts={parts}
+            part={editing.part}
+            steps={steps}
+            onBoard={editing.part ? (onBoard.get(editing.part.id) ?? 0) : 0}
+            onDone={close}
+          />
         </InView>
       )}
       {editing?.form === 'cnc' && (
@@ -538,8 +545,11 @@ function SystemForm(props: {
 
 const KINDS: Record<string, PartKind> = { Custom: 'made', COTS: 'cots' }
 
-/** The form for adding a part to one system, or changing one. `parts` are that system's parts. */
-function PartForm(props: { system: BomSystem; parts: Part[]; part: Part | null; onDone: () => void }) {
+/**
+ * The form for adding a part to one system, or changing one. `parts` are that system's parts,
+ * `steps` every stage, and `onBoard` how many of the part are on the CNC board.
+ */
+function PartForm(props: { system: BomSystem; parts: Part[]; part: Part | null; steps: Step[]; onBoard: number; onDone: () => void }) {
   const { system, part } = props
   const [kind, setKind] = useState<PartKind>(part?.kind ?? 'made')
   // Null until someone types one: until then, use the next free number.
@@ -551,16 +561,20 @@ function PartForm(props: { system: BomSystem; parts: Part[]; part: Part | null; 
   const [material, setMaterial] = useState(part?.material ?? '')
   const [vendor, setVendor] = useState(part?.vendor ?? '')
   const [vendorPartNumber, setVendorPartNumber] = useState(part?.vendor_part_number ?? '')
+  const [productUrl, setProductUrl] = useState(part?.product_url ?? '')
   const [quantity, setQuantity] = useState(part?.quantity ?? 1)
   const [saving, setSaving] = useState(false)
   const shownPartNumber = partNumber ?? nextPartNumber(system, props.parts)
   const form = useFocusOnOpen()
+  // Changing a Custom part to COTS removes its stages: say so before saving (#169).
+  const warning = part && kindChangeWarning(part, kind, props.steps, props.onBoard)
 
   async function save(event: FormEvent) {
     event.preventDefault()
     setSaving(true)
     const fields = {
       system_id: system.id, part_number: shownPartNumber, name, revision: shownRevision, kind, material, quantity, vendor, vendor_part_number: vendorPartNumber,
+      product_url: productUrl,
     }
     const result = part ? await changePart(part, fields) : await addPart(fields)
     setSaving(false)
@@ -581,6 +595,7 @@ function PartForm(props: { system: BomSystem; parts: Part[]; part: Part | null; 
     setMaterial('')
     setVendor('')
     setVendorPartNumber('')
+    setProductUrl('')
     setQuantity(1)
   }
 
@@ -595,9 +610,16 @@ function PartForm(props: { system: BomSystem; parts: Part[]; part: Part | null; 
     <Panel title={part ? `Change ${part.part_number}` : `Add a part to ${system.name}`}>
       <form ref={form} className="panel-body" onSubmit={save}>
         {part?.onshape_id && (
-          <p className="note">From Onshape: importing again sets its name, number, quantity and material back to what Onshape has. Change them in CAD to keep them.</p>
+          <p className="note">
+            From Onshape: importing again sets its name, number, quantity and material back to what Onshape has. Change them in CAD to keep them.
+            {' '}A part you make COTS here stays COTS, and keeps the vendor details and product page you type.
+          </p>
         )}
         <Pick label="Custom or COTS" options={Object.keys(KINDS)} value={kindLabel(kind)} onChange={(label) => setKind(KINDS[label])} />
+        {warning && <Callout title="Changing it to COTS">{warning}</Callout>}
+        {part?.kind === 'cots' && kind === 'made' && (
+          <p className="note">It starts with no stages. After saving, choose them with Add stages.</p>
+        )}
         <label className="field" htmlFor="part-number">
           Part number
           <input id="part-number" className="input mono" value={shownPartNumber} onChange={(e) => setPartNumber(e.target.value)} />
@@ -624,6 +646,10 @@ function PartForm(props: { system: BomSystem; parts: Part[]; part: Part | null; 
             <label className="field" htmlFor="part-vendor-number">
               Vendor part number (optional)
               <input id="part-vendor-number" className="input" value={vendorPartNumber} onChange={(e) => setVendorPartNumber(e.target.value)} />
+            </label>
+            <label className="field" htmlFor="part-product-url">
+              Product page (optional)
+              <input id="part-product-url" className="input" type="url" value={productUrl} onChange={(e) => setProductUrl(e.target.value)} placeholder="https://..." />
             </label>
           </>
         )}
@@ -721,8 +747,9 @@ function Shelf(props: { part: Part; items: Item[]; request: PurchaseItem | undef
  * 1. COTS: its order status from Purchasing and Open in Purchasing, or Purchase.
  *    Custom: how many are on the CNC board, and Ready to CAM.
  *    (Neither for a part removed in Onshape.)
- * 2. Open CAD ↗, if it has an Onshape link.
- * 3. Edit, for student leaders, mentors and admins.
+ * 2. COTS: Product page ↗, from the part or else its Purchasing request (#169).
+ * 3. Open CAD ↗, if it has an Onshape link.
+ * 4. Edit, for student leaders, mentors and admins.
  * A button that doesn't apply is left out. On a phone the row wraps.
  */
 function PartActions(props: {
@@ -736,7 +763,9 @@ function PartActions(props: {
   const { part, request } = props
   const status = request && statusOf(request.status)
   const active = !part.removed_in_onshape
-  if (!active && !part.onshape_url && !props.canEdit) return null
+  // Both are only ever https:// links (the database checks), so they're safe to open. Checked again here to be sure.
+  const productPage = part.kind === 'cots' ? [part.product_url, request?.link].find((link) => link?.startsWith('https://')) : undefined
+  if (!active && !productPage && !part.onshape_url && !props.canEdit) return null
   return (
     <span className="toolbar" style={{ marginTop: 6, gap: 6 }}>
       {active && part.kind === 'cots' && (request && status ? (
@@ -755,6 +784,7 @@ function PartActions(props: {
           <button type="button" className="btn btn-sm" onClick={props.onCam}>Ready to CAM</button>
         </>
       )}
+      {productPage && <a className="btn btn-sm" href={productPage} target="_blank" rel="noopener noreferrer">Product page ↗</a>}
       {/* The database only accepts https:// links here, so it's safe to open. */}
       {part.onshape_url && <a className="btn btn-sm" href={part.onshape_url} target="_blank" rel="noopener noreferrer">Open CAD ↗</a>}
       {props.canEdit && <button type="button" className="btn btn-sm" onClick={props.onEdit}>Edit</button>}
