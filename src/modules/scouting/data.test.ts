@@ -17,13 +17,13 @@ import {
   SCHEDULE_REFRESH_MS, keepScheduleFresh, likelyWinner, matchLabel, matchesWithPredictions, refreshSchedule, savedSchedule, scheduleStatus, scheduleStore, updatedAgo,
   type MatchPrediction, type TbaMatch,
 } from './data'
-import { addMissingTeams, byPosition, moveTeam, picklist, picklistTable, positionBetween, setPickStatus, startPicklist, type PicklistRow } from './data'
+import { addMissingTeams, byPosition, checkPlace, moveTeam, moveTeamTo, picklist, removeTeam, picklistTable, positionBetween, setPickStatus, startPicklist, type PicklistRow } from './data'
 import { COUNTERS, DRIVETRAINS, EVENT_KEY } from './season'
 import { loadSchedule, positionStore, setPosition, teamFor, type SavedSchedule } from './data'
 import { rankOf } from './data'
 import { getEventSim, getNexusStatus, getTeamSeasonRatings, nexusStore, readNexus, readSim, readTeamEvents, refreshNexus, withSim } from './data'
 import { STRATEGY_PATHS, addStrategyMember, isStrategy, removeStrategyMember, strategyTable } from './data'
-import { MAX_PICKLIST_NOTE, addToMyPicklist, moveOnMyPicklist, myPicklist, myPicklistTable, setPicklistNote, startMyPicklist, teamPicklist, type MyPicklistRow } from './data'
+import { MAX_PICKLIST_NOTE, addToMyPicklist, moveOnMyPicklist, myPicklist, myPicklistTable, removeFromMyPicklist, setPicklistNote, startMyPicklist, teamPicklist, type MyPicklistRow } from './data'
 import { addPhoto, photoPath, photoStore, photoToRow, photosTable, shrunkSize, MAX_PHOTO_BYTES } from './data'
 import { readFile } from './photoFiles'
 import { nexusEventUrl, eventTeams, scoutingOverview, type OverviewInput, type Entry, type PitEntry } from './data'
@@ -439,6 +439,43 @@ describe('the shared picklist', () => {
     for (let i = 0; i < 100; i++) await moveTeam(idOf(i % 2 === 0 ? 9992 : 9993), -1)
     expect(teams()).toEqual([9991, 9993, 9992, 9995, 9994])
     expect(new Set(picklist().map((row) => row.position)).size).toBe(5)
+  })
+
+  it('moves a team to any place, with places past either end meaning the top or bottom', async () => {
+    const cases: [team: number, place: number, after: number[]][] = [
+      [9994, 1, [9994, 9991, 9993, 9992, 9995]],
+      [9994, 3, [9991, 9993, 9994, 9992, 9995]],
+      [9991, 5, [9993, 9994, 9992, 9995, 9991]],
+      [9991, 0, [9991, 9993, 9994, 9992, 9995]],
+      [9993, 99, [9991, 9994, 9992, 9995, 9993]],
+      [9993, 5, [9991, 9994, 9992, 9995, 9993]],
+    ]
+    for (const [team, place, after] of cases) {
+      expect(await moveTeamTo(idOf(team), place)).toEqual({ ok: true, value: null })
+      expect(teams()).toEqual(after)
+    }
+    expect(await moveTeamTo(idOf(9991), Number.NaN)).toEqual({ ok: false, error: expect.stringMatching(/place number/) })
+    expect(await moveTeamTo('00000000-0000-4000-8000-000000000000', 1)).toEqual({ ok: false, error: expect.stringMatching(/isn't on the picklist/) })
+  })
+
+  it('takes a team off the list, and only its row changes', async () => {
+    const before = picklist()
+    const gone = before.find((row) => row.team_number === 9992)!
+    expect(await removeTeam(gone.id)).toEqual({ ok: true, value: null })
+    expect(picklist()).toEqual(before.filter((row) => row !== gone))
+    expect(await removeTeam(gone.id)).toEqual({ ok: false, error: expect.stringMatching(/isn't on the picklist/) })
+  })
+
+  it('reads a place typed into Move to…, from 1 to the length of the list', () => {
+    const cases: [text: string, count: number, place: number | null][] = [
+      ['1', 5, 1], [' 5 ', 5, 5], ['3', 5, 3],
+      ['0', 5, null], ['6', 5, null], ['', 5, null], ['2.5', 5, null], ['two', 5, null], ['2', 1, null],
+    ]
+    for (const [text, count, place] of cases) {
+      const result = checkPlace(text, count)
+      expect(result.ok ? result.value : null, `"${text}" of ${count}`).toBe(place)
+    }
+    expect(checkPlace('9', 5)).toEqual({ ok: false, error: expect.stringMatching(/from 1 to 5/) })
   })
 
   it('puts teams with the same position in team number order', () => {
@@ -1988,6 +2025,17 @@ describe('my picklist', () => {
     await moveOnMyPicklist(9992, 3)
     expect(myPicklistTable.rows().find((r) => r.id === before.id)).toBe(before)
     expect(await moveOnMyPicklist(1234, 1)).toEqual({ ok: false, error: "Team 1234 isn't on your picklist." })
+  })
+
+  it('takes a team off my list only, closing the gap so a team added later goes last', async () => {
+    await startMyPicklist([9991, 9992, 9993, 9994])
+    expect(await removeFromMyPicklist(9992)).toEqual({ ok: true, value: null })
+    expect(mine()).toEqual([[9991, 1], [9993, 2], [9994, 3]])
+    await addToMyPicklist([9995])
+    expect(mine()).toEqual([[9991, 1], [9993, 2], [9994, 3], [9995, 4]])
+    // Jordan's list still has 9992.
+    expect(myPicklist(DEMO_PEOPLE.jordan).map((r) => r.team_number)).toContain(9992)
+    expect(await removeFromMyPicklist(9992)).toEqual({ ok: false, error: "Team 9992 isn't on your picklist." })
   })
 
   it('adds, changes and clears a note, up to 500 characters', async () => {

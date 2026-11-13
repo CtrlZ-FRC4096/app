@@ -2931,12 +2931,25 @@ export async function addMissingTeams(teams: number[], event = currentEvent()): 
 export async function moveTeam(id: string, direction: -1 | 1): Promise<Result> {
   const row = picklistTable.rows().find((r) => r.id === id)
   if (!row) return fail("That team isn't on the picklist any more.")
+  return moveTeamTo(id, picklist(row.event_key).indexOf(row) + 1 + direction)
+}
+
+/**
+ * Move a team to a place on its event's list (1 is the top), for dragging
+ * and Move to…. Past either end means the top or the bottom. The teams in
+ * between shift one place, but only the moved team's row changes.
+ */
+export async function moveTeamTo(id: string, place: number): Promise<Result> {
+  const row = picklistTable.rows().find((r) => r.id === id)
+  if (!row) return fail("That team isn't on the picklist any more.")
+  if (!Number.isFinite(place)) return fail('Type a place number, like 3.')
   const list = picklist(row.event_key)
-  const to = list.indexOf(row) + direction
-  if (to < 0 || to >= list.length) return ok(null)
+  const to = Math.min(list.length, Math.max(1, Math.round(place))) - 1
+  if (to === list.indexOf(row)) return ok(null)
 
   // Its new neighbours: the teams it ends up between (none past either end).
-  const [before, after] = direction === -1 ? [list[to - 1], list[to]] : [list[to], list[to + 1]]
+  const order = list.filter((r) => r !== row)
+  const [before, after] = [order[to - 1], order[to]]
   const position = positionBetween(before?.position, after?.position)
   if (position !== before?.position && position !== after?.position) {
     const result = await picklistTable.update(id, { position })
@@ -2944,7 +2957,6 @@ export async function moveTeam(id: string, direction: -1 | 1): Promise<Result> {
   }
 
   // Too close to tell apart: number the whole list again, with this move in it.
-  const order = list.filter((r) => r.id !== id)
   order.splice(to, 0, row)
   for (const [i, r] of order.entries()) {
     const renumbered = (i + 1) * POSITION_GAP
@@ -2960,6 +2972,16 @@ export async function setPickStatus(id: string, status: PickStatus): Promise<Res
   if (!PICK_STATUSES.includes(status)) return fail('Choose Open, Picked or Do not pick.')
   const result = await picklistTable.update(id, { status })
   return result.ok ? ok(null) : result
+}
+
+/**
+ * Take a team off the event's picklist, for everyone: say it was added by
+ * mistake. The other teams keep their order, and only this row changes.
+ * (To keep a team in its place but out of the way, mark it Do not pick.)
+ */
+export async function removeTeam(id: string): Promise<Result> {
+  if (!picklistTable.rows().some((r) => r.id === id)) return fail("That team isn't on the picklist any more.")
+  return picklistTable.remove(id)
 }
 
 // ---------------------------------------------------------------------------
@@ -3076,6 +3098,38 @@ export async function moveOnMyPicklist(team: number, rank: number, event = curre
     if (!result.ok) return result
   }
   return ok(null)
+}
+
+/**
+ * Take a team off your list, with its note. The teams below it move up a
+ * place, so the places stay 1, 2, 3… and a team added later goes last.
+ */
+export async function removeFromMyPicklist(team: number, event = currentEvent()): Promise<Result> {
+  const problem = cantChangePicklist()
+  if (problem) return fail(problem)
+  const list = myPicklist(currentUser()?.id, event)
+  const row = list.find((r) => r.team_number === team)
+  if (!row) return fail(`Team ${team} isn't on your picklist.`)
+  const removed = await myPicklistTable.remove(row.id)
+  if (!removed.ok) return removed
+  for (const [i, r] of list.filter((r) => r !== row).entries()) {
+    if (r.rank === i + 1) continue
+    const result = await myPicklistTable.update(r.id, { rank: i + 1 })
+    if (!result.ok) return fail(`Team ${team} is off your list, but the places below it didn't all update. Move any team to put them in order. ${result.error}`)
+  }
+  return ok(null)
+}
+
+/**
+ * Read a place typed into Move to… on a list of `count` teams, like "3".
+ * It must be a whole number from 1 to `count`.
+ */
+export function checkPlace(text: string, count: number): Result<number> {
+  const place = Number(text.trim())
+  if (!text.trim() || !Number.isInteger(place) || place < 1 || place > count) {
+    return fail(count === 1 ? "There's only 1 place on this list." : `Type a place from 1 to ${count}.`)
+  }
+  return ok(place)
 }
 
 /** Add, change or clear (with '') your note on a team on your list. */
