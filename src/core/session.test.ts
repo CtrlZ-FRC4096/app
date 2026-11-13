@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { effectiveSignIn, findAccess } from './session'
+import { checkSwitch, effectiveSignIn, findAccess } from './session'
 import { explainSignInError } from './supabase'
 import { DEMO_PEOPLE } from './demo'
 import type { Member } from './members'
@@ -82,5 +82,21 @@ describe('effectiveSignIn', () => {
   it('keeps a real sign-in as it is, offline too', () => {
     const someoneElse = { status: 'signed-in' as const, userId: '00000000-0000-4000-8000-000000000002' }
     expect(effectiveSignIn(someoneElse, false, me)).toEqual(someoneElse)
+  })
+})
+
+describe('checkSwitch', () => {
+  it('stops Slack signing the same person back in after Switch user, and nothing else', () => {
+    const cases: [string | null, string, boolean][] = [
+      // [who tapped Switch user, who Slack signed in, stopped?]
+      [null, 'u1', false],
+      ['u1', 'u2', false],
+      ['u1', 'u1', true],
+    ]
+    for (const [from, signedIn, stopped] of cases) {
+      const problem = checkSwitch(from, signedIn)
+      expect(problem !== null, `${from} then ${signedIn}`).toBe(stopped)
+      if (problem) expect(problem).toMatch(/sign out of Slack/i)
+    }
   })
 })

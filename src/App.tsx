@@ -1,6 +1,6 @@
 import { createElement, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { modules } from './modules'
-import { ROLES, canOpen, roleName, signOut, useAccess, useSession, useSignIn, type User } from './core/session'
+import { ROLES, canOpen, roleName, signOut, switchUser, useAccess, useSession, useSignIn, type User } from './core/session'
 import { isLive } from './core/supabase'
 import { setDemoRole } from './core/demo'
 import { initials } from './core/members'
@@ -226,9 +226,15 @@ function Shell({ user }: { user: User }) {
               <span className="note">{roleName(user.role)}</span>
             </p>
             {isLive ? (
-              <button type="button" className="menu-item" onClick={() => void signOut()}>
-                <span className="menu-item-name">Sign out</span>
-              </button>
+              <>
+                {/* For shared computers: the sign-in page then shows how to sign out of Slack too. */}
+                <button type="button" className="menu-item" onClick={() => void switchUser()}>
+                  <span className="menu-item-name">Switch user</span>
+                </button>
+                <button type="button" className="menu-item" onClick={() => void signOut()}>
+                  <span className="menu-item-name">Sign out</span>
+                </button>
+              </>
             ) : (
               <>
                 <p className="eyebrow menu-label">View as</p>
