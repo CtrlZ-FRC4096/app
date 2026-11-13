@@ -10,13 +10,15 @@
  * page tile share one copy, and they still show with no connection.
  *
  * Student leaders, mentors and admins can add events from the app
- * (addEvent()), and change or remove the ones the app added.
+ * (addEvent()), change or remove the ones the app added, and turn sign-ups
+ * in the app on or off for any event (setSignUps()).
  *
  * Sign-ups come two ways:
  *   - A link, on a "Sign up: https://..." line in the description, for a
  *     Google Form or Slack post. Works for events made in Google Calendar.
- *   - In the app, for events added from the app with sign-ups on: people
- *     tap Sign up, and everyone sees who's going. Student leaders, mentors
+ *   - In the app, for any event with sign-ups on (in the form for events
+ *     the app added, or Take sign-ups on any event): people tap Sign up,
+ *     and everyone sees who's going. Student leaders, mentors
  *     and admins can also sign someone else up or take them off. Those are
  *     kept in the calendar_signups table
  *     (supabase/migrations/..._calendar_signups.sql), one row per person
@@ -29,6 +31,7 @@ import {
   checkEvent,
   getCalendarEvents,
   removeCalendarEvent,
+  setEventSignUps,
   TEAM_TIME_ZONE,
   type CalendarEvent,
   type EventInput,
@@ -372,6 +375,31 @@ export async function removeEvent(event: CalendarEvent): Promise<Result> {
   const removed = await removeCalendarEvent(event)
   if (removed.ok) calendarStore.set((prev) => ({ ...prev, events: prev.events.filter((e) => e.id !== event.id) }))
   return removed
+}
+
+/**
+ * Turn sign-ups in the app on or off for an event, without changing
+ * anything else about it: for events made in Google Calendar too. Student
+ * leaders, mentors and admins.
+ *
+ * Turning them off keeps who signed up, hidden, so turning them back on
+ * brings the list back. Only events that aren't over can be turned on.
+ */
+export async function setSignUps(event: CalendarEvent, on: boolean): Promise<Result<CalendarEvent>> {
+  if (on && hasEnded(event)) return fail("This event is over, so it can't take sign-ups.")
+  const changed = await setEventSignUps(event, on)
+  if (changed.ok) calendarStore.set((prev) => ({ ...prev, events: prev.events.map((e) => (e.id === event.id ? changed.value : e)) }))
+  return changed
+}
+
+/**
+ * Whether a student leader, mentor or admin sees Take sign-ups on an event:
+ * it isn't over, doesn't take sign-ups in the app yet, and has no sign-up
+ * link (two Sign up buttons would be confusing). Stop sign-ups shows on
+ * events that take them.
+ */
+export function canTakeSignUps(event: CalendarEvent, now: Date = new Date()): boolean {
+  return !event.signUps && !hasEnded(event, now) && !signUpLink(event.description)
 }
 
 // ---------------------------------------------------------------------------

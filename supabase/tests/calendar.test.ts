@@ -17,6 +17,7 @@ import {
   parseServiceAccount,
   paths,
   signedAssertion,
+  signUpsPatch,
   toGoogle,
   type ServiceAccount,
 } from '../functions/calendar/calendar.ts'
@@ -106,6 +107,16 @@ describe('calendarRequest', () => {
     expect(calendarRequest({ kind: 'add', event: meeting }, '')).toEqual(refused)
   })
 
+  it('lets student leaders, mentors and admins turn sign-ups on or off for an event, and nobody else', () => {
+    for (const role of ['leader', 'mentor', 'admin']) {
+      expect(calendarRequest({ kind: 'signups', id: 'g1_20261105', signUps: true }, role), role).toEqual({ kind: 'signups', id: 'g1_20261105', signUps: true })
+    }
+    expect(calendarRequest({ kind: 'signups', id: 'g1', signUps: false }, 'leader')).toMatchObject({ signUps: false })
+    expect(calendarRequest({ kind: 'signups', id: 'g1', signUps: true }, 'student')).toEqual({ error: expect.stringMatching(/Only student leaders and mentors can turn sign-ups/), status: 403 })
+    expect(calendarRequest({ kind: 'signups', id: 'g1', signUps: 'yes' }, 'mentor')).toMatchObject({ status: 400 })
+    expect(calendarRequest({ kind: 'signups', id: '../acl', signUps: true }, 'mentor')).toMatchObject({ status: 400 })
+  })
+
   it('refuses anything else', () => {
     expect(calendarRequest({ kind: 'share' }, 'admin')).toMatchObject({ status: 400 })
     expect(calendarRequest({ kind: 'remove', id: '../acl' }, 'admin')).toEqual({ error: "That isn't an event ID.", status: 400 })
@@ -166,6 +177,21 @@ describe('toGoogle and fromGoogle', () => {
     expect(fromGoogle({ ...withSignUps, id: 'x2' })).toMatchObject({ signUps: true })
     // Changing it the way index.ts does: the old event, with the new parts on top.
     expect(fromGoogle({ ...withSignUps, id: 'x2', ...toGoogle({ ...outreach, signUps: false }, 'member-1') })).toMatchObject({ signUps: false, addedBy: 'member-1' })
+  })
+
+  it("turns sign-ups on or off for any event by sending only the app's private marks, keeping the others", () => {
+    const made = { id: 'g1', summary: 'Build session', description: 'Bring safety glasses', location: 'The shop', start: { dateTime: '2026-11-03T18:00:00-06:00' }, end: { dateTime: '2026-11-03T21:00:00-06:00' } }
+    const on = signUpsPatch(made, true)
+    // Nothing but the marks: Google's PATCH leaves the title, times, place and description alone.
+    expect(on).toEqual({ extendedProperties: { private: { teamAppSignUps: 'yes' } } })
+    // Google answers with the whole event, marks and all.
+    const marked = { ...made, ...on }
+    expect(fromGoogle(marked)).toMatchObject({ signUps: true, fromApp: false, title: 'Build session', description: 'Bring safety glasses' })
+    expect(mayChange(marked, 'mentor'), "taking sign-ups doesn't make it the app's to change").toMatch(/Google Calendar/)
+    expect(fromGoogle({ ...made, ...signUpsPatch(marked, false) })).toMatchObject({ signUps: false })
+    // An event the app added keeps its own marks.
+    const added = toGoogle({ title: 'Demo', start: '2026-11-13', end: '2026-11-13', allDay: true, location: null, description: null, signUps: false }, 'member-1')
+    expect(signUpsPatch(added, true).extendedProperties?.private).toEqual({ teamApp: 'yes', teamAppAddedBy: 'member-1', teamAppSignUps: 'yes' })
   })
 
   it('reads timed events people made in Google Calendar, and skips cancelled ones', () => {

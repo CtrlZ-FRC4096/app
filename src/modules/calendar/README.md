@@ -11,8 +11,9 @@ loads them when it opens, at most every 10 minutes, or when someone clicks
 **Adding events.** Student leaders and mentors (and admins) see **Add
 event**, and **Change** and **Remove** on events the app added. Students
 see the events and sign up, but ask a student leader or mentor to add or
-change one. The app never changes events made in Google Calendar: change
-those in Google Calendar.
+change one. The app never changes the details of events made in Google
+Calendar: change those in Google Calendar. It can turn sign-ups on for
+them, though (below).
 
 **Sign-ups** come two ways. Pick one under "Sign-ups" when you add an event:
 
@@ -21,6 +22,14 @@ those in Google Calendar.
   Jordan Kim, Pat Chen". There are no limits on how many can sign up.
   Student leaders and mentors also see **Edit list**, to sign someone else
   up or take anyone off. These are kept in the `calendar_signups` table.
+
+  For **any** event still to come, including ones made in Google Calendar,
+  student leaders and mentors see **Take sign-ups** (#159). It turns on
+  sign-ups in the app and changes nothing else about the event: only a
+  private mark the app keeps on it (`teamAppSignUps`). **Stop sign-ups**
+  turns them off again. Whoever had signed up stays on the list, hidden,
+  and comes back if sign-ups are taken again. Take sign-ups doesn't show on
+  an event with a sign-up link, so it never gets two Sign up buttons.
 - **With a link,** to a Google Form or Slack post. The event gets a **Sign
   up** button that opens the link. For an event made in Google Calendar,
   add a line to its description that starts with `Sign up:` and then the
@@ -56,6 +65,7 @@ them with no connection, with when they're from.
 | Sign themselves up, and cancel it | Yes | Yes | The `calendar_signups` table's rules |
 | Add events | No | Yes | The `calendar` server function (`calendarRequest()`) |
 | Change and remove events the app added | No | Yes | The `calendar` server function (`calendarRequest()` and `mayChange()`) |
+| Take sign-ups and stop sign-ups, on any event | No | Yes | The `calendar` server function (`calendarRequest()`), which changes only the event's sign-ups mark (`signUpsPatch()`) |
 | Sign someone else up, or take anyone off | No | Yes | The `calendar_signups` table's rules (`private.is_leader()`) |
 
 The app also marks each event it adds with who added it
@@ -69,7 +79,5 @@ the page says what's wrong.
 
 - **Limits,** like 6 van seats or a sign-up deadline. These need new
   columns or a settings table, and a mentor's approval.
-- **Sign-ups in the app for events made in Google Calendar,** for example
-  with a `Sign up: in the app` line.
 - **A Slack reminder** the day before an event, to the people signed up,
   with `src/core/reminders.ts`.

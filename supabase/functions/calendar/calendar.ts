@@ -16,11 +16,16 @@
  *   - change, remove: student leaders, mentors and admins. The app only
  *     changes and removes events it added itself, so it can't wreck ones
  *     people made in Google Calendar.
+ *   - signups: student leaders, mentors and admins turn sign-ups in the app
+ *     on or off for any event, including ones made in Google Calendar
+ *     (#159). It changes only the app's private sign-ups mark
+ *     (signUpsPatch()), never the title, times, place or description.
  */
 
 /** The roles that can add, change and remove events: student leaders, mentors and admins. */
 const LEADER_ROLES = ['leader', 'mentor', 'admin']
 const LEADERS_ONLY = 'Only student leaders and mentors can add, change or remove events. Ask one of them.'
+const SIGN_UPS_LEADERS_ONLY = 'Only student leaders and mentors can turn sign-ups on or off. Ask one of them.'
 
 export const CALENDAR_API = 'https://www.googleapis.com/calendar/v3'
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -76,6 +81,7 @@ export type CalendarRequest =
   | { kind: 'add'; event: EventInput }
   | { kind: 'change'; id: string; event: EventInput }
   | { kind: 'remove'; id: string }
+  | { kind: 'signups'; id: string; signUps: boolean }
 
 /** The longest each part of an event can be. src/core/calendar.ts allows the same. */
 export const LIMITS = { title: 200, location: 300, description: 4000 }
@@ -137,12 +143,16 @@ export function calendarRequest(body: unknown, role: string, now = Date.now()): 
     if (to - from > 366 * DAY_MS) return { error: 'Ask for a year of events or less at once.', status: 400 }
     return { kind: 'events', from: new Date(from).toISOString(), to: new Date(to).toISOString() }
   }
-  if (r.kind !== 'add' && r.kind !== 'change' && r.kind !== 'remove') {
-    return { error: 'Ask for events, to add, change or remove one, or to check.', status: 400 }
+  if (r.kind !== 'add' && r.kind !== 'change' && r.kind !== 'remove' && r.kind !== 'signups') {
+    return { error: 'Ask for events, to add, change or remove one, to turn its sign-ups on or off, or to check.', status: 400 }
   }
-  if (!LEADER_ROLES.includes(role)) return { error: LEADERS_ONLY, status: 403 }
+  if (!LEADER_ROLES.includes(role)) return { error: r.kind === 'signups' ? SIGN_UPS_LEADERS_ONLY : LEADERS_ONLY, status: 403 }
   if (r.kind !== 'add' && !(typeof r.id === 'string' && EVENT_ID.test(r.id))) return { error: "That isn't an event ID.", status: 400 }
   if (r.kind === 'remove') return { kind: 'remove', id: r.id as string }
+  if (r.kind === 'signups') {
+    if (typeof r.signUps !== 'boolean') return { error: 'Say whether to turn sign-ups on (true) or off (false).', status: 400 }
+    return { kind: 'signups', id: r.id as string, signUps: r.signUps }
+  }
   const event = eventInput(r.event)
   if ('error' in event) return { error: event.error, status: 400 }
   return r.kind === 'add' ? { kind: 'add', event } : { kind: 'change', id: r.id as string, event }
@@ -198,6 +208,16 @@ export function mayChange(item: GoogleEvent, role: string): string | null {
   return LEADER_ROLES.includes(role) ? null : LEADERS_ONLY
 }
 
+/**
+ * What to send Google (with PATCH) to turn sign-ups in the app on or off
+ * for an event: only its private marks, with the sign-ups mark set to yes
+ * or no and the others kept as they were. Everything else about the event
+ * stays exactly as it is, so this works on events made in Google Calendar.
+ */
+export function signUpsPatch(item: GoogleEvent, on: boolean): GoogleEvent {
+  return { extendedProperties: { private: { ...item.extendedProperties?.private, [SIGN_UPS]: on ? 'yes' : 'no' } } }
+}
+
 /** An event from Google Calendar, for the app, or null if it was cancelled. */
 export function fromGoogle(item: GoogleEvent): CalendarEvent | null {
   const start = item.start?.dateTime ?? item.start?.date
@@ -215,7 +235,8 @@ export function fromGoogle(item: GoogleEvent): CalendarEvent | null {
     url: item.htmlLink ?? null,
     fromApp: isAppEvent(item),
     addedBy: addedBy(item),
-    signUps: isAppEvent(item) && item.extendedProperties?.private?.[SIGN_UPS] === 'yes',
+    // Any event can take sign-ups in the app, not just ones it added (signUpsPatch()).
+    signUps: item.extendedProperties?.private?.[SIGN_UPS] === 'yes',
   }
 }
 
@@ -334,7 +355,7 @@ export function createCalendar(account: ServiceAccount, calendarId: string, { fe
   }
 
   /** Ask the team calendar: `path` is from `paths`. */
-  return async function calendar(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<CalendarAnswer> {
+  return async function calendar(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<CalendarAnswer> {
     const signedIn = await accessToken()
     if (!signedIn.ok) return signedIn
     let response: Response

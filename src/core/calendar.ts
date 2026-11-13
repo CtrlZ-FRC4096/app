@@ -11,6 +11,10 @@
  *     mentors and admins (canChangeEvent()). The app only changes and
  *     removes events it added itself (event.fromApp), never ones people
  *     made in Google Calendar.
+ *   - setEventSignUps(): student leaders, mentors and admins
+ *     (canSetSignUps()) turn sign-ups in the app on or off for any event,
+ *     including ones made in Google Calendar. Nothing else about the event
+ *     changes.
  *
  * The server function checks all of this too: these checks are so the
  * page can say what's wrong without asking it.
@@ -45,7 +49,7 @@ export interface CalendarEvent {
   fromApp: boolean
   /** The member id of who added it from the app, or null. */
   addedBy: string | null
-  /** People sign up for it in the app. */
+  /** People sign up for it in the app. Any event can, not just ones the app added. */
   signUps: boolean
 }
 
@@ -120,6 +124,28 @@ function whyNotChange(event: CalendarEvent): string | null {
   if (!me) return 'Sign in first.'
   if (!event.fromApp) return 'The app only changes events it added. Change this one in Google Calendar.'
   return canChangeEvent(event, me) ? null : 'Only student leaders and mentors can change or remove events. Ask one of them.'
+}
+
+/** Whether `user` can turn sign-ups in the app on or off for an event: student leaders, mentors and admins, on any event. */
+export function canSetSignUps(user: Pick<User, 'role'>): boolean {
+  return isLeader(user.role)
+}
+
+/**
+ * Turn sign-ups in the app on or off for any event, including ones made in
+ * Google Calendar. Only that changes: the title, times, place and
+ * description stay as they are. Student leaders, mentors and admins.
+ */
+export async function setEventSignUps(event: CalendarEvent, on: boolean): Promise<Result<CalendarEvent>> {
+  const me = currentUser()
+  if (!me) return fail('Sign in first.')
+  if (!canSetSignUps(me)) return fail('Only student leaders and mentors can turn sign-ups on or off. Ask one of them.')
+  const answer = await callFunction<{ event: CalendarEvent }>('calendar', { kind: 'signups', id: event.id, signUps: on }, () => {
+    const changed = { ...event, signUps: on }
+    demoChanged.set(event.id, changed)
+    return { event: changed }
+  })
+  return answer.ok ? ok(answer.value.event) : answer
 }
 
 /** Why the signed-in person can't add an event, or null if they can. */
