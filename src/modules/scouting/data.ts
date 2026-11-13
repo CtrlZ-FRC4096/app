@@ -1014,6 +1014,16 @@ export async function getEventTeams(event = currentEvent()): Promise<Result<TbaT
   return result.ok ? ok([...(result.value ?? [])].sort((a, b) => a.team_number - b.team_number)) : result
 }
 
+/**
+ * The event's page on Nexus (frc.nexus, #165), which shows what's on the
+ * field right now, who should be queuing, and announcements. Only a link:
+ * Nexus's live status in the app would need a server function with a key,
+ * which a mentor sets up.
+ */
+export function nexusEventUrl(event = currentEvent()): string {
+  return `https://frc.nexus/en/event/${encodeURIComponent(event)}`
+}
+
 /** A team's page on The Blue Alliance, for the season of `event` (like 2026ilch → 2026). */
 export function tbaTeamUrl(team: number, event = currentEvent()): string {
   return `https://www.thebluealliance.com/team/${team}/${event.slice(0, 4)}`

@@ -48,8 +48,9 @@ describe('the Match / Pit switch', () => {
     expect(html).toMatch(/<div hidden="">.*Pit form/)
   })
 
-  it('has a card for every page, each linking to it, with the match form at #/scouting/match', () => {
+  it('has a card for every page, each linking to it, with the match form at #/scouting/match, and a link to the event on Nexus', () => {
     const html = renderToString(<ScoutingPage />)
+    expect(html).toContain(`href="https://frc.nexus/en/event/${EVENT_KEY}"`)
     for (const path of ['match', 'pit', 'schedule', 'rankings', 'team', 'picklist', 'shared-picklist', 'simulate', 'stats']) {
       expect(html).toContain(`href="#/scouting/${path}"`)
     }

@@ -134,6 +134,15 @@ picklists are for it, and new entries are saved under it.
 - **Until a mentor picks one,** it's `EVENT_KEY` in `season.ts`, and the
   top of the page says so.
 
+## Nexus
+
+[Nexus](https://frc.nexus) shows what's happening at an event right now:
+what's on the field, who should be queuing, and announcements. The overview
+and the Schedule page have an **Open in Nexus ↗** link to the current
+event's page (`nexusEventUrl()` in `data.ts`, #165). Showing Nexus's live
+status in the app would need a server function holding a Nexus key, like
+`tba` and `match13`: that needs a mentor.
+
 ## The Blue Alliance
 
 `data.ts` already gets these from The Blue Alliance, through the `tba`

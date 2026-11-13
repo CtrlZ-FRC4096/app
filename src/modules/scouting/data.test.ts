@@ -21,7 +21,7 @@ import { addMissingTeams, byPosition, moveTeam, picklist, picklistTable, positio
 import { COUNTERS, DRIVETRAINS, EVENT_KEY } from './season'
 import { loadSchedule, positionStore, setPosition, teamFor, type SavedSchedule } from './data'
 import { rankOf } from './data'
-import { eventTeams, scoutingOverview, type OverviewInput, type Entry, type PitEntry } from './data'
+import { nexusEventUrl, eventTeams, scoutingOverview, type OverviewInput, type Entry, type PitEntry } from './data'
 import { STAT_COLUMNS, ratingComponents, sortStats, statColumns, statText, statValue } from './data'
 import { MIN_MATCHES, allianceScore, entryPoints, pointsRange, redWinChance, teamAps, teamPoints, upcomingMatches } from './data'
 import { chooseEvent, currentEvent, eventStore, eventWhenWhere, eventsTable, getOurEvents, latestEvent, lookupSeasons, searchEvents, type TbaEvent } from './data'
@@ -1856,5 +1856,12 @@ describe('the scouting overview', () => {
     const saved = schedule([match(1, [4096, 9991, 9992], [9993, 9994, 9995])])
     expect(eventTeams(saved, { event: EVENT_KEY, rankings: [ranking(9996, 1)], checked_at: '' }, [])).toEqual([4096, 9991, 9992, 9993, 9994, 9995, 9996])
     expect(eventTeams(null, null, [])).toEqual([])
+  })
+})
+
+describe('Nexus (#165)', () => {
+  it("links to the current event's page on Nexus, or another event's", () => {
+    expect(nexusEventUrl()).toBe(`https://frc.nexus/en/event/${EVENT_KEY}`)
+    expect(nexusEventUrl('2026mndu2')).toBe('https://frc.nexus/en/event/2026mndu2')
   })
 })

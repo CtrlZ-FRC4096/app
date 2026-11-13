@@ -1,6 +1,6 @@
 import { href } from '../../core/router'
 import { PageHead, Pill } from '../../core/ui'
-import { useCurrentEvent, useScoutingOverview } from './data'
+import { nexusEventUrl, useCurrentEvent, useScoutingOverview } from './data'
 
 // The scouting overview (#160), at #/scouting: a card for each scouting
 // page, with how it's going and its latest results. The sums are
@@ -16,6 +16,10 @@ export default function Overview(props: { paths: Record<string, string> }) {
       <PageHead title="Scouting overview">
         {`How scouting is going at ${event.name ?? event.key}. Tap a card to open that page.`}
       </PageHead>
+      <div className="toolbar" style={{ marginBottom: 12 }}>
+        <a className="btn" style={{ minHeight: 44 }} href={nexusEventUrl(event.key)} target="_blank" rel="noreferrer">Open in Nexus ↗</a>
+        <span className="note">What's on the field now, and who should be queuing</span>
+      </div>
       <div className="modules">
         {cards.map((card) => (
           <a key={card.view} className="panel tile" href={href('scouting', props.paths[card.view] ?? '')}>
