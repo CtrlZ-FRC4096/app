@@ -1,6 +1,6 @@
-import { useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { Bar, Panel, Pill } from '../../core/ui'
-import { MAX_ITEM_LENGTH, PIT_SUBGROUPS, type PitSubgroup, addPitItem, assignPitItem, movePitItem, setPitItemCompleted, usePitChecklist, useSubgroupMembers, belongsToSubgroup, setSubgroupMembers } from './data'
+import { MAX_ITEM_LENGTH, PIT_SUBGROUPS, type PitSubgroup, addPitItem, assignPitItem, movePitItem, movePitItemTo, setPitItemCompleted, usePitChecklist, useSubgroupMembers, belongsToSubgroup, setSubgroupMembers } from './data'
 import { useMembers } from '../../core/members'
 import { isMentor, useSession } from '../../core/session'
 import { usePitDrag } from './usePitDrag'
@@ -24,10 +24,33 @@ export function PitChecklist() {
   const input = useRef<HTMLInputElement>(null)
   const completed = items.filter((item) => item.completed).length
   const [announcement, setAnnouncement] = useState('')
+  // The item just moved with Move to…, to light up and scroll to.
+  const [moved, setMoved] = useState<{ id: string; n: number } | null>(null)
+  const list = useRef<HTMLUListElement>(null)
   const drag = usePitDrag((error, announcement) => {
     setError(error)
     setAnnouncement(announcement)
   })
+
+  // Scroll a moved item into view, and stop lighting it up after a moment.
+  useEffect(() => {
+    if (!moved) return
+    const row = [...(list.current?.querySelectorAll<HTMLElement>('[data-pit-id]') ?? [])].find((r) => r.dataset.pitId === moved.id)
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    row?.scrollIntoView({ block: 'nearest', behavior: still ? 'auto' : 'smooth' })
+    const stop = setTimeout(() => setMoved((now) => (now === moved ? null : now)), 1200)
+    return () => clearTimeout(stop)
+  }, [moved])
+
+  /** Move to… in an item's menu. Gives back what went wrong, for the menu to show, or '' if it moved. */
+  function moveTo(id: string, place: string, name: string): string {
+    const result = movePitItemTo(id, place)
+    if (!result.ok) return result.error
+    setError('')
+    setMoved((last) => ({ id, n: (last?.n ?? 0) + 1 }))
+    setAnnouncement(`Moved ${name} to position ${Number(place)}.`)
+    return ''
+  }
 
   function add(event: FormEvent) {
     event.preventDefault()
@@ -45,7 +68,7 @@ export function PitChecklist() {
     <section className="stack" aria-labelledby="pit-checklist-title">
       <h2 id="pit-checklist-title">Pit checklist</h2>
       <p className="muted">
-        Drag the handle on the right to reorder items. Only assigned people can check or uncheck an item. Mentors can change assignments in the three-dot menu.
+        Drag the handle on the right to reorder items, or use Move to… in an item's three-dot menu. Only assigned people can check or uncheck an item. Mentors can also change assignments and rename items there.
       </p>
       <div className="callout">
         <strong>Local preview</strong>
@@ -59,9 +82,9 @@ export function PitChecklist() {
           <Bar value={items.length ? completed / items.length : 0} label="Pit checklist completion" />
         </div>
         <p className="pit-sr-only" role="status">{announcement}</p>
-        <ul className="pit-checklist">
+        <ul ref={list} className="pit-checklist">
           {items.map((item) => (
-            <li key={item.id} data-pit-id={item.id} className={drag.activeId === item.id ? 'pit-dragging' : undefined} style={drag.style(item.id)}>
+            <li key={item.id} data-pit-id={item.id} className={drag.activeId === item.id ? 'pit-dragging' : !drag.activeId && moved?.id === item.id ? 'pit-moved' : undefined} style={drag.style(item.id)}>
               <div className="pit-item-heading">
               <label className="check pit-item">
                 <input type="checkbox" aria-label={item.text} checked={item.completed} disabled={!item.assigneeIds?.includes(user.id) || !belongsToSubgroup(user.id, item.subgroup ?? 'General')} onChange={(event) => {
@@ -81,7 +104,7 @@ export function PitChecklist() {
               <div className="pit-item-tools">
                 <p className="note">Assigned to: {item.assigneeIds?.length ? item.assigneeIds.map((id) => members.find((member) => member.id === id)?.name ?? 'Former member').join(', ') : 'Unassigned — ask a mentor to assign people'}</p>
               </div>
-                  {isMentor(user.role) && <details className="pit-menu" onKeyDown={(event) => {
+                  <details className="pit-menu" onKeyDown={(event) => {
                     if (event.key === 'Escape') {
                       event.currentTarget.open = false
                       event.currentTarget.querySelector('summary')?.focus()
@@ -89,6 +112,9 @@ export function PitChecklist() {
                   }}>
                     <summary aria-label={`More options for ${item.text}`} title="More options">⋯</summary>
                     <div className="pit-menu-content">
+                    <PitMoveTo name={item.text} place={items.indexOf(item) + 1} count={items.length} group={`pit-tools-${item.id}`}
+                      onMove={(place) => moveTo(item.id, place, item.text)} />
+                    {isMentor(user.role) && <>
                     <details className="pit-submenu" name={`pit-tools-${item.id}`}>
                     <summary>Person assignment</summary>
                     <div className="pit-assign">
@@ -126,8 +152,9 @@ export function PitChecklist() {
                       <span>Other tools</span>
                       <p className="note">More tools can be added here.</p>
                     </div>
+                    </>}
                     </div>
-                  </details>}
+                  </details>
               <button type="button" className="pit-drag-handle" aria-label={`Reorder ${item.text}`}
                 title="Drag to reorder. Use Up and Down arrow keys when focused."
                 onPointerDown={(event) => drag.start(event, item.id)}
@@ -184,5 +211,44 @@ export function PitChecklist() {
         </form>
       </Panel>
     </section>
+  )
+}
+
+// "Move to…" in an item's three-dot menu, for everyone: anyone can reorder
+// the checklist. A dropdown with a box for the position and a Move button.
+// A wrong position is explained right under the box, so it's seen while the
+// menu is open. `group` makes it close when another dropdown in the same
+// menu opens.
+function PitMoveTo(props: { name: string; place: number; count: number; group: string; onMove: (place: string) => string }) {
+  const [text, setText] = useState('')
+  const [error, setError] = useState('')
+  const input = useRef<HTMLInputElement>(null)
+  const id = useId()
+  return (
+    <details className="pit-submenu" name={props.group} onToggle={(event) => { if (event.currentTarget.open) input.current?.focus() }}>
+      <summary>Move to…</summary>
+      <form className="pit-move-to" onSubmit={(event) => {
+        event.preventDefault()
+        const problem = Number(text) === props.place ? `It's already at position ${props.place}.` : props.onMove(text)
+        setError(problem)
+        if (problem) {
+          input.current?.focus()
+          return
+        }
+        setText('')
+        const menu = event.currentTarget.closest('.pit-menu')
+        menu?.removeAttribute('open')
+        menu?.querySelector('summary')?.focus()
+      }}>
+        <label htmlFor={id}>{`Position, from 1 to ${props.count}. It's at ${props.place} now.`}</label>
+        <div className="pit-move-to-row">
+          <input ref={input} id={id} className="input" inputMode="numeric" enterKeyHint="go" autoComplete="off" placeholder="#"
+            value={text} aria-invalid={!!error} aria-describedby={error ? `${id}-error` : undefined}
+            onChange={(event) => { setText(event.target.value.replace(/\D/g, '')); setError('') }} />
+          <button type="submit" className="btn btn-primary" disabled={!text}>Move</button>
+        </div>
+        {error && <p id={`${id}-error`} className="note" role="alert" style={{ margin: 0 }}>{error}</p>}
+      </form>
+    </details>
   )
 }

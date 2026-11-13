@@ -15,9 +15,14 @@ Keyboard users can focus the handle and press Up or Down. The destination row is
 previewed while dragging: the lifted item follows your pointer and nearby rows
 slide into place. Drops settle smoothly, with automatic scrolling at the viewport
 edges. Reduced-motion preferences disable row transitions. Releasing outside the
-list cancels the move. Mentors
-open the three-dot menu for Person assignment and a Rename button; Escape closes
-the menu. Person selections and subgroup membership edits save immediately with no
+list cancels the move.
+
+Everyone can open an item's three-dot menu for **Move to…**: type a position
+and press **Move** (`movePitItemTo()` in `data.ts` checks it's from 1 to the
+number of items; a wrong one is explained under the box). The moved item lights
+up for a moment and scrolls into view. Mentors also see Person assignment, a
+Rename button and the Other tools area there; Escape closes the menu. Person
+selections and subgroup membership edits save immediately with no
 save button. Clearing everyone leaves the item unassigned. Rename opens a separate
 popup with a name field and Rename button. Renaming keeps assignments, completion and order. The Other tools area
 reserves space for future tools.

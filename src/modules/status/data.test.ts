@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MAX_ITEM_LENGTH, addPitItem, assignPitItem, movePitItem, reorderPitItem, renamePitItem, setPitItemSubgroup, checklistStore, setPitItemCompleted, subgroupMembersStore, setSubgroupMembers, belongsToSubgroup, pitChecklistSummary, matchMembers, nameMatches } from './data'
+import { MAX_ITEM_LENGTH, addPitItem, assignPitItem, movePitItem, movePitItemTo, reorderPitItem, renamePitItem, setPitItemSubgroup, checklistStore, setPitItemCompleted, subgroupMembersStore, setSubgroupMembers, belongsToSubgroup, pitChecklistSummary, matchMembers, nameMatches } from './data'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import { membersTable } from '../../core/members'
 
@@ -123,6 +123,20 @@ describe('pit checklist', () => {
     movePitItem(original[0].id, 1)
     expect(checklistStore.get()).toEqual([original[1], original[0], ...original.slice(2)])
     movePitItem(original[0].id, -1)
+    expect(checklistStore.get()).toEqual(original)
+  })
+
+  it('moves an item to a typed position, and says which positions there are', () => {
+    const original = [...checklistStore.get()]
+    const last = original.length
+    expect(movePitItemTo(original[0].id, String(last))).toEqual({ ok: true, value: null })
+    expect(checklistStore.get()).toEqual([...original.slice(1), original[0]])
+    expect(movePitItemTo(original[0].id, ' 1 ').ok).toBe(true)
+    expect(checklistStore.get()).toEqual(original)
+    for (const bad of ['0', String(last + 1), '', '1.5', 'top']) {
+      expect(movePitItemTo(original[0].id, bad), bad).toEqual({ ok: false, error: expect.stringMatching(new RegExp(`position from 1 to ${last}`)) })
+    }
+    expect(movePitItemTo('missing', '1')).toEqual({ ok: false, error: expect.stringMatching(/no longer on the checklist/) })
     expect(checklistStore.get()).toEqual(original)
   })
 
