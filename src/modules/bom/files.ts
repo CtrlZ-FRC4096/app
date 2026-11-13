@@ -1,7 +1,8 @@
 /**
  * Downloading a part's file for its machine (#24): a STEP for the lathe,
- * mill or CNC router's CAM, or an STL for the 3D printer, fetched from
- * Onshape when someone presses Download.
+ * mill or CNC router's CAM, an STL for the 3D printer, fetched from Onshape
+ * when someone presses Download; and a DXF for the router or laser, made in
+ * the browser from the part's flat outline (dxf.ts).
  *
  * Which file each machine needs, and what it's called, are in data.ts
  * (MACHINE_FILE_FORMATS, partFileName). This file works out which of those
@@ -12,18 +13,19 @@
  * Anyone on the team can download: it changes nothing, and the people at
  * the machines are the ones who need the files. Each download uses some of
  * the team's yearly Onshape API calls (one for an STL, about five for a
- * STEP), so it only happens when someone presses the button.
+ * STEP), so it only happens when someone presses the button. A DXF uses
+ * none once the CNC module has the part's outline (one call per Part Studio
+ * to read it the first time). An STL is kept until the page is reloaded,
+ * so View 3D and Download STL share one call.
  */
 import { callFunction } from '../../core/functions'
 import { fail, ok, type Result } from '../../core/table'
+import { flatOutline, readShapes, shapesTable } from '../cnc/data'
 import { MACHINE_FILE_FORMATS, MACHINE_NAMES, partFileName, type FileFormat, type Machine, type Part, type PartFile, type Step } from './data'
+import { outlineToDxf } from './dxf'
 
-/**
- * The kinds of file the app can download so far. DXF (a flat face, for the
- * laser and router) and 3MF aren't yet: see "Files for the machines" in the
- * README.
- */
-export const DOWNLOADABLE: FileFormat[] = ['step', 'stl']
+/** The kinds of file the app can download so far. 3MF isn't, but every 3D printer takes the STL. */
+export const DOWNLOADABLE: FileFormat[] = ['step', 'stl', 'dxf']
 
 /** A file a part's machines need, and whether the app can download it yet. */
 export interface PartDownload extends PartFile {
@@ -31,22 +33,23 @@ export interface PartDownload extends PartFile {
 }
 
 /**
- * The files a part's machines need, each kind once, using the first kind
- * of file each machine can use that the app can download. So the CNC router
- * gets a STEP for now, until DXF works. A machine that only takes a kind
- * the app can't download yet (the laser's DXF) is listed as not ready.
- * With `machine`, only that machine's files, for its queue.
+ * The files a part's machines need, each kind once: every kind each machine
+ * can use that the app can download, in the machine's order. So the CNC
+ * router gets a DXF, and a STEP for pockets; the 3D printer gets an STL. A
+ * machine that only takes kinds the app can't download is listed as not
+ * ready. With `machine`, only that machine's files, for its queue.
  */
 export function partDownloads(part: Part, steps: Step[], machine?: Machine): PartDownload[] {
   const files: PartDownload[] = []
   for (const step of steps) {
     if (!step.machine || (machine && step.machine !== machine)) continue
     const formats = MACHINE_FILE_FORMATS[step.machine]
-    const format = formats.find((f) => DOWNLOADABLE.includes(f)) ?? formats[0]
-    if (!format) continue
-    const file = files.find((f) => f.format === format)
-    if (!file) files.push({ format, name: partFileName(part, format), machines: [step.machine], ready: DOWNLOADABLE.includes(format) })
-    else if (!file.machines.includes(step.machine)) file.machines.push(step.machine)
+    const usable = formats.filter((f) => DOWNLOADABLE.includes(f))
+    for (const format of usable.length ? usable : formats.slice(0, 1)) {
+      const file = files.find((f) => f.format === format)
+      if (!file) files.push({ format, name: partFileName(part, format), machines: [step.machine], ready: DOWNLOADABLE.includes(format) })
+      else if (!file.machines.includes(step.machine)) file.machines.push(step.machine)
+    }
   }
   return files
 }
@@ -59,25 +62,62 @@ export function downloadProblem(part: Part): string | null {
   return null
 }
 
-/** A file ready to save, with its name. */
+/** A file ready to save, with its name, and anything to tell the person about it. */
 export interface SavedFile {
   name: string
   blob: Blob
+  note?: string
+}
+
+// STLs already fetched, until the page is reloaded, so viewing a part in 3D
+// and downloading its STL use one Onshape call between them. The key
+// changes when the part does (a new revision, or a different Onshape part).
+const stls = new Map<string, Blob>()
+const stlKey = (part: Part) => `${part.id}|${part.onshape_id}|${part.revision ?? ''}`
+
+/** Forget the STLs fetched so far. For tests. */
+export function forgetFetchedFiles() {
+  stls.clear()
 }
 
 /**
- * Get a part's file from Onshape, named by its part number and revision,
- * like 4096-26-INT-002_revA.step. Uses some of the team's Onshape API
- * calls, so only call it when someone presses Download.
+ * Get a part's file, named by its part number and revision, like
+ * 4096-26-INT-002_revA.step. A STEP or STL comes from Onshape and uses some
+ * of the team's Onshape API calls, so only call it when someone presses
+ * Download. A DXF is made from the part's outline.
  */
 export async function downloadPartFile(part: Part, format: FileFormat): Promise<Result<SavedFile>> {
   const problem = downloadProblem(part)
   if (problem) return fail(problem)
   if (!DOWNLOADABLE.includes(format)) return fail(`The app can't download ${format.toUpperCase()} files yet. Open the part in Onshape and export it from there.`)
+  if (format === 'dxf') return partDxf(part)
+  const kept = format === 'stl' ? stls.get(stlKey(part)) : undefined
+  if (kept) return ok({ name: partFileName(part, format), blob: kept })
   const answer = await callFunction<Blob>('onshape', { kind: 'file', part: part.id, format }, () => exampleFile(format))
   if (!answer.ok) return answer
   if (!(answer.value instanceof Blob) || answer.value.size === 0) return fail("Onshape didn't send a file. Try again in a minute.")
+  if (format === 'stl') stls.set(stlKey(part), answer.value)
   return ok({ name: partFileName(part, format), blob: answer.value })
+}
+
+/**
+ * A part's DXF, made from the flat outline the CNC module keeps (cnc_shapes).
+ * If it hasn't been read yet, it's read from Onshape first: one call for the
+ * part's Part Studio, and then the CNC module has it too.
+ */
+async function partDxf(part: Part): Promise<Result<SavedFile>> {
+  const notes: string[] = []
+  if (!shapesTable.rows().some((s) => s.part_id === part.id)) {
+    const read = await readShapes([part])
+    if (!read.ok) return read
+    notes.push(`Read its outline from Onshape first (1 API call). The CNC board has it now too.`)
+  }
+  const shape = shapesTable.rows().find((s) => s.part_id === part.id)
+  if (!shape?.outline.length) return fail(`Onshape didn't give an outline for ${part.name}, so there's no DXF. Download the STEP instead.`)
+  if (shape.pockets) notes.push("It has pockets that don't go all the way through: the DXF only has the outline and holes, so use the STEP for those.")
+  notes.push('In inches.')
+  const blob = new Blob([outlineToDxf(flatOutline(shape))], { type: 'application/dxf' })
+  return ok({ name: partFileName(part, 'dxf'), blob, note: notes.join(' ') })
 }
 
 /** One file in a machine's queue, or why it can't be downloaded. */
