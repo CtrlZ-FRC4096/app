@@ -481,8 +481,8 @@ export interface PitEntry {
   event_key?: string
   /** The team number, like 4096. */
   team: number
-  /** The qualification match it was before, or null: pit scouting often happens before any match. */
-  match: number | null
+  /** The form doesn't ask for a match any more. Pit entries saved before that may have one, and still send it. */
+  match?: number | null
   /** One of DRIVETRAINS in season.ts, or '' if not chosen. */
   drivetrain: string
   /** Pounds. */
@@ -506,7 +506,7 @@ export interface PitEntry {
 }
 
 /** What the scout fills in on the pit form. savePitEntry() adds the rest. */
-export type PitFields = Omit<PitEntry, 'id' | 'created_at' | 'event_key' | 'scouted_by' | 'synced'>
+export type PitFields = Omit<PitEntry, 'id' | 'created_at' | 'event_key' | 'match' | 'scouted_by' | 'synced'>
 
 // Newest first. keepOnReset and the version: see entryStore above.
 export const pitStore = createStore<PitEntry[]>('scouting-pit-entries', 1, () => [], { keepOnReset: true })
@@ -520,7 +520,6 @@ export function usePitEntries(): PitEntry[] {
 export function checkPitEntry(fields: PitFields): string | null {
   if (!isCount(fields.team)) return 'Enter the team number first.'
   if (fields.team > MAX_TEAM) return `Check the team number: ${fields.team} is too big.`
-  if (fields.match !== null && !(isCount(fields.match) && fields.match <= MAX_MATCH)) return 'Check the match number, or leave it blank.'
   for (const [name, value] of [['weight', fields.weight], ['length', fields.length], ['width', fields.width], ['height', fields.height]] as const) {
     if (value !== null && !(value > 0 && value < MAX_PIT_NUMBER)) return `Check the ${name}, or leave it blank.`
   }
@@ -595,7 +594,7 @@ export function pitToRow(entry: PitEntry): Omit<ScoutingPitEntry, 'created_at' |
     id: entry.id,
     event_key: entry.event_key ?? currentEvent(),
     team_number: entry.team,
-    match_number: entry.match,
+    match_number: entry.match ?? null,
     drivetrain: text(entry.drivetrain),
     weight: entry.weight,
     length: entry.length,
