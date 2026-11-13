@@ -26,7 +26,6 @@ import { chooseEvent, currentEvent, eventStore, eventWhenWhere, eventsTable, get
 // A filled-in pit form. Each test changes only the part it's about.
 const PIT: PitFields = {
   team: 9992,
-  match: null,
   drivetrain: 'Swerve',
   weight: 115.5,
   length: 28,
@@ -46,11 +45,10 @@ describe('savePitEntry', () => {
 
   it('saves the pit form, newest first, marked as not synced yet', () => {
     const first = savePitEntry(PIT)
-    const second = savePitEntry({ ...PIT, team: 9993, match: 4 })
+    const second = savePitEntry({ ...PIT, team: 9993 })
     if (!first.ok || !second.ok) throw new Error('should save')
     expect(pitStore.get()).toEqual([second.value, first.value])
     expect(first.value).toMatchObject({ ...PIT, motors: '4 drive motors, 2 on the shooter', synced: false })
-    expect(second.value.match).toBe(4)
   })
 
   it('saves nothing when the form has a problem', () => {
@@ -239,10 +237,9 @@ describe('syncing to the team database', () => {
 })
 
 describe('checkPitEntry', () => {
-  it("needs a team number, but takes a blank match, weight and size, and refuses what the team database would refuse, so a pit entry can't get stuck Waiting", () => {
+  it("needs a team number, but takes a blank weight and size, and refuses what the team database would refuse, so a pit entry can't get stuck Waiting", () => {
     const allowed: [string, Partial<PitFields>][] = [
       ['the whole form', {}],
-      ['no match number', { match: null }],
       ['no weight or size', { weight: null, length: null, width: null, height: null }],
       ['the longest answer', { motors: 'x'.repeat(MAX_NOTES_LENGTH) }],
     ]
@@ -250,8 +247,6 @@ describe('checkPitEntry', () => {
     const refused: [string, Partial<PitFields>, RegExp][] = [
       ['no team', { team: 0 }, /Enter the team number/],
       ['a team number too big', { team: 100000 }, /team number/],
-      ['half a match', { match: 2.5 }, /Check the match number, or leave it blank/],
-      ['a match number too big', { match: 1001 }, /match number/],
       ['a weight of zero', { weight: 0 }, /Check the weight, or leave it blank/],
       ['a weight too big', { weight: MAX_PIT_NUMBER }, /weight/],
       ['a height that is not a number', { height: Number.NaN }, /Check the height, or leave it blank/],
@@ -327,11 +322,12 @@ describe('syncing pit entries', () => {
     expect(pitStore.get()[0].synced).toBe(true)
   })
 
-  it('sends blank choices and boxes as empty, and an entry saved before events were recorded with the current event', () => {
+  it('sends blank choices and boxes as empty, an entry saved before events were recorded with the current event, and an older entry\'s match number', () => {
     const saved = savePitEntry({ ...PIT, drivetrain: '', auto_side: '', motors: '  ', weight: null })
     if (!saved.ok) throw new Error(saved.error)
+    expect(pitToRow(saved.value)).toMatchObject({ match_number: null, drivetrain: null, auto_side: null, motors: null, weight: null })
     const { event_key: _old, ...older } = saved.value
-    expect(pitToRow(older)).toMatchObject({ event_key: EVENT_KEY, drivetrain: null, auto_side: null, motors: null, weight: null })
+    expect(pitToRow({ ...older, match: 4 })).toMatchObject({ event_key: EVENT_KEY, match_number: 4 })
   })
 })
 
@@ -1489,8 +1485,15 @@ describe('the event the team is scouting', () => {
   })
 
   it("doesn't let a student pick it, and says who can", async () => {
-    expect(await chooseEvent(regional)).toEqual({ ok: false, error: 'Only a mentor can change the event. Ask a mentor to pick it.' })
+    expect(await chooseEvent(regional)).toMatchObject({ ok: false, error: expect.stringMatching('Only student leaders, mentors, and admins') })
     expect(currentEvent()).toBe(EVENT_KEY)
+  })
+
+  it('lets a student leader pick it for everyone', async () => {
+    setDemoRole('leader')
+    expect(await chooseEvent(regional)).toEqual({ ok: true, value: { key: '2027ilpe', name: 'Example Peoria Regional' } })
+    expect(currentEvent()).toBe('2027ilpe')
+    expect(latestEvent(eventsTable.rows())).toEqual({ key: '2027ilpe', name: 'Example Peoria Regional' })
   })
 })
 

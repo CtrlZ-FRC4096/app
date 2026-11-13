@@ -1,6 +1,6 @@
 // Permission rules for the Prescouting module's notes (#117):
-// signed-in members read every row, add one, and change any of them; only
-// mentors delete them. One row per team per event.
+// signed-in members read every row, add one, and change any of them; student
+// leaders, mentors and admins delete them. One row per team per event.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
@@ -8,11 +8,13 @@ const db = setUpTestDatabase()
 let student: string
 let other: string
 let mentor: string
+let leader: string
 
 beforeEach(async () => {
   student = await db.member('Riley Park')
   other = await db.member('Casey Lee')
   mentor = await db.member('Pat Mentor', 'mentor')
+  leader = await db.member('Casey Leader', 'leader')
 })
 
 interface PrescoutRow {
@@ -64,6 +66,14 @@ describe('prescouting notes', () => {
     const [row] = await add(student)
     expect(await db.as(student, 'delete from public.prescouting_notes where id = $1 returning id', [row.id])).toEqual([])
     expect(await db.as(mentor, 'delete from public.prescouting_notes where id = $1 returning id', [row.id])).toEqual([{ id: row.id }])
+  })
+
+  it('lets a student leader delete notes, but not when their access is switched off', async () => {
+    const [row] = await add(student)
+    expect(await db.as(leader, 'delete from public.prescouting_notes where id = $1 returning id', [row.id])).toEqual([{ id: row.id }])
+    const [next] = await add(student, 9992)
+    await db.switchOff(leader)
+    expect(await db.as(leader, 'delete from public.prescouting_notes where id = $1 returning id', [next.id])).toEqual([])
   })
 
   it("can't be read, added or changed by someone who isn't signed in", async () => {

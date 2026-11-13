@@ -469,6 +469,7 @@ export function receiptCountText(count: number): string {
  * way round, where the list would say there's a receipt that isn't there.
  */
 export async function addReceipt(item: PurchaseItem, file: File): Promise<Result<Receipt>> {
+  if (!receiptAddingShown(item.status)) return fail('Mark the item Order Placed before adding a receipt.')
   if (!canOrder(currentUser(), buyersTable.rows())) return fail('Only mentors and purchasers add receipts. Ask one of them: they\'re listed at the bottom of this page.')
   const problem = checkReceipt(file)
   if (problem) return fail(problem)
@@ -523,7 +524,7 @@ export function isCurrent(item: PurchaseItem): boolean {
 /**
  * The items for a view, under headings:
  *
- *   - Current: what's in progress, by status. The one people work from.
+ *   - Current: what's in progress, newest first, under one heading. Each item shows its status.
  *   - All: everything, newest first.
  *   - By status: everything, by status.
  *   - By vendor: everything, by vendor, for putting one order together per vendor.
@@ -531,13 +532,16 @@ export function isCurrent(item: PurchaseItem): boolean {
  * Headings with nothing under them are left out.
  */
 export function groupItems(items: PurchaseItem[], view: View): Group[] {
+  if (view === 'Current') {
+    const current = items.filter(isCurrent).sort(newestFirst)
+    return current.length > 0 ? [{ title: 'In progress', items: current }] : []
+  }
   if (view === 'All') return items.length > 0 ? [{ title: 'All items', items }] : []
   if (view === 'By vendor') {
     const vendors = [...VENDORS, ...[...new Set(items.map((i) => i.vendor))].filter((v) => !VENDORS.includes(v)).sort()]
     return vendors.map((vendor) => ({ title: vendor, items: items.filter((i) => i.vendor === vendor) })).filter((g) => g.items.length > 0)
   }
-  const shown = view === 'Current' ? items.filter(isCurrent) : items
-  return STATUSES.map((status) => ({ title: status.label, status, items: shown.filter((i) => i.status === status.key) })).filter((g) => g.items.length > 0)
+  return STATUSES.map((status) => ({ title: status.label, status, items: items.filter((i) => i.status === status.key) })).filter((g) => g.items.length > 0)
 }
 
 /**
@@ -615,6 +619,11 @@ export function orderFieldsShown(form: Pick<NewItem, 'status' | 'ordered_by' | '
     shipped_to: placed || !!form.shipped_to,
     estimated_arrival: placed || !!form.estimated_arrival,
   }
+}
+
+/** Whether to offer a new receipt: only once the item has been ordered. Existing receipts stay visible at any status. */
+export function receiptAddingShown(status: StatusKey): boolean {
+  return !isAsking(status)
 }
 
 /**
@@ -706,7 +715,7 @@ const itemFields = (item: NewItem) => ({
 })
 
 /**
- * Ask for something, as the person who asked for it. `bomPartId` is the
+ * Add a new item as the person who asked for it. `bomPartId` is the
  * BOM part it's for, when it's asked for from the BOM page.
  */
 export async function addItem(item: NewItem, bomPartId: string | null = null): Promise<Result<PurchaseItem>> {

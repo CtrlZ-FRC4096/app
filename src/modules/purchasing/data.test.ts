@@ -45,6 +45,7 @@ import {
   priceProblem,
   priceText,
   receiptBody,
+  receiptAddingShown,
   receiptCountText,
   receiptLink,
   receiptText,
@@ -182,10 +183,17 @@ describe('isCurrent', () => {
 })
 
 describe('groupItems', () => {
-  it('Current: what is in progress, by status, in the order of the statuses', () => {
+  it('Current: what is in progress, newest first under one heading, with no status grouping', () => {
     const groups = groupItems(itemsTable.rows(), 'Current')
-    expect(groups.map((g) => g.title)).toEqual(['Order Low Priority', 'Order', 'Order High Priority', 'Order Placed', 'Backordered', 'Received'])
-    expect(groups.flatMap((g) => g.items).some((i) => ['wait', 'in_shop', 'cancelled'].includes(i.status))).toBe(false)
+    expect(groups.map((g) => g.title)).toEqual(['In progress'])
+    expect(groups[0].status).toBeUndefined()
+    expect(groups[0].items).toHaveLength(6)
+    expect(groups[0].items[0].name).toBe('Compliant wheel, 2 in')
+    expect(groups[0].items.at(-1)!.name).toBe('Motor controller')
+    const dates = groups[0].items.map((i) => i.created_at)
+    expect(dates).toEqual([...dates].sort((a, b) => b.localeCompare(a)))
+    expect(groups[0].items.every(isCurrent)).toBe(true)
+    expect(groups[0].items.some((i) => ['wait', 'in_shop', 'cancelled'].includes(i.status))).toBe(false)
   })
 
   it('All: everything, newest first, under one heading', () => {
@@ -556,6 +564,13 @@ describe('estimated arrival', () => {
   })
 })
 
+describe('receiptAddingShown', () => {
+  it('allows new receipts for every ordered status, but none of the asking statuses', () => {
+    for (const status of STATUSES.filter((s) => s.ask)) expect(receiptAddingShown(status.key), status.label).toBe(false)
+    for (const status of STATUSES.filter((s) => !s.ask)) expect(receiptAddingShown(status.key), status.label).toBe(true)
+  })
+})
+
 describe('orderFieldsShown', () => {
   const empty = { ordered_by: '', shipped_to: '', estimated_arrival: '' }
 
@@ -669,6 +684,23 @@ describe('receipts', () => {
       const result = await addReceipt(item, receiptFile())
       expect(result.ok && result.value.path).toMatch(new RegExp(`^${item.id}/[0-9a-f-]{36}\\.pdf$`))
       expect(result.ok && result.value.created_by).toBe(DEMO_PEOPLE.alex)
+    })
+
+    it('refuses a new receipt while an item is still being asked for', async () => {
+      setDemoRole('mentor')
+      const item = find('Zip ties, 8 in (pack of 100)')
+      expect(await addReceipt(item, receiptFile())).toMatchObject({ ok: false, error: expect.stringMatching(/Order Placed/) })
+      expect(receiptsOf(item)).toHaveLength(0)
+    })
+
+    it('keeps an existing receipt removable when an ordered item goes back to asking', async () => {
+      setDemoRole('mentor')
+      const item = find('Motor controller')
+      const moved = { ...item, status: 'order' as const }
+      expect(receiptAddingShown(moved.status)).toBe(false)
+      expect(receiptsOf(moved)).toHaveLength(2)
+      expect((await removeReceipt(receiptsOf(moved)[0])).ok).toBe(true)
+      expect(receiptsOf(moved)).toHaveLength(1)
     })
 
     it('refuses a file that is not a receipt', async () => {

@@ -1,5 +1,6 @@
 // Permission rules for the event the team is scouting: signed-in members
-// see it; only mentors and admins pick it; nobody changes or deletes a pick.
+// see it; student leaders, mentors and admins pick it; nobody changes or
+// deletes a pick.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
@@ -28,16 +29,17 @@ const pick = (person: string, event = '2026test', name = 'Test Regional') =>
   db.as<Pick>(person, 'insert into public.scouting_events (event_key, name) values ($1, $2) returning *', [event, name])
 
 describe('the event the team is scouting', () => {
-  it('lets a mentor and an admin pick it, signed with their own id', async () => {
+  it('lets a student leader, a mentor and an admin pick it, signed with their own id', async () => {
     const [first] = await pick(mentor)
     const [second] = await pick(admin, '2026test2', 'Test District Event')
+    const [third] = await pick(leader, '2026test3', 'Student Leader Regional')
     expect(first).toMatchObject({ event_key: '2026test', name: 'Test Regional', created_by: mentor })
     expect(second).toMatchObject({ event_key: '2026test2', created_by: admin })
+    expect(third).toMatchObject({ event_key: '2026test3', created_by: leader })
   })
 
-  it("doesn't let a student or a student leader pick it", async () => {
+  it("doesn't let a student pick it", async () => {
     await expect(pick(student)).rejects.toThrow(PERMISSION_DENIED)
-    await expect(pick(leader)).rejects.toThrow(PERMISSION_DENIED)
   })
 
   it("doesn't let anyone pick it as if someone else did", async () => {

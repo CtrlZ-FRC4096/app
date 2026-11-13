@@ -1,6 +1,6 @@
 // Permission rules for the Scouting module's match entries (#31): signed-in
-// members read every entry and send their own; only mentors change or
-// delete them. Sending the same entry twice never makes two rows.
+// members read every entry and send their own; student leaders, mentors and
+// admins change or delete them. Sending the same entry twice never makes two rows.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
@@ -8,11 +8,13 @@ const db = setUpTestDatabase()
 let scout: string
 let other: string
 let mentor: string
+let leader: string
 
 beforeEach(async () => {
   scout = await db.member('Riley Park')
   other = await db.member('Casey Lee')
   mentor = await db.member('Pat Mentor', 'mentor')
+  leader = await db.member('Casey Leader', 'leader')
 })
 
 interface Entry {
@@ -82,6 +84,12 @@ describe('scouting entries', () => {
     expect(await db.as(scout, 'delete from public.scouting_entries where id = $1 returning id', [entry.id])).toEqual([])
     expect(await db.as(mentor, 'update public.scouting_entries set team_number = 1 where id = $1 returning team_number', [entry.id])).toEqual([{ team_number: 1 }])
     expect(await db.as(mentor, 'delete from public.scouting_entries where id = $1 returning id', [entry.id])).toEqual([{ id: entry.id }])
+  })
+
+  it('lets a student leader change and delete an entry', async () => {
+    const [entry] = await send(scout, [{ id: crypto.randomUUID() }])
+    expect(await db.as(leader, 'update public.scouting_entries set team_number = 1234 where id = $1 returning team_number', [entry.id])).toEqual([{ team_number: 1234 }])
+    expect(await db.as(leader, 'delete from public.scouting_entries where id = $1 returning id', [entry.id])).toEqual([{ id: entry.id }])
   })
 
   it('refuses a made-up stop and a driver skill outside 1 to 5', async () => {

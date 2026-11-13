@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { QuietBoundary } from '../../core/ErrorBoundary'
-import { isMentor, useSession } from '../../core/session'
+import { isLeader, useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { Panel, Pick } from '../../core/ui'
 import {
@@ -13,16 +13,16 @@ const BOX = { minHeight: 46, fontSize: 16 }
 
 /**
  * Which event the team is scouting, at the top of every Scouting page. A
- * mentor picks it here, from our events this season or by searching every
- * event, and every phone switches to it. Everyone else sees which event it
- * is. The pick is saved in the scouting_events table (chooseEvent() in
- * data.ts).
+ * student leader, mentor or admin picks it here, from our events this
+ * season or by searching every event, and every phone switches to it.
+ * Everyone else sees which event it is. The pick is saved in the
+ * scouting_events table (chooseEvent() in data.ts).
  */
 export default function EventPicker() {
   const event = useCurrentEvent()
   const { role } = useSession()
   const [open, setOpen] = useState(false)
-  const mentor = isMentor(role)
+  const canChange = isLeader(role)
 
   return (
     <Panel>
@@ -34,7 +34,7 @@ export default function EventPicker() {
           <span>
             Event: <strong>{event.name ?? event.key}</strong> {event.name && <span className="muted">({event.key})</span>}
           </span>
-          {mentor && (
+          {canChange && (
             <button type="button" className="btn" style={BOX} aria-expanded={open} onClick={() => setOpen(!open)}>
               {open ? 'Close' : 'Change event'}
             </button>
@@ -42,10 +42,10 @@ export default function EventPicker() {
         </div>
         {!event.name && (
           <p className="note" style={{ margin: 0 }}>
-            {mentor ? 'Nobody has picked the event yet, so this is the one in season.ts. Pick the right one with Change event.' : 'A mentor picks the event for the whole team.'}
+            {canChange ? 'Nobody has picked the event yet, so this is the one in season.ts. Pick the right one with Change event.' : 'A student leader, mentor or admin picks the event for the whole team.'}
           </p>
         )}
-        {open && mentor && <Lookup current={event.key} onPicked={() => setOpen(false)} />}
+        {open && canChange && <Lookup current={event.key} onPicked={() => setOpen(false)} />}
       </div>
     </Panel>
   )
