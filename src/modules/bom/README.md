@@ -72,6 +72,22 @@ The table is made by `supabase/migrations/20261102120000_bom_steps.sql`, with it
 
 The CNC board tracks routing separately (Ready to CAM → To cut → Cutting → Cut), so for now a part's CNC router stage is moved along by hand here too.
 
+## My work
+
+What's assigned to you, and giving a whole part to someone at once (#16).
+
+- **My work** is a panel at the top of the BOM page with the stages assigned to you, grouped **To do**, **In progress** and **Done**. Done is folded away. In each group, **Late** stages come first, then the soonest due. Each line shows the stage, the part's number, name and system, and when it's due. **Show part** picks the part's system (showing every part) and scrolls to it, where you move the stage along as usual. The panel only shows when you have a stage that isn't done. Stages of parts marked "Removed in Onshape" aren't listed, because the page doesn't show their stages.
+- **Assign every stage at once.** In a stage's **Assign** form, tick **Assign every stage that isn't done** to give all of the part's unfinished stages the same person and due date. Done stages keep who did them. It shows when the part has more than one stage left.
+- **The home page** shows your open stages under "Needs attention", like "3 stages to do (1 late)", in the warning colour when any are late. "To do" there means every stage that isn't done, started or not. Nothing shows when you have none.
+
+| File | What it does |
+|:--|:--|
+| `work.ts` | `myWork()` (your stages, grouped), `workNotices()` (the home page line, set as `useAttention` in `index.ts`), and `assignWholePart()`, which uses `assignStep()` from `data.ts` for each stage. |
+| `work.test.ts` | Tests for it. |
+| `MyWork.tsx` | The My work panel, mounted near the top of `BomPage.tsx`. |
+
+Anyone on the team can assign stages and move any stage along, as with one stage at a time: no database change was needed.
+
 ## On the shelf
 
 Under each COTS part, the page shows what Inventory has, in plain text: "On the shelf: 4 · Bin M1", or "Not in Inventory". Then either:
@@ -123,7 +139,6 @@ Files are named by part number and revision, like `4096-26-INT-014_revB.step`.
 - View 3D and download buttons for a part's files, and a whole queue's (#23). They need a mentor: a viewer library, and file exports in the `onshape` server function
 - A shared catalog of bought parts with names and links to buy them, filled in once and reused each season (#20)
 - Write team part numbers into Onshape (#21)
-- A "My work" list of the stages assigned to you
 - Slack reminders about assigned stages (#22)
 - Move a part's CNC router stage along when the CNC board marks it cut
 - Mentors mark short parts as ordered
