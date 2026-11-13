@@ -1,7 +1,7 @@
 // Permission rules for the Prescouting module's stars (#118): a star just
 // for you is seen only by you; team stars are seen by every member and need
 // a reason; members star as themselves; you remove your own stars, and
-// mentors remove any team star.
+// student leaders, mentors and admins remove any team star.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
@@ -9,11 +9,13 @@ const db = setUpTestDatabase()
 let student: string
 let other: string
 let mentor: string
+let leader: string
 
 beforeEach(async () => {
   student = await db.member('Riley Park')
   other = await db.member('Casey Lee')
   mentor = await db.member('Pat Mentor', 'mentor')
+  leader = await db.member('Jordan Leader', 'leader')
 })
 
 interface StarRow {
@@ -86,6 +88,13 @@ describe('prescouting stars', () => {
     const [justMine] = await star(student, false)
     expect(await db.as(mentor, 'delete from public.prescouting_stars where id = $1 returning id', [teamStar.id])).toEqual([{ id: teamStar.id }])
     expect(await db.as(mentor, 'delete from public.prescouting_stars where id = $1 returning id', [justMine.id])).toEqual([])
+  })
+
+  it("lets a student leader remove anyone's team star, but not a star just for someone", async () => {
+    const [teamStar] = await star(student, true, 'Great auto')
+    const [justMine] = await star(student, false)
+    expect(await db.as(leader, 'delete from public.prescouting_stars where id = $1 returning id', [teamStar.id])).toEqual([{ id: teamStar.id }])
+    expect(await db.as(leader, 'delete from public.prescouting_stars where id = $1 returning id', [justMine.id])).toEqual([])
   })
 
   it("can't be changed, even by whoever made it", async () => {

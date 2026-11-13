@@ -14,7 +14,9 @@
 --   - A star just for you can only be seen by the person who made it.
 --   - Team stars can be seen by every signed-in member.
 --   - Signed-in members add stars, only as themselves.
---   - You remove your own stars. Mentors and admins also remove any team star.
+--   - You remove your own stars. Student leaders, mentors and admins also
+--     remove any team star, like the other Scouting and Prescouting
+--     permissions (..._scouting_student_leaders.sql).
 --   - Nobody changes a star: remove it and star again.
 
 create table public.prescouting_stars (
@@ -55,16 +57,16 @@ create policy "Members can star teams as themselves"
   on public.prescouting_stars for insert to authenticated
   with check ((select private.is_member()) and created_by = (select auth.uid()));
 
-create policy "Members remove their own stars, and mentors any team star"
+create policy "Members remove their own stars, and leaders any team star"
   on public.prescouting_stars for delete to authenticated
   using (
     (select private.is_member())
-    and (created_by = (select auth.uid()) or (for_team and (select private.is_mentor())))
+    and (created_by = (select auth.uid()) or (for_team and (select private.is_leader())))
   );
 
 -- Move the old shared marks over as team stars. Marks had no reason and no
 -- record of who marked the team, so they get a reason that says so, and no
--- created_by. A mentor can remove them.
+-- created_by. A student leader or mentor can remove them.
 insert into public.prescouting_stars (event_key, team_number, for_team, reason, created_at, created_by)
 select event_key, team_number, true, 'Marked before stars were added', created_at, null
 from public.prescouting_notes

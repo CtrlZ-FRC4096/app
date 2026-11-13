@@ -12,7 +12,7 @@
  */
 import { useEffect } from 'react'
 import { DEMO_PEOPLE } from '../../core/demo'
-import { currentUser, isMentor, useSession, type Role } from '../../core/session'
+import { currentUser, isLeader, useSession, type Role } from '../../core/session'
 import { createStore, useStore } from '../../core/store'
 import { createTable, fail, ok, type Result, type Row } from '../../core/table'
 import { EVENT_KEY, MAX_TEAM, getEventTeams, getRatings, tbaTeamUrl, type Match13Rating, type TbaTeam } from '../scouting/data'
@@ -289,17 +289,17 @@ export async function starTeam(event: string, team: number, star: { forTeam: boo
   return starsTable.insert({ event_key: event, team_number: team, for_team: star.forTeam, reason })
 }
 
-/** Whether this person can remove a star: their own, or any team star if they're a mentor. */
+/** Whether this person can remove a star: their own, or any team star if they're a student leader, mentor or admin. */
 export function canRemoveStar(star: PrescoutStar, me: { id: string; role: Role } | null): boolean {
   if (!me) return false
-  return star.created_by === me.id || (star.for_team && isMentor(me.role))
+  return star.created_by === me.id || (star.for_team && isLeader(me.role))
 }
 
-/** Remove a star: your own, or any team star if you're a mentor. */
+/** Remove a star: your own, or any team star if you're a student leader, mentor or admin. */
 export async function unstarTeam(starId: string): Promise<Result> {
   const star = starsTable.rows().find((s) => s.id === starId)
   if (!star) return fail('That star has already been removed.')
-  if (!canRemoveStar(star, currentUser())) return fail('You can only remove your own stars. Ask a mentor to remove a team star.')
+  if (!canRemoveStar(star, currentUser())) return fail('You can only remove your own stars. Ask a student leader or mentor to remove a team star.')
   return starsTable.remove(starId)
 }
 

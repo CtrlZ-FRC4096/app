@@ -189,6 +189,7 @@ describe('stars', () => {
     expect(canRemoveStar(star, { id: DEMO_PEOPLE.jordan, role: 'student' })).toBe(true)
     expect(canRemoveStar(star, { id: alex, role: 'student' })).toBe(false)
     expect(canRemoveStar(star, { id: DEMO_PEOPLE.pat, role: 'mentor' })).toBe(true)
+    expect(canRemoveStar(star, { id: DEMO_PEOPLE.casey, role: 'leader' })).toBe(true)
     expect(canRemoveStar({ ...star, for_team: false }, { id: DEMO_PEOPLE.pat, role: 'mentor' })).toBe(false)
     expect(canRemoveStar(star, null)).toBe(false)
   })
