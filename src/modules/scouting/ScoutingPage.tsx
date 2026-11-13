@@ -6,6 +6,7 @@ import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
 import EventPicker from './EventPicker'
 import FormSection from './FormSection'
 import MatchTeamFields from './MatchTeamFields'
+import MyPicklist from './MyPicklist'
 import Overview from './Overview'
 import PickMany from './PickMany'
 import Picklist from './Picklist'
@@ -17,6 +18,7 @@ import SharedPicklist from './SharedPicklist'
 import Simulator from './Simulator'
 import StatsTable from './StatsTable'
 import TeamPage, { TeamLink } from './TeamPage'
+import TeamPicklist from './TeamPicklist'
 import { AUTO_SIDES, BREAKDOWN_PARTS, COUNTERS, ENDGAME, RANKING_POINTS, ROLES } from './season'
 
 /** Width and height of the − and + buttons, in pixels. Big enough to tap without looking. */
@@ -47,15 +49,22 @@ function ShortAnswer(props: { id: string; label: string; value: string; onChange
   )
 }
 
-const VIEWS = ['Overview', 'Match', 'Pit', 'Schedule', 'Rankings', 'Picklist', 'Final picklist', 'Simulator', 'Stats']
-/** Each view's address after #/scouting/. */
-const PATHS: Record<string, string> = { Overview: '', Match: 'match', Pit: 'pit', Schedule: 'schedule', Rankings: 'rankings', Picklist: 'picklist', 'Final picklist': 'shared-picklist', Simulator: 'simulate', Stats: 'stats' }
+/** Each page's address after #/scouting/. */
+const PATHS: Record<string, string> = {
+  Overview: '', Match: 'match', Pit: 'pit', Schedule: 'schedule', Rankings: 'rankings',
+  Picklist: 'picklist', 'My picklist': 'my-picklist', 'Team picklist': 'team-picklist', 'Final picklist': 'shared-picklist',
+  Simulator: 'simulate', Stats: 'stats',
+}
+/** The switch at the top. The four picklists are one choice, with their own switch below it (#151). */
+const SWITCH = ['Overview', 'Match', 'Pit', 'Schedule', 'Rankings', 'Picklists', 'Simulator', 'Stats']
+/** The Picklists switch: what each choice is called, and which page it opens. */
+const PICKLISTS: Record<string, string> = { Ranked: 'Picklist', Mine: 'My picklist', Team: 'Team picklist', Final: 'Final picklist' }
 
-// An Overview / Match / Pit / Schedule / Rankings / Picklist / Final picklist /
-// Simulator / Stats switch at the top. #/scouting is the overview (#160),
-// and #/scouting/match the match form. The choice is in the address, so
-// #/scouting/pit opens the pit form
-// straight away: a menu or a bookmark can link to any of them. Both forms
+// An Overview / Match / Pit / Schedule / Rankings / Picklists / Simulator /
+// Stats switch at the top, and a Ranked / Mine / Team / Final switch under
+// Picklists. #/scouting is the overview (#160), and #/scouting/match the
+// match form. The choice is in the address, so #/scouting/pit opens the pit
+// form straight away: a menu or a bookmark can link to any of them. Both forms
 // stay on the page, and the one not chosen is hidden, so switching doesn't
 // lose what's typed. The other pages are only on the page while they're
 // chosen, so they only load and update while someone's looking at them.
@@ -65,13 +74,15 @@ const PATHS: Record<string, string> = { Overview: '', Match: 'match', Pit: 'pit'
 // database, and the forms must work with no connection.
 export default function ScoutingPage() {
   const [rest = '', teamText] = useRoute().rest
-  const view = rest === 'team' ? 'Team' : VIEWS.find((v) => PATHS[v] === rest) ?? 'Overview'
+  const view = rest === 'team' ? 'Team' : Object.keys(PATHS).find((v) => PATHS[v] === rest) ?? 'Overview'
+  const picklist = Object.keys(PICKLISTS).find((choice) => PICKLISTS[choice] === view)
   const team = Number(teamText)
   return (
     <>
       <EventPicker />
-      <div style={{ marginBottom: 12 }}>
-        <Pick label="Which page" options={VIEWS} value={view} onChange={(v) => navigate('scouting', PATHS[v])} />
+      <div style={{ marginBottom: 12, display: 'grid', gap: 8 }}>
+        <Pick label="Which page" options={SWITCH} value={picklist ? 'Picklists' : view} onChange={(v) => navigate('scouting', PATHS[v === 'Picklists' ? 'Picklist' : v])} />
+        {picklist && <Pick label="Which picklist" options={Object.keys(PICKLISTS)} value={picklist} onChange={(choice) => navigate('scouting', PATHS[PICKLISTS[choice]])} />}
       </div>
       {view === 'Overview' && <Overview paths={{ ...PATHS, Teams: 'team' }} />}
       <div hidden={view !== 'Match'}><MatchForm /></div>
@@ -79,6 +90,8 @@ export default function ScoutingPage() {
       {view === 'Schedule' && <Schedule />}
       {view === 'Rankings' && <RankingsPage />}
       {view === 'Picklist' && <Picklist />}
+      {view === 'My picklist' && <MyPicklist />}
+      {view === 'Team picklist' && <TeamPicklist />}
       {view === 'Final picklist' && <SharedPicklist />}
       {view === 'Simulator' && <Simulator />}
       {view === 'Stats' && <StatsTable />}

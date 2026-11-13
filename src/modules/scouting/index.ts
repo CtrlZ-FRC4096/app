@@ -16,6 +16,8 @@ export const scouting: ModuleDefinition = {
     { name: 'Rankings', path: 'rankings' },
     { name: 'Teams', path: 'team' },
     { name: 'Picklist', path: 'picklist' },
+    { name: 'My picklist', path: 'my-picklist' },
+    { name: 'Team picklist', path: 'team-picklist' },
     { name: 'Final picklist', path: 'shared-picklist' },
     { name: 'Simulator', path: 'simulate' },
     { name: 'Stats', path: 'stats' },

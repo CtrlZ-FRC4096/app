@@ -51,7 +51,7 @@ describe('the Match / Pit switch', () => {
   it('has a card for every page, each linking to it, with the match form at #/scouting/match, and a link to the event on Nexus', () => {
     const html = renderToString(<ScoutingPage />)
     expect(html).toContain(`href="https://frc.nexus/en/event/${EVENT_KEY}"`)
-    for (const path of ['match', 'pit', 'schedule', 'rankings', 'team', 'picklist', 'shared-picklist', 'simulate', 'stats']) {
+    for (const path of ['match', 'pit', 'schedule', 'rankings', 'team', 'picklist', 'my-picklist', 'team-picklist', 'shared-picklist', 'simulate', 'stats']) {
       expect(html).toContain(`href="#/scouting/${path}"`)
     }
   })
@@ -87,7 +87,8 @@ describe('the picklist', () => {
 
   it('is a choice in the switch, and not on the page until chosen', () => {
     const html = renderToString(<ScoutingPage />)
-    expect(html).toContain('aria-pressed="false">Picklist</button>')
+    // #151: the four picklists are one Picklists choice in the switch.
+    expect(html).toContain('aria-pressed="false">Picklists</button>')
     expect(html).not.toContain('Ranked teams')
   })
 
@@ -137,7 +138,7 @@ describe('the final picklist', () => {
 
   it('is a choice in the switch, and not on the page until chosen', () => {
     const html = renderToString(<ScoutingPage />)
-    expect(html).toContain('aria-pressed="false">Final picklist</button>')
+    expect(html).toContain('aria-pressed="false">Picklists</button>')
     expect(html).not.toContain('The order the strategy team wants')
   })
 

@@ -3,7 +3,7 @@ import { isMentor, useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick, Pill } from '../../core/ui'
 import {
-  PICK_STATUSES, addMissingTeams, allWeightsZero, moveTeam, setPickStatus, startPicklist, useRankedPicklist, usePicklist,
+  PICK_STATUSES, addMissingTeams, allWeightsZero, moveTeam, setPickStatus, startPicklist, useRankedPicklist, usePicklist, useTeamPicklist,
   type PickStatus, type PicklistRow,
 } from './data'
 import { TeamLink } from './TeamPage'
@@ -112,13 +112,14 @@ export default function SharedPicklist() {
 // Its own component so only mentors' phones load the ranked list.
 function StartOrAdd(props: { list: PicklistRow[] }) {
   const { ranked, weights } = useRankedPicklist()
+  const teamPicklist = useTeamPicklist()
   const [busy, setBusy] = useState(false)
   const onList = new Set(props.list.map((row) => row.team_number))
   const missing = ranked.filter((line) => !onList.has(line.team)).map((line) => line.team)
 
-  async function start() {
+  async function start(teams: number[]) {
     setBusy(true)
-    const result = await startPicklist(ranked.map((line) => line.team))
+    const result = await startPicklist(teams)
     setBusy(false)
     toast(result.ok ? `Started the picklist with ${result.value.length} teams.` : result.error)
   }
@@ -141,10 +142,15 @@ function StartOrAdd(props: { list: PicklistRow[] }) {
               : `Starts with the ${ranked.length} teams on the Picklist page, in the order your weights on this phone give. Then move them by hand.`}
           </p>
           <div className="toolbar">
-            <button type="button" className="btn btn-primary" style={{ minHeight: TAP_SIZE }} disabled={busy || noWeights || ranked.length === 0} onClick={() => void start()}>
+            <button type="button" className="btn btn-primary" style={{ minHeight: TAP_SIZE }} disabled={busy || noWeights || ranked.length === 0} onClick={() => void start(ranked.map((line) => line.team))}>
               {busy ? 'Starting…' : 'Start from the ranked list'}
             </button>
+            {/* #151: everyone's own picklists, averaged. */}
+            <button type="button" className="btn" style={{ minHeight: TAP_SIZE }} disabled={busy || teamPicklist.length === 0} onClick={() => void start(teamPicklist.map((line) => line.team))}>
+              {busy ? 'Starting…' : 'Start from the team picklist'}
+            </button>
           </div>
+          {teamPicklist.length === 0 && <p className="note" style={{ margin: 0 }}>Nobody has made their own picklist yet, so there's no team picklist to start from.</p>}
         </div>
       </Panel>
     )

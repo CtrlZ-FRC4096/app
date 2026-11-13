@@ -1865,6 +1865,9 @@ export interface OverviewInput {
   ranked: { team: number }[]
   /** The final picklist, top first. */
   finalPicklist: PicklistRow[]
+  /** This person's own picklist, and everyone's averaged (#151). */
+  myPicklist?: MyPicklistRow[]
+  teamPicklist?: TeamPicklistLine[]
   now?: Date
 }
 
@@ -1949,6 +1952,14 @@ export function scoutingOverview(input: OverviewInput, team = OUR_TEAM): Overvie
     rankings,
     { view: 'Teams', tone: 'plain', lines: teamLines },
     { view: 'Picklist', tone: 'plain', lines: [top(input.ranked.map((t) => t.team)) ?? 'No teams to rank yet'] },
+    { view: 'My picklist', tone: 'plain', lines: [top((input.myPicklist ?? []).map((row) => row.team_number)) ?? 'Not started yet'] },
+    {
+      view: 'Team picklist',
+      tone: 'plain',
+      lines: (input.teamPicklist ?? []).length === 0
+        ? ['Nobody has made a picklist yet']
+        : [top(input.teamPicklist!.map((line) => line.team))!, `From ${plural(input.teamPicklist![0].lists, 'list', 'lists')}`],
+    },
     {
       view: 'Final picklist',
       tone: 'plain',
@@ -1976,12 +1987,14 @@ export function useScoutingOverview(): OverviewCard[] {
   const savedRatings = useStore(ratingsStore)
   const weights = useStore(weightsStore)
   const finalPicklist = usePicklist()
+  const myPicklist = useMyPicklist()
+  const teamPicklist = useTeamPicklist()
   return useMemo(() => {
     const rankings = savedRankings?.event === event ? savedRankings : null
     const ratings = savedRatings.event === event ? savedRatings.ratings : []
     const ranked = rankTeams(picklistTeams(ratings, matchRows, pitRows), weights)
-    return scoutingOverview({ entries, pitEntries, sync, matchRows, pitRows, schedule, rankings, ratings, ranked, finalPicklist })
-  }, [event, entries, pitEntries, sync, matchRows, pitRows, schedule, savedRankings, savedRatings, weights, finalPicklist])
+    return scoutingOverview({ entries, pitEntries, sync, matchRows, pitRows, schedule, rankings, ratings, ranked, finalPicklist, myPicklist, teamPicklist })
+  }, [event, entries, pitEntries, sync, matchRows, pitRows, schedule, savedRankings, savedRatings, weights, finalPicklist, myPicklist, teamPicklist])
 }
 
 // ---------------------------------------------------------------------------
@@ -2737,4 +2750,204 @@ export async function setPickStatus(id: string, status: PickStatus): Promise<Res
   if (!PICK_STATUSES.includes(status)) return fail('Choose Open, Picked or Do not pick.')
   const result = await picklistTable.update(id, { status })
   return result.ok ? ok(null) : result
+}
+
+// ---------------------------------------------------------------------------
+// Personal picklists, and the team picklist that averages them (#151).
+//
+// Everyone signed in can make their own order for picking teams at an
+// event, with a note on any team. Each is saved in scouting_my_picklist
+// (supabase/migrations/..._scouting_my_picklist.sql), so it's on all their
+// devices, and everyone can read every list so the team picklist can
+// average them. You change only your own; mentors can remove anyone's.
+// keepOffline: lists still show with no Wi-Fi, but changes need a connection.
+
+/** One team on one person's picklist for one event. */
+export interface MyPicklistRow extends Row {
+  event_key: string
+  team_number: number
+  /** Its place on the list: 1 is best. */
+  rank: number
+  /** Like "Great defender, slow climb", or null. */
+  note: string | null
+  /** Whose list it's on. Show their name with useMemberNames(). */
+  created_by: string | null
+  updated_at: string
+}
+
+/** The longest a picklist note can be, the same as the team database. */
+export const MAX_PICKLIST_NOTE = 500
+
+const byRank = (a: MyPicklistRow, b: MyPicklistRow) => a.rank - b.rank || a.team_number - b.team_number
+
+// Made up, for demo mode: three made-up people's lists of the example teams,
+// different lengths, so the team picklist has something to average.
+const EXAMPLE_MY_PICKLISTS: MyPicklistRow[] = (
+  [
+    [DEMO_PEOPLE.jordan, [[9994, 'Fast cycles, reliable climb'], [9991, null], [9993, null], [9992, 'Good defender']]],
+    [DEMO_PEOPLE.sam, [[9991, 'Best auto we saw'], [9994, null], [9995, null]]],
+    [DEMO_PEOPLE.pat, [[9994, null], [9993, 'Slow climb'], [9991, null], [9995, null], [9992, null]]],
+  ] as [string, [number, string | null][]][]
+).flatMap(([person, teams], p) =>
+  teams.map(([team, note], i) => ({
+    id: `00000000-0000-4000-8000-0000000d02${p}${i}`,
+    event_key: EVENT_KEY,
+    team_number: team,
+    rank: i + 1,
+    note,
+    created_at: '2026-11-07T21:00:00Z',
+    created_by: person,
+    updated_at: '2026-11-07T21:00:00Z',
+  })),
+)
+
+export const myPicklistTable = createTable<MyPicklistRow>('scouting_my_picklist', { demo: EXAMPLE_MY_PICKLISTS, sort: byRank, keepOffline: true })
+
+/** One person's list for an event, best first. */
+export function myPicklist(person: string | null | undefined = currentUser()?.id, event = currentEvent()): MyPicklistRow[] {
+  return myPicklistTable.rows().filter((row) => row.event_key === event && row.created_by === person).sort(byRank)
+}
+
+/** The signed-in person's list for the current event, best first, for a page. */
+export function useMyPicklist(): MyPicklistRow[] {
+  const event = useCurrentEvent().key
+  const rows = myPicklistTable.useRows()
+  const person = currentUser()?.id
+  return useMemo(() => rows.filter((row) => row.event_key === event && row.created_by === person).sort(byRank), [rows, event, person])
+}
+
+/** Why a change to your picklist can't be made, or null if it can. */
+function cantChangePicklist(): string | null {
+  if (!currentUser()) return 'Sign in to make your picklist.'
+  if (globalThis.navigator?.onLine === false) return 'No connection. Your picklist is saved to the team, so changing it needs Wi-Fi or data.'
+  return null
+}
+
+/**
+ * Start your list with these teams, best first (like the Picklist page's
+ * order with this phone's weights). Only for an empty list: once it's
+ * started, the order is yours, so this never replaces it.
+ */
+export async function startMyPicklist(teams: number[], event = currentEvent()): Promise<Result<MyPicklistRow[]>> {
+  const problem = cantChangePicklist() ?? (teams.length === 0 ? 'There are no teams to start your picklist with.' : checkTeams(teams))
+  if (problem) return fail(problem)
+  if (myPicklist(currentUser()?.id, event).length > 0) return fail('Your picklist is already started. Move teams on it, or add the teams that are missing.')
+  return myPicklistTable.insertMany([...new Set(teams)].map((team, i) => ({ event_key: event, team_number: team, rank: i + 1, note: null, updated_at: new Date().toISOString() })))
+}
+
+/** Add the teams that aren't on your list yet to the bottom, in the order given. */
+export async function addToMyPicklist(teams: number[], event = currentEvent()): Promise<Result<MyPicklistRow[]>> {
+  const problem = cantChangePicklist() ?? checkTeams(teams)
+  if (problem) return fail(problem)
+  const list = myPicklist(currentUser()?.id, event)
+  const onList = new Set(list.map((row) => row.team_number))
+  const missing = [...new Set(teams)].filter((team) => !onList.has(team))
+  if (missing.length === 0) return ok([])
+  return myPicklistTable.insertMany(missing.map((team, i) => ({ event_key: event, team_number: team, rank: list.length + i + 1, note: null, updated_at: new Date().toISOString() })))
+}
+
+/**
+ * Move a team on your list to place `rank` (1 is the top), and the teams in
+ * between shift one place to make room. A place past either end means the
+ * top or the bottom. Only rows whose place changes are saved.
+ */
+export async function moveOnMyPicklist(team: number, rank: number, event = currentEvent()): Promise<Result> {
+  const problem = cantChangePicklist()
+  if (problem) return fail(problem)
+  const list = myPicklist(currentUser()?.id, event)
+  const row = list.find((r) => r.team_number === team)
+  if (!row) return fail(`Team ${team} isn't on your picklist.`)
+  const to = Math.min(list.length, Math.max(1, Math.round(rank))) - 1
+  const order = list.filter((r) => r !== row)
+  order.splice(to, 0, row)
+  for (const [i, r] of order.entries()) {
+    if (r.rank === i + 1) continue
+    const result = await myPicklistTable.update(r.id, { rank: i + 1 })
+    if (!result.ok) return result
+  }
+  return ok(null)
+}
+
+/** Add, change or clear (with '') your note on a team on your list. */
+export async function setPicklistNote(team: number, note: string, event = currentEvent()): Promise<Result> {
+  const problem = cantChangePicklist()
+  if (problem) return fail(problem)
+  const text = note.trim()
+  if (text.length > MAX_PICKLIST_NOTE) return fail(`Keep the note under ${MAX_PICKLIST_NOTE} characters. It's ${text.length}.`)
+  const row = myPicklist(currentUser()?.id, event).find((r) => r.team_number === team)
+  if (!row) return fail(`Team ${team} isn't on your picklist.`)
+  const result = await myPicklistTable.update(row.id, { note: text || null })
+  return result.ok ? ok(null) : result
+}
+
+/** Where one person put a team, for the team picklist. */
+export interface Placement {
+  /** Whose list. Show their name with useMemberNames(). */
+  by: string | null
+  /** Its place on their list, and how long their list is. */
+  place: number
+  of: number
+  note: string | null
+}
+
+/** One line of the team picklist. */
+export interface TeamPicklistLine {
+  /** 1 is the best. */
+  rank: number
+  team: number
+  /** Its average place as a share of each list: 0 is the top of every list it's on, 1 the bottom. */
+  share: number
+  /** Its average place, as places. */
+  averagePlace: number
+  /** Its best and worst place on any list. */
+  best: number
+  worst: number
+  /** How many lists it's on, out of `lists`. */
+  onLists: number
+  lists: number
+  /** Where each person put it, best first. */
+  placements: Placement[]
+}
+
+/**
+ * Everyone's lists for one event, averaged. Lists can be different lengths,
+ * so each place is turned into a share of its list: the top is 0 and the
+ * bottom is 1, so 1st of 30 counts the same as 1st of 20. A team that isn't
+ * on someone's list is left out of that list's average, not counted as
+ * last. Lowest average first; equal averages go in team number order.
+ */
+export function teamPicklist(rows: MyPicklistRow[]): TeamPicklistLine[] {
+  const lists = new Map<string | null, MyPicklistRow[]>()
+  for (const row of rows) lists.set(row.created_by, [...(lists.get(row.created_by) ?? []), row])
+
+  const placements = new Map<number, (Placement & { share: number })[]>()
+  for (const [by, list] of lists) {
+    const ordered = [...list].sort(byRank)
+    ordered.forEach((row, i) => {
+      const share = ordered.length === 1 ? 0 : i / (ordered.length - 1)
+      placements.set(row.team_number, [...(placements.get(row.team_number) ?? []), { by, place: i + 1, of: ordered.length, note: row.note, share }])
+    })
+  }
+
+  const average = (values: number[]) => values.reduce((a, b) => a + b, 0) / values.length
+  return [...placements]
+    .map(([team, placed]) => ({
+      team,
+      share: average(placed.map((p) => p.share)),
+      averagePlace: average(placed.map((p) => p.place)),
+      best: Math.min(...placed.map((p) => p.place)),
+      worst: Math.max(...placed.map((p) => p.place)),
+      onLists: placed.length,
+      lists: lists.size,
+      placements: placed.sort((a, b) => a.share - b.share).map(({ by, place, of, note }) => ({ by, place, of, note })),
+    }))
+    .sort((a, b) => a.share - b.share || a.team - b.team)
+    .map((line, i) => ({ rank: i + 1, ...line }))
+}
+
+/** The team picklist for the current event, for a page. It updates by itself when someone changes their list. */
+export function useTeamPicklist(): TeamPicklistLine[] {
+  const event = useCurrentEvent().key
+  const rows = myPicklistTable.useRows()
+  return useMemo(() => teamPicklist(rows.filter((row) => row.event_key === event)), [rows, event])
 }

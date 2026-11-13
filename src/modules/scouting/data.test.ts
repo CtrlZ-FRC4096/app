@@ -21,6 +21,7 @@ import { addMissingTeams, byPosition, moveTeam, picklist, picklistTable, positio
 import { COUNTERS, DRIVETRAINS, EVENT_KEY } from './season'
 import { loadSchedule, positionStore, setPosition, teamFor, type SavedSchedule } from './data'
 import { rankOf } from './data'
+import { MAX_PICKLIST_NOTE, addToMyPicklist, moveOnMyPicklist, myPicklist, myPicklistTable, setPicklistNote, startMyPicklist, teamPicklist, type MyPicklistRow } from './data'
 import { addPhoto, photoPath, photoStore, photoToRow, photosTable, shrunkSize, MAX_PHOTO_BYTES } from './data'
 import { readFile } from './photoFiles'
 import { nexusEventUrl, eventTeams, scoutingOverview, type OverviewInput, type Entry, type PitEntry } from './data'
@@ -1807,10 +1808,10 @@ describe('the scouting overview', () => {
 
   it('has a card for every page, in the order of the switch, and says plainly when nothing is saved yet', () => {
     const cards = scoutingOverview(nothing, 4096)
-    expect(cards.map((c) => c.view)).toEqual(['Match', 'Pit', 'Schedule', 'Rankings', 'Teams', 'Picklist', 'Final picklist', 'Simulator', 'Stats'])
+    expect(cards.map((c) => c.view)).toEqual(['Match', 'Pit', 'Schedule', 'Rankings', 'Teams', 'Picklist', 'My picklist', 'Team picklist', 'Final picklist', 'Simulator', 'Stats'])
     expect(cards.map((c) => c.lines[0])).toEqual([
       'No match entries on this phone yet', 'No pit entries on this phone yet', 'No schedule saved yet', 'No rankings saved yet', 'No teams scouted yet',
-      'No teams to rank yet', 'Not started yet', "Pick 6 teams to see the score we'd expect, and who's likely to win", 'No Match 13 ratings saved yet',
+      'No teams to rank yet', 'Not started yet', 'Nobody has made a picklist yet', 'Not started yet', "Pick 6 teams to see the score we'd expect, and who's likely to win", 'No Match 13 ratings saved yet',
     ])
   })
 
@@ -1931,5 +1932,115 @@ describe('robot photos', () => {
     // The file is already forgotten, so a second send just drops it from the list.
     await syncEntries()
     expect(photosTable.rows()).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Personal picklists and the team picklist (#151). In demo mode a student is
+// Alex, who has no example list; Jordan, Sam and Pat do.
+
+describe('my picklist', () => {
+  beforeEach(() => {
+    myPicklistTable.reset()
+    setDemoRole('student')
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const mine = () => myPicklist().map((row) => [row.team_number, row.rank])
+
+  it("starts my list in the order given, 1, 2, 3, once, and won't start it again", async () => {
+    expect(myPicklist()).toEqual([])
+    expect(await startMyPicklist([9994, 9991, 9994, 9992])).toMatchObject({ ok: true })
+    expect(mine()).toEqual([[9994, 1], [9991, 2], [9992, 3]])
+    expect(await startMyPicklist([9993])).toEqual({ ok: false, error: expect.stringMatching(/already started/) })
+    expect(await startMyPicklist([])).toMatchObject({ ok: false })
+  })
+
+  it('adds only the missing teams, to the bottom', async () => {
+    await startMyPicklist([9991, 9992])
+    expect(await addToMyPicklist([9992, 9995, 9993])).toMatchObject({ ok: true })
+    expect(mine()).toEqual([[9991, 1], [9992, 2], [9995, 3], [9993, 4]])
+  })
+
+  it('moves a team up, down, or to any place, shifting the teams in between, and only changes rows that move', async () => {
+    await startMyPicklist([9991, 9992, 9993, 9994, 9995])
+    await moveOnMyPicklist(9993, 2)
+    expect(mine().map(([t]) => t)).toEqual([9991, 9993, 9992, 9994, 9995])
+    await moveOnMyPicklist(9991, 5)
+    expect(mine().map(([t]) => t)).toEqual([9993, 9992, 9994, 9995, 9991])
+    // Past either end means the top or the bottom.
+    await moveOnMyPicklist(9995, 0)
+    await moveOnMyPicklist(9993, 99)
+    expect(mine()).toEqual([[9995, 1], [9992, 2], [9994, 3], [9991, 4], [9993, 5]])
+    const before = myPicklistTable.rows().find((r) => r.team_number === 9991 && r.created_by === DEMO_PEOPLE.alex)!
+    await moveOnMyPicklist(9992, 3)
+    expect(myPicklistTable.rows().find((r) => r.id === before.id)).toBe(before)
+    expect(await moveOnMyPicklist(1234, 1)).toEqual({ ok: false, error: "Team 1234 isn't on your picklist." })
+  })
+
+  it('adds, changes and clears a note, up to 500 characters', async () => {
+    await startMyPicklist([9991])
+    expect(await setPicklistNote(9991, '  Great defender  ')).toEqual({ ok: true, value: null })
+    expect(myPicklist()[0].note).toBe('Great defender')
+    expect(await setPicklistNote(9991, 'x'.repeat(MAX_PICKLIST_NOTE + 1))).toMatchObject({ ok: false, error: expect.stringMatching(/500/) })
+    await setPicklistNote(9991, '')
+    expect(myPicklist()[0].note).toBeNull()
+  })
+
+  it("says changes need a connection when there isn't one, and leaves the list alone", async () => {
+    await startMyPicklist([9991, 9992])
+    vi.stubGlobal('navigator', { onLine: false })
+    expect(await moveOnMyPicklist(9992, 1)).toEqual({ ok: false, error: expect.stringMatching(/No connection/) })
+    expect(mine()).toEqual([[9991, 1], [9992, 2]])
+  })
+
+  it("keeps each person's list separate", async () => {
+    await startMyPicklist([9991])
+    expect(myPicklist(DEMO_PEOPLE.jordan).map((r) => r.team_number)).toEqual([9994, 9991, 9993, 9992])
+    expect(myPicklist(DEMO_PEOPLE.alex).map((r) => r.team_number)).toEqual([9991])
+  })
+})
+
+describe('the team picklist', () => {
+  let next = 0
+  // One person's list: teams best first.
+  const list = (person: string, teams: number[], notes: Record<number, string> = {}): MyPicklistRow[] =>
+    teams.map((team, i) => ({
+      id: `tp-${++next}`, event_key: EVENT_KEY, team_number: team, rank: i + 1, note: notes[team] ?? null,
+      created_at: '2026-11-07T21:00:00Z', created_by: person, updated_at: '2026-11-07T21:00:00Z',
+    }))
+
+  it('turns each place into a share of its list, so lists of different lengths count the same', () => {
+    // 9991 is 1st of 2 for one person and 1st of 5 for the other: both the top.
+    const lines = teamPicklist([...list('a', [9991, 9992]), ...list('b', [9991, 9993, 9994, 9995, 9992])])
+    expect(lines[0]).toMatchObject({ rank: 1, team: 9991, share: 0, averagePlace: 1, best: 1, worst: 1, onLists: 2, lists: 2 })
+    // 9992 is last on both lists, whatever their lengths.
+    expect(lines.find((l) => l.team === 9992)).toMatchObject({ share: 1, averagePlace: 3.5, best: 2, worst: 5 })
+  })
+
+  it("leaves a team out of a list it isn't on, rather than counting it last", () => {
+    const lines = teamPicklist([...list('a', [9991, 9992, 9993]), ...list('b', [9992, 9993])])
+    // 9991 is only on a's list, at the top: it isn't pushed down for b leaving it off.
+    expect(lines.map((l) => [l.team, l.share, l.onLists])).toEqual([[9991, 0, 1], [9992, 0.25, 2], [9993, 1, 2]])
+  })
+
+  it('puts equal averages in team number order', () => {
+    const lines = teamPicklist([...list('a', [9993, 9991]), ...list('b', [9991, 9993])])
+    expect(lines.map((l) => l.team)).toEqual([9991, 9993])
+  })
+
+  it('shows where each person put a team, best first, with their notes', () => {
+    const lines = teamPicklist([...list('a', [9992, 9991], { 9991: 'Slow climb' }), ...list('b', [9991], { 9991: 'Best auto' })])
+    expect(lines.find((l) => l.team === 9991)?.placements).toEqual([{ by: 'b', place: 1, of: 1, note: 'Best auto' }, { by: 'a', place: 2, of: 2, note: 'Slow climb' }])
+  })
+
+  it('has nothing when nobody has made a list, and averages the example lists in demo mode', () => {
+    expect(teamPicklist([])).toEqual([])
+    myPicklistTable.reset()
+    const lines = teamPicklist(myPicklistTable.rows())
+    expect(lines[0]).toMatchObject({ team: 9994, lists: 3, onLists: 3 })
   })
 })
