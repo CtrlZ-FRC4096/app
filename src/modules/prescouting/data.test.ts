@@ -3,10 +3,12 @@
 // tested in supabase/tests/prescouting-notes.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetAllStores } from '../../core/store'
+import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import { EVENT_KEY, tbaTeamUrl } from '../scouting/data'
 import {
   MAX_PRESCOUT_ANSWER, NO_ANSWERS, cleanEventKey, firstLine, hasAnswers, isEventKey, loadPrescoutTeams, prescoutEventStore, prescoutList, prescoutOverview,
-  prescoutFor, prescoutHref, prescoutTable, savePrescout, setPrescoutEvent, toggleMark, type PrescoutNotes,
+  prescoutFor, prescoutHref, prescoutTable, savePrescout, setPrescoutEvent, type PrescoutNotes,
+  MAX_STAR_REASON, removeTeamStar, starTeam, starsTable, unstarTeam, visibleStars, type PrescoutStar,
 } from './data'
 
 describe('prescouting: the teams at an event', () => {
@@ -96,11 +98,10 @@ describe('prescouting notes', () => {
     expect(notesFor(9992)?.created_by).toBeTruthy()
   })
 
-  it('changes the same row after that, keeping the mark', async () => {
+  it('changes the same row after that', async () => {
     const before = notesFor(9991)!
-    expect(before.marked).toBe(true)
     const result = await savePrescout(EVENT_KEY, 9991, { ...ANSWERS, weaknesses: 'Tips over' })
-    expect(result).toMatchObject({ ok: true, value: { id: before.id, weaknesses: 'Tips over', marked: true } })
+    expect(result).toMatchObject({ ok: true, value: { id: before.id, weaknesses: 'Tips over' } })
     expect(prescoutTable.rows().filter((r) => r.team_number === 9991)).toHaveLength(1)
   })
 
@@ -121,15 +122,6 @@ describe('prescouting notes', () => {
     expect(await savePrescout(EVENT_KEY, 9993, NO_ANSWERS)).toMatchObject({ ok: true, value: { strengths: '', key_task: '' } })
   })
 
-  it('marks and unmarks a team, adding their row if they have no notes yet', async () => {
-    expect(await toggleMark(EVENT_KEY, 9994)).toEqual({ ok: true, value: true })
-    expect(notesFor(9994)).toMatchObject({ ...NO_ANSWERS, marked: true })
-    expect(hasAnswers(notesFor(9994))).toBe(false)
-    expect(await toggleMark(EVENT_KEY, 9994)).toEqual({ ok: true, value: false })
-    expect(await toggleMark(EVENT_KEY, 9991)).toEqual({ ok: true, value: false })
-    expect(notesFor(9991)?.strengths).toMatch(/Fast cycles/)
-  })
-
   it('knows whether a team has been prescouted', () => {
     expect(hasAnswers(notesFor(9991))).toBe(true)
     expect(hasAnswers(null)).toBe(false)
@@ -139,26 +131,30 @@ describe('prescouting notes', () => {
 
 describe('the prescouting overview', () => {
   const team = (n: number, epa: number | null) => ({ team: n, name: `Team ${n}`, epa, tbaUrl: tbaTeamUrl(n, EVENT_KEY) })
-  const note = (n: number, marked: boolean, strengths = '') => ({
-    id: `id-${n}`, event_key: EVENT_KEY, team_number: n, ...NO_ANSWERS, strengths, marked, created_at: '2026-11-05T19:00:00Z', created_by: null,
+  const note = (n: number, strengths = '') => ({
+    id: `id-${n}`, event_key: EVENT_KEY, team_number: n, ...NO_ANSWERS, strengths, marked: false, created_at: '2026-11-05T19:00:00Z', created_by: null,
+  })
+  const star = (n: number, forTeam: boolean, by = 'me'): PrescoutStar => ({
+    id: `star-${n}-${by}-${forTeam}`, event_key: EVENT_KEY, team_number: n, for_team: forTeam, reason: forTeam ? 'Why' : null, created_at: '2026-11-05T19:00:00Z', created_by: by,
   })
   const TEAMS = [team(9995, 22.1), team(9991, 41.7), team(9993, null), team(9992, 35.2), team(9994, null)]
   const order = (rows: { team: number }[]) => rows.map((r) => r.team)
 
-  it('sorts by team number, with marked teams first', () => {
-    expect(order(prescoutOverview(TEAMS, [note(9994, true), note(9992, true), note(9991, false, 'Fast')], 'Team number'))).toEqual([9992, 9994, 9991, 9993, 9995])
+  it('sorts by team number: teams starred for the team first, then ones you starred, then everyone else', () => {
+    const stars = [star(9994, false), star(9995, true, 'someone'), star(9992, true, 'me')]
+    expect(order(prescoutOverview(TEAMS, [note(9991, 'Fast')], 'Team number', stars, 'me'))).toEqual([9992, 9995, 9994, 9991, 9993])
   })
 
-  it('sorts by EPA best first, teams with no EPA after, marked teams still first', () => {
+  it('sorts by EPA best first, teams with no EPA after, starred teams still first', () => {
     expect(order(prescoutOverview(TEAMS, [], 'EPA'))).toEqual([9991, 9992, 9995, 9993, 9994])
-    expect(order(prescoutOverview(TEAMS, [note(9994, true), note(9995, true)], 'EPA'))).toEqual([9995, 9994, 9991, 9992, 9993])
+    expect(order(prescoutOverview(TEAMS, [], 'EPA', [star(9994, true), star(9995, true)], 'me'))).toEqual([9995, 9994, 9991, 9992, 9993])
   })
 
-  it('puts each team with their notes, and says which are prescouted', () => {
-    const rows = prescoutOverview(TEAMS, [note(9991, false, 'Fast'), note(9993, true)], 'Team number')
-    expect(rows.find((r) => r.team === 9991)).toMatchObject({ marked: false, prescouted: true, notes: { strengths: 'Fast' } })
-    expect(rows.find((r) => r.team === 9993)).toMatchObject({ marked: true, prescouted: false })
-    expect(rows.find((r) => r.team === 9992)).toMatchObject({ marked: false, prescouted: false, notes: null })
+  it('puts each team with their notes and stars, and says which are prescouted', () => {
+    const rows = prescoutOverview(TEAMS, [note(9991, 'Fast'), note(9993)], 'Team number', [star(9993, true, 'someone'), star(9993, false)], 'me')
+    expect(rows.find((r) => r.team === 9991)).toMatchObject({ group: 'rest', prescouted: true, notes: { strengths: 'Fast' } })
+    expect(rows.find((r) => r.team === 9993)).toMatchObject({ group: 'team', prescouted: false, teamStars: [{ created_by: 'someone' }], myStars: [{ for_team: false }] })
+    expect(rows.find((r) => r.team === 9992)).toMatchObject({ group: 'rest', prescouted: false, notes: null, teamStars: [], myStars: [] })
   })
 
   it("shows the first line of an answer, cut short if it's long", () => {
@@ -187,5 +183,52 @@ describe('one team’s prescouting, for the Scouting team page (#119)', () => {
 
   it("links to the team's prescouting page", () => {
     expect(prescoutHref('2026ilch', 9991)).toBe('#/prescouting/2026ilch/9991')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Stars (#118). In demo mode a student is Alex, a mentor is Pat.
+
+describe('prescouting stars', () => {
+  beforeEach(() => {
+    starsTable.reset()
+    setDemoRole('student')
+  })
+
+  const mine = (team: number) => starsTable.rows().filter((s) => s.team_number === team && s.created_by === DEMO_PEOPLE.alex)
+
+  it('stars a team just for you, with no reason needed', async () => {
+    expect(await starTeam(EVENT_KEY, 9995, { forTeam: false })).toMatchObject({ ok: true, value: { team_number: 9995, for_team: false, reason: null, created_by: DEMO_PEOPLE.alex } })
+  })
+
+  it('stars a team for the whole team only with a reason, trimmed, and says what to do without one', async () => {
+    expect(await starTeam(EVENT_KEY, 9995, { forTeam: true })).toEqual({ ok: false, error: 'Say why the team should look at them.' })
+    expect(await starTeam(EVENT_KEY, 9995, { forTeam: true, reason: '   ' })).toEqual({ ok: false, error: 'Say why the team should look at them.' })
+    expect(await starTeam(EVENT_KEY, 9995, { forTeam: true, reason: 'x'.repeat(MAX_STAR_REASON + 1) })).toMatchObject({ ok: false })
+    expect(await starTeam(EVENT_KEY, 9995, { forTeam: true, reason: '  Good second pick  ' })).toMatchObject({ ok: true, value: { reason: 'Good second pick' } })
+  })
+
+  it('lets you star a team once of each kind, and remove your own', async () => {
+    await starTeam(EVENT_KEY, 9995, { forTeam: false })
+    expect(await starTeam(EVENT_KEY, 9995, { forTeam: false })).toMatchObject({ ok: false, error: expect.stringMatching(/already starred/) })
+    await starTeam(EVENT_KEY, 9995, { forTeam: true, reason: 'Why' })
+    expect(mine(9995)).toHaveLength(2)
+    expect(await unstarTeam(EVENT_KEY, 9995, false)).toMatchObject({ ok: true })
+    expect(mine(9995).map((s) => s.for_team)).toEqual([true])
+    expect(await unstarTeam(EVENT_KEY, 9995, false)).toMatchObject({ ok: false })
+  })
+
+  it("shows team stars and your own, but not someone else's star just for them", () => {
+    const visible = visibleStars(starsTable.rows(), DEMO_PEOPLE.alex)
+    expect(visible.map((s) => [s.team_number, s.for_team])).toEqual([[9991, true], [9991, true], [9993, false]])
+    expect(visibleStars(starsTable.rows(), null).every((s) => s.for_team)).toBe(true)
+  })
+
+  it("lets a mentor remove anyone's team star, but not a student", async () => {
+    const jordans = starsTable.rows().find((s) => s.created_by === DEMO_PEOPLE.jordan)!
+    expect(await removeTeamStar(jordans)).toMatchObject({ ok: false, error: expect.stringMatching(/Only mentors/) })
+    setDemoRole('mentor')
+    expect(await removeTeamStar(jordans)).toMatchObject({ ok: true })
+    expect(starsTable.rows().some((s) => s.id === jordans.id)).toBe(false)
   })
 })
