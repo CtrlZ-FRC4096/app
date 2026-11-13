@@ -11,6 +11,10 @@
 //   module. One call.
 // - file: a part's STEP or STL, for whoever is at its machine (#24). STL is
 //   one call; STEP is usually 4 to 6. See files.ts.
+// - part-numbers: write the BOM's team part numbers into custom parts' Part
+//   number property (#21). Student leaders, mentors and admins only, and
+//   only into a workspace. The only request that changes anything in
+//   Onshape. See numbers.ts.
 //
 // Onshape limits calls per year, so the app only calls this when someone
 // clicks a button, and keeps what it gets.
@@ -28,19 +32,33 @@ import {
   type OnshapeShapes,
 } from './onshape.ts'
 import { readBodies, shapeFromEdges } from './shape.ts'
+import { createOnshapeWriter, partNumbersRequest, writePartNumbers } from './numbers.ts'
 import { createOnshapeFiles, fileRequest, isFileRequest, partSource, type FilePart } from './files.ts'
 
 const accessKey = Deno.env.get('ONSHAPE_ACCESS_KEY') ?? ''
 const secretKey = Deno.env.get('ONSHAPE_SECRET_KEY') ?? ''
 const onshape = createOnshape(accessKey, secretKey)
+// Only the part-numbers request changes anything in Onshape.
+const writeOnshape = createOnshapeWriter(accessKey, secretKey)
 const onshapeFile = createOnshapeFiles(accessKey, secretKey)
 
 export default {
-  fetch: forMembers(async (req, _member, db) => {
+  fetch: forMembers(async (req, member, db) => {
     if (!accessKey || !secretKey) {
       return reply({ error: "The Onshape keys aren't set up yet. A mentor adds ONSHAPE_ACCESS_KEY and ONSHAPE_SECRET_KEY: see supabase/README.md." }, 503)
     }
     const body = await req.json().catch(() => null)
+
+    // part-numbers: write the BOM's team part numbers into each part's Part
+    // number property (#21). Student leaders, mentors and admins only, and
+    // only into a workspace: see numbers.ts. One call for each Part Studio,
+    // plus one for each part whose number changes.
+    if ((body as { kind?: unknown } | null)?.kind === 'part-numbers') {
+      const asked = partNumbersRequest(body, member.role)
+      if ('error' in asked) return reply({ error: asked.error }, asked.status)
+      const result = await writePartNumbers(asked, onshape, writeOnshape)
+      return result.ok ? reply(result.answer) : reply({ error: result.error }, result.status)
+    }
 
     // A part's file for its machine (#24). Anyone on the team can download.
     // The part is read with the caller's own sign-in, so only parts in the

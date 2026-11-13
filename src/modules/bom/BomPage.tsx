@@ -6,7 +6,8 @@ import { toast } from '../../core/toast'
 import { Callout, InView, PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
 import {
   PART_FILTERS, addPart, addRobot, addSystem, applyOnshapeImport, canEditRobotsAndParts, changePart, changeSystem, filterParts, getOnshapeBom, kindChangeWarning, kindLabel,
-  nextPartNumber, partCountText, removePart, removeSystem, renameRobot, shelfText, shortageFor, shortages, toOrder, toOrderCsv, useParts, useRobotParts, useRobots, useSystems,
+  nextPartNumber, numberParts, partCountText, partsForOnshape, partsWithoutTeamNumber, removePart, removeSystem, renameRobot, shelfText, shortageFor, shortages, toOrder, toOrderCsv, useParts, useRobotParts, useRobots, useSystems,
+  useCounters, writePartNumbersToOnshape,
   type Shortage, type VendorOrder,
   type BomSystem, type Part, type PartFilter, type PartKind, type Robot,
 } from './data'
@@ -73,6 +74,9 @@ export default function BomPage() {
   // An import from Onshape waiting to be confirmed, and whether Onshape is being read.
   const [importing, setImporting] = useState<{ system: BomSystem; plan: OnshapeImportPlan } | null>(null)
   const [reading, setReading] = useState(false)
+  // Whether part numbers are being written into Onshape (#21).
+  const [writing, setWriting] = useState(false)
+  const withoutNumber = partsWithoutTeamNumber(parts)
   const onBoard = useOnBoard()
   // Each COTS part's request in Purchasing, if it has one.
   const requests = useRequestsByBomPart()
@@ -93,6 +97,26 @@ export default function BomPage() {
     }
     close()
     setImporting({ system: s, plan: planImport(s, answer.value) })
+  }
+
+  // Give custom parts with no team number one (#21). Their old numbers are replaced, so ask first.
+  async function giveNumbers(s: BomSystem) {
+    const replaced = withoutNumber.length === 1
+      ? `Its number now, ${withoutNumber[0].part_number}, is replaced.`
+      : `Their numbers now (${withoutNumber[0].part_number}, ${withoutNumber[1].part_number}${withoutNumber.length > 2 ? ', …' : ''}) are replaced.`
+    if (!window.confirm(`Give ${plural(withoutNumber.length, 'custom part', 'custom parts')} in ${s.name} a team number? ${replaced}`)) return
+    const result = await numberParts(s)
+    toast(result.ok ? result.value : result.error)
+  }
+
+  // Write the team numbers into each part's Part number property in Onshape (#21). It changes CAD, so ask first.
+  async function writeNumbers(s: BomSystem) {
+    const count = partsForOnshape(parts).length
+    if (count > 0 && !window.confirm(`Write team part numbers into Onshape for ${plural(count, 'custom part', 'custom parts')} in ${s.name}? This changes each part's Part number property in the Onshape workspace.`)) return
+    setWriting(true)
+    const result = await writePartNumbersToOnshape(s)
+    setWriting(false)
+    toast(result.ok ? result.value : result.error)
   }
 
   if (!robot) {
@@ -241,6 +265,14 @@ export default function BomPage() {
                 <button type="button" className="btn btn-sm" disabled={reading} onClick={() => void readOnshape(system)}>
                   {reading ? 'Reading Onshape…' : 'Import from Onshape'}
                 </button>
+              )}
+              {leader && system.onshape_url && (
+                <button type="button" className="btn btn-sm" disabled={writing} onClick={() => void writeNumbers(system)}>
+                  {writing ? 'Writing to Onshape…' : 'Write part numbers to Onshape'}
+                </button>
+              )}
+              {leader && withoutNumber.length > 0 && (
+                <button type="button" className="btn btn-sm" onClick={() => void giveNumbers(system)}>Give team numbers</button>
               )}
               {/* The database only accepts https:// links here, so it's safe to open. */}
               {system.onshape_url && <a href={system.onshape_url} target="_blank" rel="noopener noreferrer">Open in Onshape</a>}
@@ -610,7 +642,9 @@ function PartForm(props: { system: BomSystem; parts: Part[]; part: Part | null; 
   const [productUrl, setProductUrl] = useState(part?.product_url ?? '')
   const [quantity, setQuantity] = useState(part?.quantity ?? 1)
   const [saving, setSaving] = useState(false)
-  const shownPartNumber = partNumber ?? nextPartNumber(system, props.parts)
+  // The next number never repeats one used before, even by a deleted part (#21).
+  const counters = useCounters()
+  const shownPartNumber = partNumber ?? nextPartNumber(system, props.parts, counters)
   const form = useFocusOnOpen()
   // Changing a Custom part to COTS removes its stages: say so before saving (#169).
   const warning = part && kindChangeWarning(part, kind, props.steps, props.onBoard)
@@ -657,7 +691,8 @@ function PartForm(props: { system: BomSystem; parts: Part[]; part: Part | null; 
       <form ref={form} className="panel-body" onSubmit={save}>
         {part?.onshape_id && (
           <p className="note">
-            From Onshape: importing again sets its name, number, quantity and material back to what Onshape has. Change them in CAD to keep them.
+            From Onshape: importing again sets its name, quantity and material back to what Onshape has. Change them in CAD to keep them.
+            {' '}A team part number (4096-…) stays what it is here: use Write part numbers to Onshape to put it in CAD.
             {' '}A part you make COTS here stays COTS, and keeps the vendor details and product page you type.
           </p>
         )}

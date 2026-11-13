@@ -3,13 +3,14 @@
 // Importing is for student leaders, mentors and admins.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { setDemoRole } from '../../core/demo'
-import { applyOnshapeImport, getOnshapeBom, isOnshapeLink, partsTable, systemsTable, type BomSystem, type Part } from './data'
+import { applyOnshapeImport, countersTable, getOnshapeBom, isOnshapeLink, partsTable, systemsTable, type BomSystem, type Part } from './data'
 import { planOnshapeImport, type OnshapeBom, type OnshapeLine } from './onshape'
 
 beforeEach(() => {
   setDemoRole('leader')
   partsTable.reset()
   systemsTable.reset()
+  countersTable.reset()
 })
 
 const system: BomSystem = {
@@ -92,6 +93,14 @@ describe('planOnshapeImport', () => {
     const plan = planOnshapeImport(system, bom(line({ name: 'Motor', onshape_url: undefined } as Partial<OnshapeLine>)), [{ ...motor, onshape_url: 'https://cad.onshape.com/x' }])
     expect(plan.unchanged).toBe(1)
     expect(plan.change).toEqual([])
+  })
+
+  it("keeps a part's team number when Onshape has another, but follows Onshape until it has one (#21)", () => {
+    const numbered = part({ onshape_id: 'doc/tab/JHD', name: 'Flywheel plate', part_number: '4096-26-SHO-001', onshape_url: 'https://cad.onshape.com/x' })
+    const typedInCad = part({ onshape_id: 'doc/tab/JID', name: 'Flywheel plate', part_number: 'BRKT-1', onshape_url: 'https://cad.onshape.com/x' })
+    const plan = planOnshapeImport(system, bom(line({ part_number: '4096-26-SHO-007' }), line({ onshape_id: 'doc/tab/JID', part_number: 'BRKT-2' })), [numbered, typedInCad])
+    expect(plan.unchanged).toBe(1)
+    expect(plan.change.map((c) => [c.part.part_number, c.changes.part_number])).toEqual([['BRKT-1', 'BRKT-2']])
   })
 
   it('links a part typed in by hand when Onshape has its part number', () => {
