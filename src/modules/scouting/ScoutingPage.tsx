@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
 import { navigate, useRoute } from '../../core/router'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
@@ -13,7 +13,7 @@ import Schedule from './Schedule'
 import SavedOnDevice from './SavedOnDevice'
 import SharedPicklist from './SharedPicklist'
 import TeamPage, { TeamLink } from './TeamPage'
-import { COUNTERS, ENDGAME, ROLES } from './season'
+import { AUTO_SIDES, BREAKDOWN_PARTS, COUNTERS, ENDGAME, RANKING_POINTS, ROLES } from './season'
 
 /** Width and height of the − and + buttons, in pixels. Big enough to tap without looking. */
 const TAP_SIZE = 60
@@ -40,6 +40,26 @@ function PickMany(props: { label: string; options: string[]; value: string[]; on
         </button>
       ))}
     </div>
+  )
+}
+
+/** A big tick box with its words beside it. */
+function Tick(props: { checked: boolean; onChange: (checked: boolean) => void; children: ReactNode }) {
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 44 }}>
+      <input type="checkbox" style={{ width: 24, height: 24, flexShrink: 0 }} checked={props.checked} onChange={(e) => props.onChange(e.target.checked)} />
+      {props.children}
+    </label>
+  )
+}
+
+/** A one-line box for a short answer. 16px text so phones don't zoom in on it. */
+function ShortAnswer(props: { id: string; label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
+  return (
+    <label className="field" htmlFor={props.id}>
+      {props.label}
+      <input id={props.id} className="input" style={{ minHeight: 46, fontSize: 16 }} value={props.value} onChange={(e) => props.onChange(e.target.value)} placeholder={props.placeholder} />
+    </label>
   )
 }
 
@@ -89,10 +109,18 @@ function MatchForm() {
   const [counts, setCounts] = useState(zeroCounts)
   const [endgame, setEndgame] = useState(ENDGAME[0])
   const [roles, setRoles] = useState<string[]>([])
+  const [roleNotes, setRoleNotes] = useState('')
   const [brokeDown, setBrokeDown] = useState(false)
+  const [brokeParts, setBrokeParts] = useState<string[]>([])
+  const [brokeOther, setBrokeOther] = useState('')
+  const [brownedOut, setBrownedOut] = useState(false)
   const [stop, setStop] = useState<Stop>('None')
   // 0 until the scout chooses, so no button is pressed and Save asks for one.
   const [driverSkill, setDriverSkill] = useState(0)
+  // '' until the scout chooses: they may not have seen where it started.
+  const [autoSide, setAutoSide] = useState('')
+  const [autoNotes, setAutoNotes] = useState('')
+  const [rankingPoints, setRankingPoints] = useState<string[]>([])
   const [notes, setNotes] = useState('')
 
   function change(key: string, by: number) {
@@ -107,9 +135,16 @@ function MatchForm() {
       counts,
       endgame,
       roles,
+      role_notes: roleNotes,
       broke_down: brokeDown,
+      broke_parts: brokeParts,
+      broke_other: brokeOther,
+      browned_out: brownedOut,
       stop,
       driver_skill: driverSkill,
+      auto_side: autoSide,
+      auto_notes: autoNotes,
+      ranking_points: rankingPoints,
       notes,
     })
     if (!result.ok) {
@@ -122,9 +157,16 @@ function MatchForm() {
     setCounts(zeroCounts())
     setEndgame(ENDGAME[0])
     setRoles([])
+    setRoleNotes('')
     setBrokeDown(false)
+    setBrokeParts([])
+    setBrokeOther('')
+    setBrownedOut(false)
     setStop('None')
     setDriverSkill(0)
+    setAutoSide('')
+    setAutoNotes('')
+    setRankingPoints([])
     setNotes('')
     toast(`Saved match ${result.value.match}, team ${result.value.team}.`)
   }
@@ -141,6 +183,13 @@ function MatchForm() {
           <FormSection title="Match" first>
             {/* Position, match and team. The team fills in from the schedule: see MatchTeamFields.tsx. */}
             <MatchTeamFields match={match} team={team} onMatch={setMatch} onTeam={setTeam} />
+          </FormSection>
+          <FormSection title="Auto">
+            <div className="field">
+              Where it started (tap again to clear if you didn't see)
+              <Pick label="Where it started" options={AUTO_SIDES} value={autoSide} onChange={(side) => setAutoSide(side === autoSide ? '' : side)} />
+            </div>
+            <ShortAnswer id="scout-auto" label="What did its auto do?" value={autoNotes} onChange={setAutoNotes} placeholder="Like: scored preload, picked up 2 from the middle" />
           </FormSection>
           <FormSection title="Scoring">
             {COUNTERS.map((c) => (
@@ -159,10 +208,18 @@ function MatchForm() {
               Role (choose all that fit)
               <PickMany label="Role" options={ROLES} value={roles} onChange={setRoles} />
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 44 }}>
-              <input type="checkbox" style={{ width: 24, height: 24 }} checked={brokeDown} onChange={(e) => setBrokeDown(e.target.checked)} />
-              Broke down (stopped working or lost a mechanism)
-            </label>
+            <ShortAnswer id="scout-role-notes" label="How well does it do its role?" value={roleNotes} onChange={setRoleNotes} placeholder="Like: fast cycles, missed a few shots" />
+            <Tick checked={brokeDown} onChange={setBrokeDown}>Broke down (stopped working or lost a mechanism)</Tick>
+            {brokeDown && (
+              <>
+                <div className="field">
+                  What broke? (choose all that fit)
+                  <PickMany label="What broke" options={BREAKDOWN_PARTS} value={brokeParts} onChange={setBrokeParts} />
+                </div>
+                <ShortAnswer id="scout-broke-other" label="Anything else that broke" value={brokeOther} onChange={setBrokeOther} placeholder="Like: bumper fell off" />
+              </>
+            )}
+            <Tick checked={brownedOut} onChange={setBrownedOut}>Died or browned out (lost power, stuttering, lights flickering)</Tick>
             <div className="field">
               E-stop or A-stop
               <Pick label="E-stop or A-stop" options={[...STOPS]} value={stop} onChange={setStop} />
@@ -175,6 +232,10 @@ function MatchForm() {
           </FormSection>
           <FormSection title="Endgame">
             <Pick label="Endgame" options={ENDGAME} value={endgame} onChange={setEndgame} />
+            <div className="field">
+              Ranking points their alliance earned (choose all that fit)
+              <PickMany label="Ranking points" options={RANKING_POINTS} value={rankingPoints} onChange={setRankingPoints} />
+            </div>
             <label className="field" htmlFor="scout-notes">
               Notes
               <textarea id="scout-notes" className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything the form doesn't show: tipped, fast cycles, slow intake" />

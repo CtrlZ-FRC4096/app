@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetAllStores } from '../../core/store'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import {
-  MAX_NOTES_LENGTH, blankOrNumber, checkEntry, checkPitEntry, getEventTeams, tbaTeamUrl, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
+  MAX_NOTES_LENGTH, MAX_SHORT_LENGTH, blankOrNumber, checkEntry, checkPitEntry, getEventTeams, tbaTeamUrl, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
   MAX_PIT_NUMBER, numberOnly, pitAnswers, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, scoutedTeams, syncEntries, syncStatus, teamNumber,
   teamSummary, toRow, type EntryFields, type MatchRow, type PitFields, type PitRow, type TeamSummary,
   qualVideoRows, videoLink, type TbaMatchWithVideos,
@@ -91,9 +91,16 @@ const FORM: EntryFields = {
   counts: { autoFuel: 3, teleopFuel: 14, fuelMissed: 2 },
   endgame: 'Level 2',
   roles: ['Scorer', 'Defender'],
+  role_notes: '  Quick, missed a few  ',
   broke_down: true,
+  broke_parts: ['Intake'],
+  broke_other: '  Bumper fell off  ',
+  browned_out: false,
   stop: 'A-stop',
   driver_skill: 4,
+  auto_side: 'Left',
+  auto_notes: 'Scored preload',
+  ranking_points: ['Energized'],
   notes: '  Fast cycles  ',
 }
 
@@ -106,7 +113,7 @@ describe('saveEntry', () => {
     const result = saveEntry(FORM)
     if (!result.ok) throw new Error(result.error)
     expect(entryStore.get()).toEqual([result.value])
-    expect(result.value).toMatchObject({ ...FORM, notes: 'Fast cycles', synced: false })
+    expect(result.value).toMatchObject({ ...FORM, notes: 'Fast cycles', role_notes: 'Quick, missed a few', broke_other: 'Bumper fell off', synced: false })
     expect(result.value.scouted_by).not.toBeNull()
   })
 
@@ -116,6 +123,11 @@ describe('saveEntry', () => {
     expect(entryStore.get().map((e) => e.match)).toEqual([13, 12])
     expect(entryStore.get()[0].id).not.toBe(entryStore.get()[1].id)
     expect(entryStore.get()[0].roles).toEqual([])
+  })
+
+  it("forgets what broke when it didn't break down", () => {
+    const result = saveEntry({ ...FORM, broke_down: false })
+    expect(result.ok && [result.value.broke_parts, result.value.broke_other]).toEqual([[], ''])
   })
 
   it('saves nothing when the form has a problem, and says why', () => {
@@ -139,6 +151,9 @@ describe('checkEntry', () => {
       ['driver skill 1', { driver_skill: 1 }],
       ['driver skill 5', { driver_skill: 5 }],
       ['the longest notes', { notes: 'x'.repeat(MAX_NOTES_LENGTH) }],
+      ['the longest short answers', { role_notes: 'x'.repeat(MAX_SHORT_LENGTH), broke_other: 'x'.repeat(MAX_SHORT_LENGTH), auto_notes: 'x'.repeat(MAX_SHORT_LENGTH) }],
+      ['both stops', { stop: 'Both' }],
+      ['no auto side seen', { auto_side: '' }],
     ]
     for (const [label, change] of allowed) expect(checkEntry({ ...FORM, ...change }), label).toBeNull()
     const refused: [string, Partial<EntryFields>, RegExp][] = [
@@ -149,6 +164,9 @@ describe('checkEntry', () => {
       ['a match number too big', { match: 1001 }, /match number/],
       ['driver skill 6', { driver_skill: 6 }, /driver skill/],
       ['notes too long', { notes: 'x'.repeat(MAX_NOTES_LENGTH + 1) }, /notes/],
+      ['how well it does its role too long', { role_notes: 'x'.repeat(MAX_SHORT_LENGTH + 1) }, /its role/],
+      ['what else broke too long', { broke_other: 'x'.repeat(MAX_SHORT_LENGTH + 1) }, /else broke/],
+      ['auto answer too long', { auto_notes: 'x'.repeat(MAX_SHORT_LENGTH + 1) }, /auto/],
     ]
     for (const [label, change, problem] of refused) expect(checkEntry({ ...FORM, ...change }), label).toMatch(problem)
   })
@@ -186,9 +204,16 @@ describe('syncing to the team database', () => {
         counts: FORM.counts,
         endgame: 'Level 2',
         roles: ['Scorer', 'Defender'],
+        role_notes: 'Quick, missed a few',
         broke_down: true,
+        broke_parts: ['Intake'],
+        broke_other: 'Bumper fell off',
+        browned_out: false,
         stop: 'A-stop',
         driver_skill: 4,
+        auto_side: 'Left',
+        auto_notes: 'Scored preload',
+        ranking_points: ['Energized'],
         notes: 'Fast cycles',
         scouted_by: DEMO_PEOPLE.alex,
         scouted_at: first.value.created_at,
@@ -232,6 +257,9 @@ describe('syncing to the team database', () => {
     const { roles: _r, broke_down: _b, stop: _s, driver_skill: _d, ...rest } = saved.value
     expect(toRow({ ...rest, defense: true })).toMatchObject({ roles: ['Defender'], broke_down: false, stop: 'None', driver_skill: null })
     expect(toRow({ ...rest, defense: false }).roles).toEqual([])
+    // Saved before #162: no role answer, nothing broke, no brownout, auto not seen, no ranking points.
+    const { role_notes: _rn, broke_parts: _bp, broke_other: _bo, browned_out: _bw, auto_side: _as, auto_notes: _an, ranking_points: _rp, ...before162 } = saved.value
+    expect(toRow(before162)).toMatchObject({ role_notes: null, broke_parts: [], broke_other: null, browned_out: false, auto_side: null, auto_notes: null, ranking_points: [] })
     // Saved before events were recorded: the current event.
     const { event_key: _old, ...older } = saved.value
     expect(toRow(older).event_key).toBe(EVENT_KEY)
@@ -702,9 +730,16 @@ describe("the picklist page: each team's numbers and the weights", () => {
     counts: { autoFuel: 2, teleopFuel: 10, fuelMissed: 1 },
     endgame: 'Level 1',
     roles: ['Scorer'],
+    role_notes: null,
     broke_down: false,
+    broke_parts: [],
+    broke_other: null,
+    browned_out: false,
     stop: 'None',
     driver_skill: 3,
+    auto_side: null,
+    auto_notes: null,
+    ranking_points: [],
     notes: null,
     scouted_by: DEMO_PEOPLE.alex,
     scouted_at: '2026-11-07T15:00:00Z',
@@ -1177,9 +1212,16 @@ describe('teamSummary', () => {
     counts: { autoFuel: 2, teleopFuel: 10, fuelMissed: 1 },
     endgame: 'Level 1',
     roles: ['Scorer'],
+    role_notes: null,
     broke_down: false,
+    broke_parts: [],
+    broke_other: null,
+    browned_out: false,
     stop: 'None',
     driver_skill: 3,
+    auto_side: null,
+    auto_notes: null,
+    ranking_points: [],
     notes: null,
     scouted_by: DEMO_PEOPLE.alex,
     scouted_at: `2026-11-07T15:${String(match).padStart(2, '0')}:00Z`,
@@ -1234,6 +1276,35 @@ describe('teamSummary', () => {
     expect(summary.brokeDown).toBe(1)
     expect(summary.drivetrain.find((t) => t.option === 'Tank')).toEqual({ option: 'Tank', count: 1, share: 1 })
     expect(summary.drivetrain).toHaveLength(DRIVETRAINS.length)
+  })
+
+  it("counts what broke out of the times it broke down, brownouts, where its auto started out of the times it was seen, and ranking points out of every match", () => {
+    const summary = teamSummary(
+      9991,
+      [
+        row(1, { broke_down: true, broke_parts: ['Intake', 'Climber'], browned_out: true, auto_side: 'Left', ranking_points: ['Energized'] }),
+        row(2, { broke_down: true, broke_parts: ['Intake'], auto_side: 'Left', ranking_points: ['Energized', 'Traversal'] }),
+        row(3, { auto_side: null }),
+        row(4, { auto_side: 'Center' }),
+      ],
+      [],
+    )
+    expect(summary.brokeParts.find((t) => t.option === 'Intake')).toEqual({ option: 'Intake', count: 2, share: 1 })
+    expect(summary.brokeParts.find((t) => t.option === 'Climber')).toEqual({ option: 'Climber', count: 1, share: 0.5 })
+    expect(summary.brownedOut).toBe(1)
+    expect(summary.autoSides.find((t) => t.option === 'Left')).toMatchObject({ count: 2 })
+    expect(summary.autoSides.find((t) => t.option === 'Left')?.share).toBeCloseTo(2 / 3)
+    expect(summary.rankingPoints.find((t) => t.option === 'Energized')).toEqual({ option: 'Energized', count: 2, share: 0.5 })
+    expect(summary.stops.map((t) => t.option)).toEqual(['None', 'A-stop', 'E-stop', 'Both'])
+  })
+
+  it('lists the role, auto and what-else-broke answers with the notes, with who wrote them', () => {
+    const summary = teamSummary(9991, [row(1, { role_notes: 'Fast cycles', auto_notes: 'Scored preload', broke_other: 'Bumper', notes: '  ' })], [])
+    expect(summary.written.map((w) => [w.question, w.text, w.by])).toEqual([
+      ['How well it does its role', 'Fast cycles', DEMO_PEOPLE.alex],
+      ['Auto', 'Scored preload', DEMO_PEOPLE.alex],
+      ['What else broke', 'Bumper', DEMO_PEOPLE.alex],
+    ])
   })
 
   it('lists notes and pit answers newest first, leaving out blank ones', () => {

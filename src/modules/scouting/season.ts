@@ -28,10 +28,19 @@ export const ENDGAME: string[] = ['None', 'Level 1', 'Level 2', 'Level 3']
 /** What the robot spent the match doing. Scouts can choose more than one, or none. */
 export const ROLES: string[] = ['Scorer', 'Defender', 'Feeder']
 
+/** Match form: the parts a robot can break, asked when Broke down is ticked. Scouts can choose more than one. */
+export const BREAKDOWN_PARTS: string[] = ['Drivetrain', 'Intake', 'Shooter', 'Climber', 'Other']
+
+/**
+ * Match form: this season's bonus ranking points, so the scout can tick the
+ * ones the robot's alliance earned. Check the names with the scouting lead.
+ */
+export const RANKING_POINTS: string[] = ['Energized', 'Supercharged', 'Traversal']
+
 /** Pit form: the drivetrain choices. */
 export const DRIVETRAINS: string[] = ['Swerve', 'Tank', 'Mecanum', 'H-drive', 'Other omni/holonomic']
 
-/** Pit form: which side of the field a robot starts its auto on. */
+/** Pit form, and the match form's observed auto: which side of the field a robot starts its auto on. */
 export const AUTO_SIDES: string[] = ['Left', 'Center', 'Right']
 
 /**

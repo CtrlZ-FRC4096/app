@@ -92,6 +92,33 @@ describe('scouting entries', () => {
     expect(await insert('driver_skill', null)).toEqual([])
   })
 
+  // #162: the questions added later. An entry from an older phone leaves them out.
+  it('takes both stops, what broke, a brownout, the auto and ranking points, and leaves them empty for an older entry', async () => {
+    const insert = (columns: string, values: unknown[]) =>
+      db.as<Record<string, unknown>>(
+        scout,
+        `insert into public.scouting_entries (id, event_key, match_number, team_number, endgame, scouted_at${columns ? `, ${columns}` : ''})
+         values ($1, '2026test', 1, 1, 'None', now()${values.map((_, i) => `, $${i + 2}`).join('')}) returning *`,
+        [crypto.randomUUID(), ...values],
+      )
+    const [full] = await insert('stop, role_notes, broke_down, broke_parts, broke_other, browned_out, auto_side, auto_notes, ranking_points', [
+      'Both', 'Fast cycles', true, ['Intake', 'Climber'], 'Bumper fell off', true, 'Left', 'Scored preload', ['Energized'],
+    ])
+    expect(full).toMatchObject({ stop: 'Both', broke_parts: ['Intake', 'Climber'], browned_out: true, ranking_points: ['Energized'] })
+    const [older] = await insert('', [])
+    expect(older).toMatchObject({ role_notes: null, broke_parts: [], broke_other: null, browned_out: false, auto_side: null, auto_notes: null, ranking_points: [] })
+  })
+
+  it('refuses the short answers when empty or over 300 characters, like the form', async () => {
+    const insert = (column: string, value: unknown) =>
+      db.as(scout, `insert into public.scouting_entries (id, event_key, match_number, team_number, endgame, scouted_at, ${column}) values ($1, '2026test', 1, 1, 'None', now(), $2)`, [crypto.randomUUID(), value])
+    for (const column of ['role_notes', 'broke_other', 'auto_notes']) {
+      await expect(insert(column, ''), column).rejects.toThrow('check constraint')
+      await expect(insert(column, 'x'.repeat(301)), column).rejects.toThrow('check constraint')
+      expect(await insert(column, 'x'.repeat(300)), column).toEqual([])
+    }
+  })
+
   it('refuses a team or match number of 0, and counts that are not a list of counters', async () => {
     await expect(send(scout, [{ id: crypto.randomUUID(), team: 0 }])).rejects.toThrow('check constraint')
     await expect(send(scout, [{ id: crypto.randomUUID(), match: 0 }])).rejects.toThrow('check constraint')

@@ -38,7 +38,7 @@ import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore, type Store } from '../../core/store'
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row, type Table } from '../../core/table'
 import { toCsv } from '../attendance/data'
-import { COUNTERS, DRIVETRAINS, ENDGAME, EVENT_KEY, ROLES, type Counter } from './season'
+import { AUTO_SIDES, BREAKDOWN_PARTS, COUNTERS, DRIVETRAINS, ENDGAME, EVENT_KEY, RANKING_POINTS, ROLES, type Counter } from './season'
 
 /** The event we're at until a mentor picks one in the app, from season.ts, for other modules. */
 export { EVENT_KEY }
@@ -189,7 +189,7 @@ function demoEvents(year: number): (TbaEvent & { ours: boolean })[] {
 // Entries, saved on this device.
 
 /** Whether the robot was stopped during the match. These are FRC rules, so they don't change with the game. */
-export const STOPS = ['None', 'A-stop', 'E-stop'] as const
+export const STOPS = ['None', 'A-stop', 'E-stop', 'Both'] as const
 export type Stop = (typeof STOPS)[number]
 
 /** Driver skill, from 1 (struggles to drive) to 5 (smooth and quick). */
@@ -199,8 +199,10 @@ export const DRIVER_SKILLS = [1, 2, 3, 4, 5]
  * What a scout recorded for one robot in one match.
  *
  * Entries saved before roles, broke_down, stop and driver_skill were added
- * don't have them, and have a defense field instead. Syncing must fill in
- * the missing ones rather than assume every entry has them.
+ * don't have them, and have a defense field instead. Entries saved before
+ * #162 don't have role_notes, broke_parts, broke_other, browned_out,
+ * auto_side, auto_notes or ranking_points. Syncing must fill in the missing
+ * ones rather than assume every entry has them.
  */
 export interface Entry {
   /** Made on the device, so sending an entry twice can't make two rows. */
@@ -222,11 +224,25 @@ export interface Entry {
   endgame: string
   /** Any of ROLES in season.ts. Empty if the scout chose none. */
   roles: string[]
+  /** "How well does it do its role?", like "fast cycles, missed a few shots". '' if left blank. */
+  role_notes: string
   /** The robot stopped working or lost a mechanism. */
   broke_down: boolean
+  /** Any of BREAKDOWN_PARTS in season.ts. Only when broke_down. */
+  broke_parts: string[]
+  /** Anything else that broke, typed. '' if left blank. Only when broke_down. */
+  broke_other: string
+  /** The robot lost power or visibly browned out (stuttering, lights flickering). */
+  browned_out: boolean
   stop: Stop
   /** One of DRIVER_SKILLS. */
   driver_skill: number
+  /** Where it started its auto: one of AUTO_SIDES in season.ts, or '' if the scout didn't see. */
+  auto_side: string
+  /** What its auto did. '' if left blank. */
+  auto_notes: string
+  /** Any of RANKING_POINTS in season.ts: the bonus ranking points its alliance earned. */
+  ranking_points: string[]
   notes: string
   /** Who scouted it. Show their name with useMemberNames(). */
   scouted_by: string | null
@@ -235,7 +251,11 @@ export interface Entry {
 }
 
 /** What the scout fills in on the form. saveEntry() adds the rest. */
-export type EntryFields = Pick<Entry, 'match' | 'team' | 'counts' | 'endgame' | 'roles' | 'broke_down' | 'stop' | 'driver_skill' | 'notes'>
+export type EntryFields = Pick<
+  Entry,
+  | 'match' | 'team' | 'counts' | 'endgame' | 'roles' | 'role_notes' | 'broke_down' | 'broke_parts' | 'broke_other'
+  | 'browned_out' | 'stop' | 'driver_skill' | 'auto_side' | 'auto_notes' | 'ranking_points' | 'notes'
+>
 
 // Newest first. keepOnReset: "Reset example data" must never delete real
 // scouting. Don't raise the version while entries are waiting on people's
@@ -262,6 +282,8 @@ const isCount = (value: number) => Number.isInteger(value) && value > 0
 export const MAX_MATCH = 1000
 export const MAX_TEAM = 99999
 export const MAX_NOTES_LENGTH = 1000
+/** For the short answers: how well it does its role, what else broke, and what its auto did. */
+export const MAX_SHORT_LENGTH = 300
 
 /** Why an entry can't be saved, or null if it can. */
 export function checkEntry(fields: EntryFields): string | null {
@@ -270,6 +292,10 @@ export function checkEntry(fields: EntryFields): string | null {
   if (!isCount(fields.match)) return 'Enter the match number first.'
   if (fields.match > MAX_MATCH) return `Check the match number: ${fields.match} is too big.`
   if (!DRIVER_SKILLS.includes(fields.driver_skill)) return 'Choose a driver skill first.'
+  for (const [name, text] of [['how well it does its role', fields.role_notes], ['what else broke', fields.broke_other], ['auto answer', fields.auto_notes]] as const) {
+    const length = text.trim().length
+    if (length > MAX_SHORT_LENGTH) return `Keep ${name} under ${MAX_SHORT_LENGTH} characters. It's ${length}.`
+  }
   const notes = fields.notes.trim().length
   if (notes > MAX_NOTES_LENGTH) return `Keep the notes under ${MAX_NOTES_LENGTH} characters. These are ${notes}.`
   return null
@@ -281,6 +307,11 @@ export function saveEntry(fields: EntryFields): Result<Entry> {
   if (problem) return fail(problem)
   const entry: Entry = {
     ...fields,
+    role_notes: fields.role_notes.trim(),
+    // What broke only means something if it broke down.
+    broke_parts: fields.broke_down ? fields.broke_parts : [],
+    broke_other: fields.broke_down ? fields.broke_other.trim() : '',
+    auto_notes: fields.auto_notes.trim(),
     notes: fields.notes.trim(),
     id: newId(),
     created_at: new Date().toISOString(),
@@ -306,10 +337,22 @@ export interface ScoutingEntry extends Row {
   endgame: string
   /** Any of ROLES in season.ts. */
   roles: string[]
+  /** "How well does it do its role?" Empty if left blank, or saved before #162. */
+  role_notes: string | null
   broke_down: boolean
+  /** Any of BREAKDOWN_PARTS in season.ts. Empty for entries saved before #162. */
+  broke_parts: string[]
+  broke_other: string | null
+  /** False for entries saved before #162. */
+  browned_out: boolean
   stop: Stop
   /** 1 to 5. Empty for entries saved before driver skill was on the form. */
   driver_skill: number | null
+  /** One of AUTO_SIDES in season.ts. Empty if the scout didn't see, or saved before #162. */
+  auto_side: string | null
+  auto_notes: string | null
+  /** Any of RANKING_POINTS in season.ts. Empty for entries saved before #162. */
+  ranking_points: string[]
   notes: string | null
   /** Who scouted it, and when, on their phone. */
   scouted_by: string | null
@@ -320,24 +363,28 @@ export interface ScoutingEntry extends Row {
 
 // Made up, for demo mode. Team numbers in the 9990s, so nobody mistakes them for real scouting.
 const EXAMPLE_ENTRIES: ScoutingEntry[] = [
-  { id: '00000000-0000-4000-8000-0000000d0001', event_key: EVENT_KEY, match_number: 1, team_number: 9991, counts: { autoFuel: 3, teleopFuel: 12, fuelMissed: 4 }, endgame: 'Level 2', roles: ['Scorer'], broke_down: false, stop: 'None', driver_skill: 4, notes: 'Fast intake', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-07T15:02:00Z', created_at: '2026-11-07T15:03:00Z', created_by: DEMO_PEOPLE.jordan },
-  { id: '00000000-0000-4000-8000-0000000d0002', event_key: EVENT_KEY, match_number: 1, team_number: 9992, counts: { autoFuel: 0, teleopFuel: 5, fuelMissed: 1 }, endgame: 'None', roles: ['Defender'], broke_down: true, stop: 'A-stop', driver_skill: 2, notes: null, scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-07T15:02:30Z', created_at: '2026-11-07T15:04:00Z', created_by: DEMO_PEOPLE.alex },
+  { id: '00000000-0000-4000-8000-0000000d0001', event_key: EVENT_KEY, match_number: 1, team_number: 9991, counts: { autoFuel: 3, teleopFuel: 12, fuelMissed: 4 }, endgame: 'Level 2', roles: ['Scorer'], role_notes: 'Quick cycles, missed a few long shots', broke_down: false, broke_parts: [], broke_other: null, browned_out: false, stop: 'None', driver_skill: 4, auto_side: 'Center', auto_notes: 'Scored preload and 2 more', ranking_points: ['Energized'], notes: 'Fast intake', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-07T15:02:00Z', created_at: '2026-11-07T15:03:00Z', created_by: DEMO_PEOPLE.jordan },
+  { id: '00000000-0000-4000-8000-0000000d0002', event_key: EVENT_KEY, match_number: 1, team_number: 9992, counts: { autoFuel: 0, teleopFuel: 5, fuelMissed: 1 }, endgame: 'None', roles: ['Defender'], role_notes: null, broke_down: true, broke_parts: ['Intake'], broke_other: null, browned_out: true, stop: 'A-stop', driver_skill: 2, auto_side: 'Left', auto_notes: null, ranking_points: [], notes: null, scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-07T15:02:30Z', created_at: '2026-11-07T15:04:00Z', created_by: DEMO_PEOPLE.alex },
 ]
 
-export const entriesTable = createTable<ScoutingEntry>('scouting_entries', { demo: EXAMPLE_ENTRIES, sort: newestFirst })
+// Version 2: the questions from #162 were added to the rows.
+export const entriesTable = createTable<ScoutingEntry>('scouting_entries', { demo: EXAMPLE_ENTRIES, sort: newestFirst, version: 2 })
 
-/** An entry saved on a phone before roles, broke down, stop and driver skill were on the form (#28). */
-type OlderEntry = Omit<Entry, 'roles' | 'broke_down' | 'stop' | 'driver_skill'> &
-  Partial<Pick<Entry, 'roles' | 'broke_down' | 'stop' | 'driver_skill'>> & { defense?: boolean }
+/** Fields added to the form after the first entries were saved on phones: #28's, then #162's. */
+type AddedLater = 'roles' | 'broke_down' | 'stop' | 'driver_skill' | 'role_notes' | 'broke_parts' | 'broke_other' | 'browned_out' | 'auto_side' | 'auto_notes' | 'ranking_points'
+
+/** An entry saved on a phone by an older version of the app, before some questions were on the form. */
+type OlderEntry = Omit<Entry, AddedLater> & Partial<Pick<Entry, AddedLater>> & { defense?: boolean }
 
 /**
  * An entry from this device, as a row for the team database. Entries saved
  * before #28 have "played defense" instead of roles: it becomes the
- * Defender role, the way the form treats it now. Their other new fields are
- * left at "no", "None" and empty.
+ * Defender role, the way the form treats it now. Fields an older entry
+ * doesn't have are left at "no", "None" and empty.
  */
 export function toRow(saved: Entry | OlderEntry): Omit<ScoutingEntry, 'created_at' | 'created_by'> {
   const entry = saved as OlderEntry
+  const text = (value: string | undefined) => value?.trim() || null
   return {
     id: entry.id,
     event_key: entry.event_key ?? currentEvent(),
@@ -346,9 +393,16 @@ export function toRow(saved: Entry | OlderEntry): Omit<ScoutingEntry, 'created_a
     counts: entry.counts,
     endgame: entry.endgame,
     roles: entry.roles ?? (entry.defense ? ['Defender'] : []),
+    role_notes: text(entry.role_notes),
     broke_down: entry.broke_down ?? false,
+    broke_parts: entry.broke_parts ?? [],
+    broke_other: text(entry.broke_other),
+    browned_out: entry.browned_out ?? false,
     stop: entry.stop ?? 'None',
     driver_skill: entry.driver_skill ?? null,
+    auto_side: text(entry.auto_side),
+    auto_notes: text(entry.auto_notes),
+    ranking_points: entry.ranking_points ?? [],
     notes: entry.notes.trim() || null,
     scouted_by: entry.scouted_by,
     scouted_at: entry.created_at,
@@ -686,6 +740,14 @@ export interface TeamSummary {
   stops: Tally[]
   /** How many entries say the robot broke down. */
   brokeDown: number
+  /** What broke, out of the entries where it broke down. Several parts can break in one match. */
+  brokeParts: Tally[]
+  /** How many entries say it died or browned out. */
+  brownedOut: number
+  /** Where it started its auto, out of the entries where the scout saw. */
+  autoSides: Tally[]
+  /** Which bonus ranking points its alliance earned, out of every match entry. */
+  rankingPoints: Tally[]
   /** Newest first. */
   written: WrittenAnswer[]
 }
@@ -744,8 +806,19 @@ export function teamSummary(team: number, entries: MatchRow[], pitEntries: PitRo
   const skills = mine.flatMap((e) => (e.driver_skill === null ? [] : [String(e.driver_skill)]))
   const drivetrains = pits.flatMap((p) => pitDrivetrain(p) ?? [])
 
+  const broken = mine.filter((e) => e.broke_down)
+  const autoSides = mine.flatMap((e) => e.auto_side?.trim() || [])
+
+  // Each entry's written answers, leaving out blank ones.
   const notes: WrittenAnswer[] = mine.flatMap((e) =>
-    e.notes?.trim() ? [{ kind: 'match' as const, question: 'Notes', text: e.notes.trim(), match: e.match_number, by: e.scouted_by, at: e.scouted_at }] : [],
+    ([
+      ['How well it does its role', e.role_notes],
+      ['Auto', e.auto_notes],
+      ['What else broke', e.broke_other],
+      ['Notes', e.notes],
+    ] as const).flatMap(([question, text]) =>
+      text?.trim() ? [{ kind: 'match' as const, question, text: text.trim(), match: e.match_number, by: e.scouted_by, at: e.scouted_at }] : [],
+    ),
   )
 
   return {
@@ -762,7 +835,11 @@ export function teamSummary(team: number, entries: MatchRow[], pitEntries: PitRo
     driverSkill: tally(DRIVER_SKILLS.map(String), skills, skills.length),
     drivetrain: tally(DRIVETRAINS, drivetrains, drivetrains.length),
     stops: tally([...STOPS], mine.map((e) => e.stop), mine.length),
-    brokeDown: mine.filter((e) => e.broke_down).length,
+    brokeDown: broken.length,
+    brokeParts: tally(BREAKDOWN_PARTS, broken.flatMap((e) => e.broke_parts), broken.length),
+    brownedOut: mine.filter((e) => e.browned_out).length,
+    autoSides: tally(AUTO_SIDES, autoSides, autoSides.length),
+    rankingPoints: tally(RANKING_POINTS, mine.flatMap((e) => e.ranking_points), mine.length),
     written: [...notes, ...pits.flatMap(pitAnswers)].sort((a, b) => b.at.localeCompare(a.at)),
   }
 }

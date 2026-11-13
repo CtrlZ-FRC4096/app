@@ -123,7 +123,10 @@ function Numbers(props: { summary: TeamSummary }) {
 function HowOften(props: { summary: TeamSummary }) {
   const s = props.summary
   return (
-    <Panel title="How often" aside={s.matchCount > 0 && <span className="note">{`Broke down in ${s.brokeDown} of ${s.matchCount}`}</span>}>
+    <Panel
+      title="How often"
+      aside={s.matchCount > 0 && <span className="note">{`Broke down in ${s.brokeDown} of ${s.matchCount} · Died or browned out in ${s.brownedOut} of ${s.matchCount}`}</span>}
+    >
       <div className="panel-body">
         {s.matchCount > 0 && (
           <>
@@ -131,6 +134,9 @@ function HowOften(props: { summary: TeamSummary }) {
             <Tallies title="Role" tallies={s.roles} />
             <Tallies title="Driver skill (5 is best)" tallies={s.driverSkill} />
             <Tallies title="E-stop or A-stop" tallies={s.stops} />
+            {s.brokeDown > 0 && <Tallies title="What broke (when it broke down)" tallies={s.brokeParts} />}
+            {s.autoSides.some((t) => t.count > 0) && <Tallies title="Auto starting side (seen in matches)" tallies={s.autoSides} />}
+            <Tallies title="Ranking points their alliance earned" tallies={s.rankingPoints} />
           </>
         )}
         {s.pitCount > 0 && <Tallies title="Drivetrain (pit)" tallies={s.drivetrain} />}

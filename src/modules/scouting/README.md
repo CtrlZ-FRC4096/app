@@ -4,7 +4,7 @@
 
 ## What works so far
 
-- The match form, drawn from `season.ts`: counters, role (choose any), broke down, E-stop or A-stop, driver skill, endgame and notes
+- The match form, drawn from `season.ts`: observed auto (where it started, from `AUTO_SIDES`, and what it did), counters, role (choose any) and how well it does it, broke down and what broke (`BREAKDOWN_PARTS`, plus a box for anything else), died or browned out, E-stop, A-stop or both, driver skill, endgame, the bonus ranking points its alliance earned (`RANKING_POINTS`: check the names with the scouting lead) and notes (#162). Entries saved on phones before #162 don't have the new answers; `toRow()` sends them as empty or "no", and the `..._scouting_entries_more_questions.sql` migration adds the columns.
 - The team fills in from the schedule (#40). The scout picks their position once (Red 1 to Blue 3), and the phone remembers it (`positionStore` in `data.ts`). Typing the match number fills in the team for that position and shows it big, in the alliance's colour, to check against the robot's bumpers. The scout can still change it. This is `MatchTeamFields.tsx`.
   - The schedule comes from `loadSchedule()` when the form opens. It saves the qualification matches on the phone (`scheduleStore`), so it keeps working with no Wi-Fi once it's loaded. With no saved copy (no Wi-Fi the first time, or The Blue Alliance doesn't have the schedule yet) the form says so, and the scout types the team in.
   - `teamFor()` finds the team for a match and position.
@@ -26,7 +26,7 @@
 - A team page (#36, `TeamPage.tsx`), at `#/scouting/team/9991`: everything scouted about one team at this event (`EVENT_KEY`). Type a team number, tap a team from the list of scouted teams, or tap "Team 9991" in the list of saved entries or on the Rankings page. It shows:
   - **Rank** (#39, `TeamRank.tsx`), at the top: the team's place in the event rankings and its record, like "Rank 3 of 42 · 5-1-0"
   - **Numbers**: each counter in `season.ts`, its average per match and each match's count
-  - **How often**: bars for endgame, role, driver skill, E-stop or A-stop, and drivetrain (from the pit form), and how often it broke down
+  - **How often**: bars for endgame, role, driver skill, E-stop or A-stop, what broke (out of the times it broke down), auto starting side, ranking points, and drivetrain (from the pit form), and how often it broke down or browned out
   - **Written answers**: match notes and pit answers, newest first, with who wrote them
   - **Match 13** (#37, `TeamRatings.tsx`): the team's xP rank at the event ("Rank 3 of 42"), its xP and how much it changed since the event started, the Auto / Teleop / Endgame parts, Statbotics' EPA and the win-loss-tie record, with when the numbers are from and a **Refresh** button. It reads the saved copy from `useRatings()` (see "One team's numbers" below), so with no connection it shows the saved numbers and says so. A team Match 13 hasn't rated shows "No Match 13 rating yet", and a part Match 13 left out shows "not given".
 
