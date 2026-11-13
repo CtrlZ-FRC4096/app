@@ -22,6 +22,7 @@ import { arrivalText, isLate, statusOf, useRequestsByBomPart, type PurchaseItem 
 import { camStockFor, markReadyToCam, shapesTable, useOnBoard, useStock, type CamStock } from '../cnc/data'
 // The CNC module's material and thickness picker, so flagging a part looks the same here and on the CNC board.
 import { CamStockPicker } from '../cnc/CamStockPicker'
+import { PartDownloads, QueueDownloads } from './Downloads'
 
 // The form open at the top of the page, if any. A null robot, system or
 // part means adding a new one; otherwise it's the one being changed.
@@ -223,6 +224,8 @@ export default function BomPage() {
                 : "To import this system's parts from Onshape, add its assembly's link with Change system. "}
               {shown.length > 0 && leader && "Use a part's Edit button to change or delete it."}
             </p>
+            {/* At one machine's station: download every file in its queue (#24). */}
+            {station.kind === 'machine' && <QueueDownloads queue={queue} machine={station.machine} />}
           </div>
           {shown.length === 0 ? (
             <p className="panel-body muted">
@@ -290,6 +293,8 @@ export default function BomPage() {
                                 onChange={() => setEditing({ form: 'stages', part: p })}
                                 onAssign={(step) => setEditing({ form: 'assign', part: p, step })}
                               />
+                              {/* Its files for the machines (#24): only this machine's at a machine's station. */}
+                              <PartDownloads part={p} steps={station.kind === 'machine' ? stagesShown(p) : stepsFor(p, steps)} />
                             </td>
                           </tr>
                         )}
