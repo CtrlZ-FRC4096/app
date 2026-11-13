@@ -201,7 +201,7 @@ the functions can read.
 | `tba` | The Blue Alliance for scouting: an event's schedule, rankings and teams, a team's matches and name, and the season's events (ours, or all of them) for picking the event |
 | `match13` | Match 13 for scouting: each team's rating (xP) at an event, who's predicted to win each match, its simulation of the event's final rankings, and a team's numbers at each event in a season (for prescouting) |
 | `nexus` | Nexus (frc.nexus) for scouting: an event's live status, like what's on the field, what's queuing and announcements. Only that one address, and it reuses each answer for 30 seconds |
-| `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio. For the CNC module: parts' sizes and outlines, and where parts sit in a sheet's layout assembly |
+| `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio, and a part's STEP or STL for its machine. For the CNC module: parts' sizes and outlines, and where parts sit in a sheet's layout assembly |
 | `slack` | Slack messages from the team's bot: to yourself (anyone), or to people and a channel (mentors). Used through `src/core/slack.ts` |
 | `calendar` | The team's Google Calendar: everyone sees its events; student leaders, mentors and admins add events, and change or remove the ones the app added. Used through `src/core/calendar.ts` |
 | `push` | Phone notifications (Web Push): the public key browsers need to turn them on, and a test to your own devices. Uses the `web-push` package (a mentor approved it). Used through `src/core/push.ts`. The same notifications are kept in the app too, in the `notifications` table behind the bell (`src/core/notifications.ts`) |
@@ -272,7 +272,8 @@ paste a key anywhere else, including chat.
 
    Onshape limits API calls per year, counted against that account. The
    app only calls Onshape when someone clicks **Import from Onshape** (two
-   calls each time) or **Check them** (one).
+   calls each time) or **Check them** (one), or downloads a part's file in
+   the BOM (one for an STL, about 4 to 6 for a STEP).
 4. **Let the Slack bot send messages.** This is the same Slack app people
    sign in with, and the same bot the attendance pull uses.
    - At [api.slack.com/apps](https://api.slack.com/apps), open **Ctrl-Z
