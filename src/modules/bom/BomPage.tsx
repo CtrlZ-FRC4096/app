@@ -19,12 +19,14 @@ import { assignStep, dueText, isOverdue } from './data'
 import { assignWholePart } from './work'
 import { MyWork } from './MyWork'
 import { planImport, type OnshapeImportPlan } from './onshape'
+import { Dashboard } from './Dashboard'
 import { href } from '../../core/router'
 import { useItems, type Item } from '../inventory/data'
 import { arrivalText, isLate, statusOf, useRequestsByBomPart, type PurchaseItem } from '../purchasing/data'
 import { camStockFor, markReadyToCam, shapesTable, useOnBoard, useStock, type CamStock } from '../cnc/data'
 // The CNC module's material and thickness picker, so flagging a part looks the same here and on the CNC board.
 import { CamStockPicker } from '../cnc/CamStockPicker'
+import { PartDownloads, QueueDownloads } from './Downloads'
 import { canAddToCatalog, catalogEntryFor, useCatalog, type CatalogEntry } from './catalog'
 import { CatalogForm, CatalogList, CatalogName } from './Catalog'
 
@@ -65,6 +67,8 @@ export default function BomPage() {
   // At one station, only the parts waiting there, with only their stages there.
   const shown = station.kind === 'all' ? filterParts(parts, filter) : queue.map((q) => q.part)
   const stagesShown = (p: Part) => (station.kind === 'all' ? stepsFor(p, steps) : (queue.find((q) => q.part.id === p.id)?.steps ?? []))
+  // Parts shows one system's parts; Dashboard shows how far along every system is (#23).
+  const [view, setView] = useState<'Parts' | 'Dashboard'>('Parts')
   const [editing, setEditing] = useState<Editing | null>(null)
   const close = () => setEditing(null)
   // An import from Onshape waiting to be confirmed, and whether Onshape is being read.
@@ -134,6 +138,7 @@ export default function BomPage() {
     <>
       <PageHead title={robot.name}>{INTRO}</PageHead>
       <div className="toolbar">
+        <Pick label="View" options={['Parts', 'Dashboard']} value={view} onChange={setView} />
         {robots.length > 1 && (
           <Pick
             label="Robot"
@@ -155,9 +160,10 @@ export default function BomPage() {
         <button type="button" className="btn btn-sm" onClick={() => setEditing({ form: 'system', system: null })}>Add a system</button>
       </div>
 
-      {/* The signed-in person's stages (#16). Show part picks the part's system, showing every part, so its row is there to scroll to. */}
+      {/* The signed-in person's stages (#16). Show part picks the part's system, showing every part (and the Parts view, not the Dashboard), so its row is there to scroll to. */}
       <MyWork
         onOpen={(item) => {
+          setView('Parts')
           setRobotId(item.system.robot_id)
           setSystemId(item.system.id)
           setStation({ kind: 'all' })
@@ -232,7 +238,10 @@ export default function BomPage() {
         <ImportPreview system={importing.system} plan={importing.plan} onDone={() => setImporting(null)} />
       )}
 
-      {!system ? (
+      {view === 'Dashboard' ? (
+        // Tapping "3 waiting for Lathe" on a system's card shows those parts.
+        <Dashboard robot={robot} onOpen={(s, at) => { setSystemId(s.id); setStation(at); setView('Parts') }} />
+      ) : !system ? (
         <Panel>
           <p className="panel-body muted">No systems in {robot.name} yet. Add one above, or they'll come from Onshape later.</p>
         </Panel>
@@ -279,6 +288,8 @@ export default function BomPage() {
                 : "To import this system's parts from Onshape, add its assembly's link with Change system. "}
               {shown.length > 0 && leader && "Use a part's Edit button to change or delete it."}
             </p>
+            {/* At one machine's station: download every file in its queue (#24). */}
+            {station.kind === 'machine' && <QueueDownloads queue={queue} machine={station.machine} />}
           </div>
           {shown.length === 0 ? (
             <p className="panel-body muted">
@@ -350,6 +361,8 @@ export default function BomPage() {
                                 onChange={() => setEditing({ form: 'stages', part: p })}
                                 onAssign={(step) => setEditing({ form: 'assign', part: p, step })}
                               />
+                              {/* Its files for the machines (#24): only this machine's at a machine's station. */}
+                              <PartDownloads part={p} steps={station.kind === 'machine' ? stagesShown(p) : stepsFor(p, steps)} />
                             </td>
                           </tr>
                         )}
