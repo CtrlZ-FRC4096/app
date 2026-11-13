@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
+import { useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
 import { useMemberNames, useMembers, type Member } from '../../core/members'
-import { navigate, useRoute } from '../../core/router'
+import { href, navigate, useRoute } from '../../core/router'
 import { isMentor, useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { shortDate } from '../../core/format'
-import { PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
+import { InView, PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
 import { partsTable, systemsTable } from '../bom/data'
 import {
   EMPTY_ITEM,
@@ -13,7 +13,7 @@ import {
   TYPES,
   VENDORS,
   VIEWS,
-  addBuyer,
+  canChooseBuyers,
   addItem,
   arrivalText,
   addReceipt,
@@ -31,7 +31,7 @@ import {
   receiptCountText,
   receiptLink,
   receiptText,
-  removeBuyer,
+  receiptAddingShown,
   removeItem,
   removeReceipt,
   requestFromBomPart,
@@ -55,13 +55,13 @@ const FIELD: CSSProperties = { minWidth: 0 }
 const BOX: CSSProperties = { minWidth: 0, width: '100%' }
 
 const EMPTY_TEXT: Record<View, string> = {
-  Current: 'Nothing in progress. Ask for something above, or look at All.',
-  All: 'Nothing on the list yet. Ask for the first thing above.',
-  'By status': 'Nothing on the list yet. Ask for the first thing above.',
-  'By vendor': 'Nothing on the list yet. Ask for the first thing above.',
+  Current: 'Nothing in progress. Add a new item above, or look at All.',
+  All: 'Nothing on the list yet. Add the first item above.',
+  'By status': 'Nothing on the list yet. Add the first item above.',
+  'By vendor': 'Nothing on the list yet. Add the first item above.',
 }
 
-/** The Ask for something form, when it's open: what it starts with, and the BOM part it's for. */
+/** The Add new item form, when it's open: what it starts with, and the BOM part it's for. */
 interface Asking {
   start: NewItem
   bomPartId: string | null
@@ -73,7 +73,7 @@ interface Asking {
 // functions from data.ts. It never saves anything itself.
 //
 // Its address can say what to open, for the BOM page's links:
-//   #/purchasing/from-bom/<part id>   Ask for something, filled in from a BOM part
+//   #/purchasing/from-bom/<part id>   Add new item, filled in from a BOM part
 //   #/purchasing/item/<item id>       That item, open for changing
 export default function PurchasingPage() {
   const items = useItems()
@@ -124,14 +124,14 @@ export default function PurchasingPage() {
         </label>
         {!form && (
           <button type="button" className="btn btn-primary" onClick={() => setAsking({ start: EMPTY_ITEM, bomPartId: null, key: 'new' })}>
-            Ask for something
+            Add new item
           </button>
         )}
       </div>
 
       {form && (
         <InView key={form.key}>
-          <Panel title="Ask for something">
+          <Panel title="Add new item">
             <ItemForm item={null} start={form.start} bomPartId={form.bomPartId} onDone={closeForm} />
           </Panel>
         </InView>
@@ -183,7 +183,7 @@ export default function PurchasingPage() {
   )
 }
 
-/** The Ask for something form for a link from the BOM, or null when the address isn't one. */
+/** The Add new item form for a link from the BOM, or null when the address isn't one. */
 function useBomRequest(rest: string[]): Asking | null {
   const parts = partsTable.useRows()
   const systems = systemsTable.useRows()
@@ -191,15 +191,6 @@ function useBomRequest(rest: string[]): Asking | null {
   const part = parts.find((p) => p.id === rest[1])
   if (!part) return null
   return { start: requestFromBomPart(part, systems.find((s) => s.id === part.system_id)), bomPartId: part.id, key: `bom-${part.id}` }
-}
-
-/** Scrolls its contents into view when it first appears, clear of the top bar. */
-function InView(props: { children: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    ref.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-  }, [])
-  return <div ref={ref} style={{ scrollMarginTop: 160 }}>{props.children}</div>
 }
 
 /**
@@ -253,7 +244,7 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
 }
 
 /**
- * Ask for something, or change an item when `item` is given. A new
+ * Add a new item, or change one when `item` is given. A new
  * request can start filled in (`start`), for Duplicate and the BOM's
  * Purchase button.
  */
@@ -376,7 +367,7 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
         </label>
       )}
       {item && <OrderDetails item={item} form={form} canOrder={canOrder} set={set} id={id} people={people} orderers={orderers} />}
-      {item && <Receipts item={item} />}
+      {item && <Receipts item={item} showAdd={receiptAddingShown(form.status)} />}
       <div className="toolbar">
         {!locked && <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : item ? 'Save' : 'Add to the list'}</button>}
         <button type="button" className="btn" onClick={props.onDone}>{locked ? 'Close' : 'Cancel'}</button>
@@ -468,7 +459,7 @@ function OrderDetails(props: {
  * Mentors, admins and purchasers add, open and delete them.
  * The buttons are only tidiness: the database's rules are what stop people.
  */
-function Receipts(props: { item: PurchaseItem }) {
+function Receipts(props: { item: PurchaseItem; showAdd: boolean }) {
   const nameOf = useMemberNames()
   const canManage = useCanOrder()
   const receipts = useReceipts(props.item.id)
@@ -543,7 +534,7 @@ function Receipts(props: { item: PurchaseItem }) {
           {receipts.length > 0 ? `${receiptCountText(receipts.length)} added. ` : ''}Only mentors and purchasers can open receipts, because they can show card digits and addresses.
         </span>
       )}
-      {canManage && (
+      {canManage && props.showAdd && (
         <div className="toolbar">
           <button type="button" className="btn btn-sm" disabled={uploading} onClick={() => picker.current?.click()}>
             {uploading ? 'Uploading…' : 'Add receipt'}
@@ -556,58 +547,33 @@ function Receipts(props: { item: PurchaseItem }) {
   )
 }
 
+/**
+ * Who the purchasers are, so people know who to ask: the error messages point
+ * here. Mentors and admins choose them on the Members page (#144).
+ */
 function Purchasers() {
   const buyers = useBuyers()
-  const members = useMembers()
   const nameOf = useMemberNames()
-  const me = useSession()
-  const [adding, setAdding] = useState('')
-  const mentor = isMentor(me.role)
-  const others = members.filter((m) => m.active && !isMentor(m.role) && !buyers.some((b) => b.member_id === m.id))
-
-  async function add(event: FormEvent) {
-    event.preventDefault()
-    const result = await addBuyer(adding)
-    toast(result.ok ? `${nameOf(adding)} is now a purchaser.` : result.error)
-    if (result.ok) setAdding('')
-  }
+  const chooser = canChooseBuyers(useSession().role)
+  const where = chooser
+    ? <>Choose them on the <a href={href('members')}>Members page</a>.</>
+    : 'Mentors choose them on the Members page.'
 
   return (
     <Panel title="Purchasers" aside={<span className="note">Place and change orders, with mentors and admins</span>}>
       {buyers.length === 0 ? (
-        <p className="panel-body muted">No purchasers yet{mentor ? '. Add someone below.' : ': ask a mentor to place orders.'}</p>
+        <p className="panel-body muted">No purchasers yet: ask a mentor to place orders. {where}</p>
       ) : (
-        <div className="row-list">
-          {buyers.map((buyer) => (
-            <div key={buyer.id}>
-              <span style={{ flex: 1, minWidth: 0 }}>{nameOf(buyer.member_id)}</span>
-              {mentor && (
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  onClick={async () => {
-                    const result = await removeBuyer(buyer)
-                    toast(result.ok ? `${nameOf(buyer.member_id)} is no longer a purchaser.` : result.error)
-                  }}
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      {mentor && others.length > 0 && (
-        <form className="panel-body" onSubmit={add}>
-          <label className="field" style={FIELD} htmlFor="purchase-add-buyer">
-            Add a purchaser
-            <select id="purchase-add-buyer" className="input" style={BOX} value={adding} onChange={(e) => setAdding(e.target.value)}>
-              <option value="">Pick someone</option>
-              {others.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </select>
-          </label>
-          <div className="toolbar"><button type="submit" className="btn btn-primary" disabled={!adding}>Add</button></div>
-        </form>
+        <>
+          <div className="row-list">
+            {buyers.map((buyer) => (
+              <div key={buyer.id}>
+                <span style={{ flex: 1, minWidth: 0 }}>{nameOf(buyer.member_id)}</span>
+              </div>
+            ))}
+          </div>
+          <p className="panel-body note">{where}</p>
+        </>
       )}
     </Panel>
   )

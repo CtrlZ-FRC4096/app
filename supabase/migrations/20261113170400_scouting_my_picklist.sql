@@ -1,13 +1,13 @@
 -- The Scouting module's personal picklists (#151): each person's own order
 -- for picking teams at an event, with a note on any team. The team
 -- picklist averages everyone's (teamPicklist() in
--- src/modules/scouting/data.ts), so the strategy team (and mentors) can
+-- src/modules/scouting/data.ts), so the strategy team (and leaders) can
 -- read every list (#167). Anyone else reads only their own.
 --
 -- Each row is one team on one person's list for one event. rank is the
 -- team's place on that list: 1 is best.
 --
--- You add, change and remove only your own rows. Mentors and admins can
+-- You add, change and remove only your own rows. Student leaders, mentors and admins can
 -- also remove anyone's, to tidy up after an event.
 
 create table public.scouting_my_picklist (
@@ -73,6 +73,6 @@ create policy "Members can change their own picklist"
   using ((select private.is_member()) and created_by = (select auth.uid()))
   with check ((select private.is_member()) and created_by = (select auth.uid()));
 
-create policy "Members remove from their own picklist, and mentors from anyone's"
+create policy "Members remove from their own picklist, and leaders from anyone's"
   on public.scouting_my_picklist for delete to authenticated
-  using ((select private.is_member()) and (created_by = (select auth.uid()) or (select private.is_mentor())));
+  using ((select private.is_member()) and (created_by = (select auth.uid()) or (select private.is_leader())));

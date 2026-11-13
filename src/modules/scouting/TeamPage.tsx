@@ -2,11 +2,16 @@ import { useState, type FormEvent } from 'react'
 import { shortDate } from '../../core/format'
 import { useMemberNames } from '../../core/members'
 import { href, navigate } from '../../core/router'
+import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { Bar, PageHead, Panel, Pill } from '../../core/ui'
 import { MIN_MATCHES, pointsRange, useCurrentEvent, useIsStrategy, useScoutedTeams, useTeamPoints, useTeamSummary, type Tally, type TeamSummary } from './data'
 import { PRESCOUT_QUESTIONS, prescoutHref, usePrescoutFor } from '../prescouting/data'
 import TeamPhotos from './TeamPhotos'
+// Stars belong to the Prescouting module (#118), and are the same here and
+// there: starring a team in either place shows in both.
+import { starredFirst, useStars } from '../prescouting/data'
+import Stars from '../prescouting/Stars'
 import TeamRank from './TeamRank'
 import TeamVideos from './TeamVideos'
 import TeamRatings from './TeamRatings'
@@ -42,8 +47,14 @@ export default function TeamPage(props: { team: number | null }) {
 }
 
 // A box to type a team number, and a link to every team we've scouted.
+// Starred teams come first (team stars, then your own), even before anyone
+// has scouted them.
 function FindTeam() {
-  const teams = useScoutedTeams()
+  const event = useCurrentEvent().key
+  const me = useSession().id
+  const list = starredFirst(useScoutedTeams(), useStars(event), me)
+  const starred = list.filter((t) => t.group !== 'Everyone else')
+  const rest = list.filter((t) => t.group === 'Everyone else')
   const [typed, setTyped] = useState('')
 
   function show(event: FormEvent) {
@@ -67,17 +78,37 @@ function FindTeam() {
           </label>
           <button type="submit" className="btn btn-lg btn-primary" style={{ alignSelf: 'end', minHeight: 46 }}>Show</button>
         </div>
-        {teams.length === 0 ? (
-          <p className="note" style={{ margin: 0 }}>No teams scouted at this event yet.</p>
-        ) : (
-          <div className="field">
-            Scouted at this event
+        {starred.length > 0 && (
+          <div className="field" style={{ marginTop: 12 }}>
+            Starred
             <div className="toolbar">
-              {teams.map((t) => (
-                <a key={t} className="btn" style={{ minHeight: 44 }} href={href('scouting', 'team', String(t))}>{t}</a>
+              {starred.map((t) => (
+                <a
+                  key={t.team}
+                  className="btn"
+                  style={{ minHeight: 44 }}
+                  href={href('scouting', 'team', String(t.team))}
+                  aria-label={`Team ${t.team}, ${t.group === 'Team stars' ? 'starred for the whole team' : 'starred by you'}`}
+                >
+                  {t.group === 'Team stars' ? '★' : '☆'} {t.team}
+                </a>
               ))}
             </div>
           </div>
+        )}
+        {list.length === 0 ? (
+          <p className="note" style={{ margin: 0 }}>No teams scouted at this event yet.</p>
+        ) : (
+          rest.length > 0 && (
+            <div className="field" style={{ marginTop: 12 }}>
+              Scouted at this event
+              <div className="toolbar">
+                {rest.map((t) => (
+                  <a key={t.team} className="btn" style={{ minHeight: 44 }} href={href('scouting', 'team', String(t.team))}>{t.team}</a>
+                ))}
+              </div>
+            </div>
+          )
         )}
       </form>
     </Panel>
@@ -85,6 +116,7 @@ function FindTeam() {
 }
 
 function TeamDetails(props: { team: number }) {
+  const event = useCurrentEvent().key
   const summary = useTeamSummary(props.team)
   const scouted = `${summary.matchCount} match ${summary.matchCount === 1 ? 'entry' : 'entries'}, ${summary.pitCount} pit ${summary.pitCount === 1 ? 'entry' : 'entries'}`
   return (
@@ -92,6 +124,11 @@ function TeamDetails(props: { team: number }) {
       <PageHead title={`Team ${props.team}`}>
         {summary.matchCount + summary.pitCount === 0 ? `Nothing scouted for team ${props.team} yet.` : `Everything we scouted at this event: ${scouted}.`}
       </PageHead>
+      <Panel title="Stars">
+        <div className="panel-body">
+          <Stars event={event} team={props.team} />
+        </div>
+      </Panel>
       <TeamRank team={props.team} />
       <TeamPhotos team={props.team} />
       <AveragePoints team={props.team} />

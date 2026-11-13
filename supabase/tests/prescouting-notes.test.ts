@@ -1,6 +1,7 @@
 // Permission rules for the Prescouting module's notes (#117): the strategy
-// team (#167) and mentors read every row, add one, and change any of them;
-// only mentors delete them. One row per team per event.
+// team (#167), student leaders, mentors and admins read every row, add one,
+// and change any of them; student leaders, mentors and admins delete them.
+// One row per team per event.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
@@ -8,11 +9,13 @@ const db = setUpTestDatabase()
 let student: string
 let other: string
 let mentor: string
+let leader: string
 
 beforeEach(async () => {
   student = await db.member('Riley Park')
   other = await db.member('Casey Lee')
   mentor = await db.member('Pat Mentor', 'mentor')
+  leader = await db.member('Casey Leader', 'leader')
   await db.strategy(student)
   await db.strategy(other)
 })
@@ -39,6 +42,11 @@ describe('prescouting notes', () => {
     expect(await db.as(scout, 'select * from public.prescouting_notes')).toEqual([])
     await expect(add(scout, 9992)).rejects.toThrow(PERMISSION_DENIED)
     expect(await db.as(scout, "update public.prescouting_notes set strengths = 'No' where id = $1 returning id", [row.id])).toEqual([])
+  })
+
+  it('lets a strategy member add notes for a team with empty answers to start', async () => {
+    const [row] = await add(student)
+    expect(row).toMatchObject({ team_number: 9991, strengths: 'Fast cycles', created_by: student })
   })
 
   it("doesn't let anyone add notes as someone else", async () => {
@@ -73,6 +81,14 @@ describe('prescouting notes', () => {
     const [row] = await add(student)
     expect(await db.as(student, 'delete from public.prescouting_notes where id = $1 returning id', [row.id])).toEqual([])
     expect(await db.as(mentor, 'delete from public.prescouting_notes where id = $1 returning id', [row.id])).toEqual([{ id: row.id }])
+  })
+
+  it('lets a student leader delete notes, but not when their access is switched off', async () => {
+    const [row] = await add(student)
+    expect(await db.as(leader, 'delete from public.prescouting_notes where id = $1 returning id', [row.id])).toEqual([{ id: row.id }])
+    const [next] = await add(student, 9992)
+    await db.switchOff(leader)
+    expect(await db.as(leader, 'delete from public.prescouting_notes where id = $1 returning id', [next.id])).toEqual([])
   })
 
   it("can't be read, added or changed by someone who isn't signed in", async () => {

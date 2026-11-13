@@ -1,19 +1,17 @@
 import { useState, type FormEvent } from 'react'
 import { href, useRoute } from '../../core/router'
+import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
 import type { Result } from '../../core/table'
 import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../scouting/data'
 import {
-  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, firstLine, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout,
-  setPrescoutEvent, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams,
-  MAX_STAR_REASON, STRATEGY_ONLY, removeTeamStar, starTeam, unstarTeam, useIsStrategy, useStars,
-  type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutStar, type PrescoutTeam,
+  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, firstLine, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout,
+  setPrescoutEvent, useIsStrategy, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
+  type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutTeam,
 } from './data'
-import { useMemberNames } from '../../core/members'
+import Stars from './Stars'
 import TeamSeason from './TeamSeason'
-import { isMentor } from '../../core/roles'
-import { currentUser } from '../../core/session'
 
 // Big enough to tap, and 16px text so phones don't zoom in on the box.
 const BOX = { minHeight: 46, fontSize: 16 }
@@ -27,7 +25,7 @@ const teamHref = prescoutHref
 // link to it always opens the same team at the same event.
 export default function PrescoutPage() {
   const [event, team] = useRoute().rest
-  // Strategy team and mentors only (#167). The database refuses anyone else too.
+  // Strategy team, student leaders, mentors and admins only (#167). The database refuses anyone else too.
   if (!useIsStrategy()) {
     return (
       <Panel>
@@ -58,13 +56,14 @@ function Overview() {
   const result = usePrescoutTeams(event)
   const notes = usePrescoutNotes(event)
   const stars = useStars(event)
+  const me = useSession().id
   const [sort, setSort] = useState<PrescoutSort>('Team number')
-  const teams = result?.ok ? prescoutOverview(result.value, notes, sort, stars, currentUser()?.id ?? null) : []
-  const starred = teams.some((t) => t.group !== 'rest')
+  const teams = result?.ok ? prescoutOverview(result.value, notes, stars, me, sort) : []
+  const starred = teams.some((t) => t.group !== 'Everyone else')
 
   return (
     <>
-      <PageHead title="Prescouting">Every team coming to an event, to look up before it starts. Star the ones you care about, just for you or for the whole team, to keep them at the top.</PageHead>
+      <PageHead title="Prescouting">Every team coming to an event, to look up before it starts. Star the ones we care about to keep them at the top.</PageHead>
       <EventBox event={event} />
       <Panel title={`Teams at ${event}`} aside={result?.ok ? <span className="note">{result.value.length} teams</span> : undefined}>
         {!result ? (
@@ -77,9 +76,9 @@ function Overview() {
               Sort by
               <Pick label="Sort by" options={[...PRESCOUT_SORTS]} value={sort} onChange={setSort} />
             </div>
-            <TeamGroup title="Starred for the team" event={event} teams={teams.filter((t) => t.group === 'team')} />
-            <TeamGroup title="Starred by you" event={event} teams={teams.filter((t) => t.group === 'mine')} />
-            <TeamGroup title={starred ? 'Everyone else' : ''} event={event} teams={teams.filter((t) => t.group === 'rest')} />
+            {STAR_GROUPS.map((group) => (
+              <TeamGroup key={group} title={starred ? group : ''} event={event} teams={teams.filter((t) => t.group === group)} />
+            ))}
           </div>
         )}
       </Panel>
@@ -88,10 +87,9 @@ function Overview() {
 }
 
 /**
- * Teams starred for the team, starred by you, or everyone else, each in the
- * chosen sort. The headings show why a starred team stays above a team with
- * a better EPA. With no starred teams there's one list and no heading
- * (title '').
+ * Team stars, your stars, or everyone else, each in the chosen sort. The
+ * headings show why a starred team stays above a team with a better EPA.
+ * With no starred teams there's one list and no heading (title '').
  */
 function TeamGroup(props: { title: string; event: string; teams: OverviewTeam[] }) {
   if (props.teams.length === 0) return null
@@ -173,9 +171,8 @@ export function TeamCard(props: { event: string; team: OverviewTeam }) {
           <br />
           <span className="note tnum">{`EPA ${formatEpa(t.epa)}`}</span>
         </a>
-        <StarControls event={props.event} team={t.team} myStars={t.myStars} />
       </div>
-      {t.teamStars.length > 0 && <TeamStars stars={t.teamStars} />}
+      <Stars event={props.event} team={t.team} />
       {notes ? (
         <dl style={{ margin: 0, display: 'grid', gap: 4, fontSize: 14 }}>
           {OVERVIEW_ANSWERS.map((key) => (
@@ -200,83 +197,6 @@ function formatEpa(epa: number | null): string {
   return epa === null ? '—' : epa.toFixed(1)
 }
 
-/**
- * The Star button (#118). Tapping it asks which kind, with two big buttons:
- * just for me, or for the whole team, which needs a reason. With a star
- * already, it offers to remove it.
- */
-function StarControls(props: { event: string; team: number; myStars: PrescoutStar[] }) {
-  const [open, setOpen] = useState(false)
-  const [forTeam, setForTeam] = useState(false)
-  const [reason, setReason] = useState('')
-  const [busy, setBusy] = useState(false)
-  const has = (kind: boolean) => props.myStars.some((s) => s.for_team === kind)
-
-  async function run(action: () => Promise<{ ok: boolean; error?: string }>) {
-    setBusy(true)
-    const result = await action()
-    setBusy(false)
-    if (!result.ok) return toast(result.error ?? 'Something went wrong. Try again.')
-    setOpen(false)
-    setForTeam(false)
-    setReason('')
-  }
-
-  const tap = { minHeight: 44, flexShrink: 0 }
-  if (!open) {
-    return (
-      <button type="button" className="btn" style={tap} aria-expanded={false} onClick={() => setOpen(true)}>
-        {props.myStars.length > 0 ? '★ Starred' : '☆ Star'}
-      </button>
-    )
-  }
-  return (
-    <div style={{ display: 'grid', gap: 8, flexBasis: '100%' }} role="group" aria-label={`Star team ${props.team}`}>
-      <div className="toolbar">
-        {has(false) ? (
-          <button type="button" className="btn btn-lg" disabled={busy} onClick={() => void run(() => unstarTeam(props.event, props.team, false))}>Remove my star</button>
-        ) : (
-          <button type="button" className="btn btn-lg" disabled={busy} onClick={() => void run(() => starTeam(props.event, props.team, { forTeam: false }))}>Just for me</button>
-        )}
-        {has(true) ? (
-          <button type="button" className="btn btn-lg" disabled={busy} onClick={() => void run(() => unstarTeam(props.event, props.team, true))}>Remove my team star</button>
-        ) : (
-          <button type="button" className="btn btn-lg" aria-pressed={forTeam} disabled={busy} onClick={() => setForTeam(true)}>For the whole team</button>
-        )}
-        <button type="button" className="btn" style={tap} onClick={() => setOpen(false)}>Cancel</button>
-      </div>
-      {forTeam && (
-        <form style={{ display: 'grid', gap: 8 }} onSubmit={(e) => { e.preventDefault(); void run(() => starTeam(props.event, props.team, { forTeam: true, reason })) }}>
-          <label className="field">
-            Why should the team look at them?
-            <textarea className="input" style={BOX} rows={2} maxLength={MAX_STAR_REASON} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Like: fast, reliable auto. Good second pick." />
-          </label>
-          <div className="toolbar">
-            <button type="submit" className="btn btn-primary" style={tap} disabled={busy || !reason.trim()}>Star for the team</button>
-          </div>
-        </form>
-      )}
-    </div>
-  )
-}
-
-/** Everyone's team stars on a team, with their reasons and who starred them. Mentors can remove any. */
-function TeamStars(props: { stars: PrescoutStar[]; canRemove?: boolean }) {
-  const nameOf = useMemberNames()
-  return (
-    <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none', display: 'grid', gap: 4, fontSize: 14 }}>
-      {props.stars.map((s) => (
-        <li key={s.id} style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 8px', alignItems: 'center', overflowWrap: 'anywhere' }}>
-          <span>★ {s.reason} <span className="note">— {s.created_by ? nameOf(s.created_by) : 'marked before stars'}</span></span>
-          {props.canRemove && (
-            <button type="button" className="btn btn-sm" style={{ minHeight: 44 }} onClick={() => void removeTeamStar(s).then((result) => !result.ok && toast(result.error))}>Remove</button>
-          )}
-        </li>
-      ))}
-    </ul>
-  )
-}
-
 // ---------------------------------------------------------------------------
 // One team's page: who they are, then our notes.
 
@@ -285,9 +205,6 @@ export function TeamPage(props: { event: string; team: number }) {
   const list = usePrescoutTeams(event)
   const notes = usePrescoutNotes(event).find((n) => n.team_number === team) ?? null
   const details: PrescoutTeam | undefined = list?.ok ? list.value.find((t) => t.team === team) : undefined
-  const stars = useStars(event).filter((s) => s.team_number === team)
-  const me = currentUser()
-  const teamStars = stars.filter((s) => s.for_team)
 
   return (
     <>
@@ -298,7 +215,6 @@ export function TeamPage(props: { event: string; team: number }) {
         <TeamLine list={list} details={details} />
       </PageHead>
       <div className="toolbar">
-        <StarControls event={event} team={team} myStars={stars.filter((s) => s.created_by === me?.id)} />
         <a className="btn" style={{ minHeight: 44 }} href={details?.tbaUrl ?? tbaTeamUrl(team, event)} target="_blank" rel="noreferrer">
           The Blue Alliance
         </a>
@@ -307,11 +223,11 @@ export function TeamPage(props: { event: string; team: number }) {
           Scouting team page →
         </a>
       </div>
-      {teamStars.length > 0 && (
-        <Panel title="Starred for the team">
-          <div className="panel-body"><TeamStars stars={teamStars} canRemove={!!me && isMentor(me.role)} /></div>
-        </Panel>
-      )}
+      <Panel title="Stars">
+        <div className="panel-body">
+          <Stars event={event} team={team} />
+        </div>
+      </Panel>
       <RobotPhotos event={event} team={team} />
       <NotesForm event={event} team={team} saved={notes ?? NO_ANSWERS} />
       <TeamSeason event={event} team={team} />
@@ -344,6 +260,7 @@ function RobotPhotos(props: { event: string; team: number }) {
     </Panel>
   )
 }
+
 
 /** The EPA under the team's name, or why it's not there. */
 function TeamLine(props: { list: Result<PrescoutTeam[]> | null; details: PrescoutTeam | undefined }) {

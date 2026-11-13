@@ -5,6 +5,7 @@
 // and purchase-receipts.test.ts.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
+import type { Member } from '../../core/members'
 import {
   EMPTY_ITEM,
   MAX_NAME_LENGTH,
@@ -15,6 +16,8 @@ import {
   TYPES,
   VENDORS,
   addBuyer,
+  canBeBuyer,
+  canChooseBuyers,
   addItem,
   arrivalText,
   addReceipt,
@@ -33,6 +36,7 @@ import {
   isLate,
   isOrderChange,
   removeBuyer,
+  setBuyer,
   requestFromBomPart,
   requestsByBomPart,
   searchItems,
@@ -45,6 +49,7 @@ import {
   priceProblem,
   priceText,
   receiptBody,
+  receiptAddingShown,
   receiptCountText,
   receiptLink,
   receiptText,
@@ -182,10 +187,17 @@ describe('isCurrent', () => {
 })
 
 describe('groupItems', () => {
-  it('Current: what is in progress, by status, in the order of the statuses', () => {
+  it('Current: what is in progress, newest first under one heading, with no status grouping', () => {
     const groups = groupItems(itemsTable.rows(), 'Current')
-    expect(groups.map((g) => g.title)).toEqual(['Order Low Priority', 'Order', 'Order High Priority', 'Order Placed', 'Backordered', 'Received'])
-    expect(groups.flatMap((g) => g.items).some((i) => ['wait', 'in_shop', 'cancelled'].includes(i.status))).toBe(false)
+    expect(groups.map((g) => g.title)).toEqual(['In progress'])
+    expect(groups[0].status).toBeUndefined()
+    expect(groups[0].items).toHaveLength(6)
+    expect(groups[0].items[0].name).toBe('Compliant wheel, 2 in')
+    expect(groups[0].items.at(-1)!.name).toBe('Motor controller')
+    const dates = groups[0].items.map((i) => i.created_at)
+    expect(dates).toEqual([...dates].sort((a, b) => b.localeCompare(a)))
+    expect(groups[0].items.every(isCurrent)).toBe(true)
+    expect(groups[0].items.some((i) => ['wait', 'in_shop', 'cancelled'].includes(i.status))).toBe(false)
   })
 
   it('All: everything, newest first, under one heading', () => {
@@ -428,6 +440,29 @@ describe('purchasers', () => {
     expect((await removeBuyer(jordan)).ok).toBe(true)
     expect(buyersTable.rows().map((b) => b.member_id)).toEqual([DEMO_PEOPLE.alex])
   })
+
+  it('are chosen by mentors and admins, from people whose access is on and who are not mentors or admins', () => {
+    expect((['student', 'leader', 'mentor', 'admin'] as const).map(canChooseBuyers)).toEqual([false, false, true, true])
+    const cases: [Pick<Member, 'active' | 'role'>, boolean][] = [
+      [{ active: true, role: 'student' }, true],
+      [{ active: true, role: 'leader' }, true],
+      [{ active: true, role: 'mentor' }, false], // already places orders
+      [{ active: true, role: 'admin' }, false],
+      [{ active: false, role: 'student' }, false], // access switched off
+    ]
+    for (const [member, expected] of cases) expect(canBeBuyer(member), JSON.stringify(member)).toBe(expected)
+  })
+
+  it('are ticked on and off from the Members page, where ticking twice changes nothing', async () => {
+    setDemoRole('admin')
+    const ids = () => buyersTable.rows().map((b) => b.member_id)
+    expect((await setBuyer(DEMO_PEOPLE.alex, true)).ok).toBe(true)
+    expect((await setBuyer(DEMO_PEOPLE.alex, true)).ok).toBe(true)
+    expect(ids().filter((id) => id === DEMO_PEOPLE.alex)).toHaveLength(1)
+    expect((await setBuyer(DEMO_PEOPLE.jordan, false)).ok).toBe(true)
+    expect((await setBuyer(DEMO_PEOPLE.jordan, false)).ok).toBe(true)
+    expect(ids()).toEqual([DEMO_PEOPLE.alex])
+  })
 })
 
 // The database refuses all of these too (supabase/tests/purchasing-orders.test.ts
@@ -452,6 +487,8 @@ describe('only mentors and purchasers', () => {
       ['delete a receipt', () => removeReceipt(receipt)],
       ['choose a purchaser', () => addBuyer(DEMO_PEOPLE.alex)],
       ['remove a purchaser', () => removeBuyer(buyer)],
+      ['tick a purchaser on the Members page', () => setBuyer(DEMO_PEOPLE.alex, true)],
+      ['untick a purchaser on the Members page', () => setBuyer(buyer.member_id, false)],
     ]
     const everything = () => [itemsTable.rows(), buyersTable.rows(), receiptsTable.rows()]
     const before = everything()
@@ -465,7 +502,7 @@ describe('only mentors and purchasers', () => {
 describe('asking for a BOM part', () => {
   const bomPart = {
     id: 'part', system_id: 'system', part_number: '4096-26-INT-006', name: 'Flanged bearing, 1/2 in hex', revision: null, kind: 'cots' as const,
-    material: null, quantity: 6, vendor: 'WCP', vendor_part_number: 'EXAMPLE-BRG-12', onshape_url: null, onshape_id: null,
+    material: null, quantity: 6, vendor: 'WCP', vendor_part_number: 'EXAMPLE-BRG-12', product_url: null, onshape_url: null, onshape_id: null,
     removed_in_onshape: false, created_at: '2026-10-20T18:00:00Z', created_by: null,
   }
   const intake = { id: 'system', robot_id: 'robot', name: 'Intake', code: 'INT', onshape_url: null, onshape_imported_at: null, created_at: '2026-10-20T18:00:00Z', created_by: null }
@@ -492,6 +529,11 @@ describe('asking for a BOM part', () => {
     })
     expect(requestFromBomPart(bomPart, { ...intake, name: 'Superstructure' }).type).toBe('')
     expect(requestFromBomPart(bomPart, undefined).type).toBe('')
+  })
+
+  it("fills in the link from the part's product page, if it has one", () => {
+    expect(requestFromBomPart({ ...bomPart, product_url: 'https://example.com/bearing' }, intake).link).toBe('https://example.com/bearing')
+    expect(requestFromBomPart(bomPart, intake).link).toBe('')
   })
 
   it('uses Other for a vendor not in the list, with the BOM vendor in the notes, and Drive Base for the Drivetrain', () => {
@@ -548,6 +590,13 @@ describe('estimated arrival', () => {
     setDemoRole('mentor')
     expect((await changeItem(placed(), changed)).ok).toBe(true)
     expect(placed().estimated_arrival).toBe('2026-12-20')
+  })
+})
+
+describe('receiptAddingShown', () => {
+  it('allows new receipts for every ordered status, but none of the asking statuses', () => {
+    for (const status of STATUSES.filter((s) => s.ask)) expect(receiptAddingShown(status.key), status.label).toBe(false)
+    for (const status of STATUSES.filter((s) => !s.ask)) expect(receiptAddingShown(status.key), status.label).toBe(true)
   })
 })
 
@@ -664,6 +713,23 @@ describe('receipts', () => {
       const result = await addReceipt(item, receiptFile())
       expect(result.ok && result.value.path).toMatch(new RegExp(`^${item.id}/[0-9a-f-]{36}\\.pdf$`))
       expect(result.ok && result.value.created_by).toBe(DEMO_PEOPLE.alex)
+    })
+
+    it('refuses a new receipt while an item is still being asked for', async () => {
+      setDemoRole('mentor')
+      const item = find('Zip ties, 8 in (pack of 100)')
+      expect(await addReceipt(item, receiptFile())).toMatchObject({ ok: false, error: expect.stringMatching(/Order Placed/) })
+      expect(receiptsOf(item)).toHaveLength(0)
+    })
+
+    it('keeps an existing receipt removable when an ordered item goes back to asking', async () => {
+      setDemoRole('mentor')
+      const item = find('Motor controller')
+      const moved = { ...item, status: 'order' as const }
+      expect(receiptAddingShown(moved.status)).toBe(false)
+      expect(receiptsOf(moved)).toHaveLength(2)
+      expect((await removeReceipt(receiptsOf(moved)[0])).ok).toBe(true)
+      expect(receiptsOf(moved)).toHaveLength(1)
     })
 
     it('refuses a file that is not a receipt', async () => {

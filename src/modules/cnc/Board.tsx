@@ -290,7 +290,10 @@ function AddJobForm(props: { onDone: () => void }) {
   const [cutFrom, setCutFrom] = useState<CamStock>({ plate: 'aluminum', thickness: 0 })
   const [saving, setSaving] = useState(false)
   const ref = useRef<HTMLFormElement>(null)
-  useEffect(() => ref.current?.querySelector('select')?.focus(), [])
+  // Braces, so the effect returns nothing, whatever focus() returns (#173).
+  useEffect(() => {
+    ref.current?.querySelector('select')?.focus()
+  }, [])
 
   function pickPart(id: string) {
     setPartId(id)

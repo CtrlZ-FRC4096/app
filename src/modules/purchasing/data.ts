@@ -27,6 +27,8 @@
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { currentUser, isMentor, useSession, type User } from '../../core/session'
+import type { Member } from '../../core/members'
+import type { Role } from '../../core/roles'
 import { isLive, supabase } from '../../core/supabase'
 import { money, plural } from '../../core/format'
 import type { Notice, Tone } from '../../core/registry'
@@ -334,10 +336,22 @@ export function arrivalText(item: PurchaseItem): string | null {
 
 const NOT_A_BUYER = 'Only mentors and purchasers place and change orders. Ask one of them: they\'re listed at the bottom of this page.'
 
+/** Who chooses the purchasers: mentors and admins, on the Members page (#144). */
+export function canChooseBuyers(role: Role): boolean {
+  return isMentor(role)
+}
+
+/** Who can be made a purchaser: anyone whose access is on, except mentors and admins, who already place orders. */
+export function canBeBuyer(member: Pick<Member, 'active' | 'role'>): boolean {
+  return member.active && !isMentor(member.role)
+}
+
+const NOT_CHOOSING = 'Only mentors and admins choose the purchasers.'
+
 /** Make someone a purchaser. Mentors and admins only. */
 export async function addBuyer(memberId: string): Promise<Result<Buyer>> {
   const me = currentUser()
-  if (!me || !isMentor(me.role)) return fail('Only mentors and admins choose the purchasers.')
+  if (!me || !canChooseBuyers(me.role)) return fail(NOT_CHOOSING)
   if (!memberId) return fail('Pick someone first.')
   if (buyersTable.rows().some((b) => b.member_id === memberId)) return fail("They're already a purchaser.")
   return buyersTable.insert({ member_id: memberId })
@@ -346,8 +360,17 @@ export async function addBuyer(memberId: string): Promise<Result<Buyer>> {
 /** Stop someone being a purchaser. Mentors and admins only. */
 export async function removeBuyer(buyer: Buyer): Promise<Result> {
   const me = currentUser()
-  if (!me || !isMentor(me.role)) return fail('Only mentors and admins choose the purchasers.')
+  if (!me || !canChooseBuyers(me.role)) return fail(NOT_CHOOSING)
   return buyersTable.remove(buyer.id)
+}
+
+/** The Members page's Purchaser tick: make someone a purchaser, or stop them being one. Doing it twice changes nothing. */
+export async function setBuyer(memberId: string, on: boolean): Promise<Result> {
+  const buyer = buyersTable.rows().find((b) => b.member_id === memberId)
+  if (on === Boolean(buyer)) return ok(null)
+  if (!on) return removeBuyer(buyer!)
+  const added = await addBuyer(memberId)
+  return added.ok ? ok(null) : added
 }
 
 // ---------------------------------------------------------------------------
@@ -469,6 +492,7 @@ export function receiptCountText(count: number): string {
  * way round, where the list would say there's a receipt that isn't there.
  */
 export async function addReceipt(item: PurchaseItem, file: File): Promise<Result<Receipt>> {
+  if (!receiptAddingShown(item.status)) return fail('Mark the item Order Placed before adding a receipt.')
   if (!canOrder(currentUser(), buyersTable.rows())) return fail('Only mentors and purchasers add receipts. Ask one of them: they\'re listed at the bottom of this page.')
   const problem = checkReceipt(file)
   if (problem) return fail(problem)
@@ -523,7 +547,7 @@ export function isCurrent(item: PurchaseItem): boolean {
 /**
  * The items for a view, under headings:
  *
- *   - Current: what's in progress, by status. The one people work from.
+ *   - Current: what's in progress, newest first, under one heading. Each item shows its status.
  *   - All: everything, newest first.
  *   - By status: everything, by status.
  *   - By vendor: everything, by vendor, for putting one order together per vendor.
@@ -531,13 +555,16 @@ export function isCurrent(item: PurchaseItem): boolean {
  * Headings with nothing under them are left out.
  */
 export function groupItems(items: PurchaseItem[], view: View): Group[] {
+  if (view === 'Current') {
+    const current = items.filter(isCurrent).sort(newestFirst)
+    return current.length > 0 ? [{ title: 'In progress', items: current }] : []
+  }
   if (view === 'All') return items.length > 0 ? [{ title: 'All items', items }] : []
   if (view === 'By vendor') {
     const vendors = [...VENDORS, ...[...new Set(items.map((i) => i.vendor))].filter((v) => !VENDORS.includes(v)).sort()]
     return vendors.map((vendor) => ({ title: vendor, items: items.filter((i) => i.vendor === vendor) })).filter((g) => g.items.length > 0)
   }
-  const shown = view === 'Current' ? items.filter(isCurrent) : items
-  return STATUSES.map((status) => ({ title: status.label, status, items: shown.filter((i) => i.status === status.key) })).filter((g) => g.items.length > 0)
+  return STATUSES.map((status) => ({ title: status.label, status, items: items.filter((i) => i.status === status.key) })).filter((g) => g.items.length > 0)
 }
 
 /**
@@ -615,6 +642,11 @@ export function orderFieldsShown(form: Pick<NewItem, 'status' | 'ordered_by' | '
     shipped_to: placed || !!form.shipped_to,
     estimated_arrival: placed || !!form.estimated_arrival,
   }
+}
+
+/** Whether to offer a new receipt: only once the item has been ordered. Existing receipts stay visible at any status. */
+export function receiptAddingShown(status: StatusKey): boolean {
+  return !isAsking(status)
 }
 
 /**
@@ -706,7 +738,7 @@ const itemFields = (item: NewItem) => ({
 })
 
 /**
- * Ask for something, as the person who asked for it. `bomPartId` is the
+ * Add a new item as the person who asked for it. `bomPartId` is the
  * BOM part it's for, when it's asked for from the BOM page.
  */
 export async function addItem(item: NewItem, bomPartId: string | null = null): Promise<Result<PurchaseItem>> {
@@ -776,7 +808,7 @@ function typeFor(systemName: string | undefined): string {
 
 /**
  * A request filled in from a BOM part, for the person to finish: the name,
- * vendor, vendor part number and quantity, and the system as the type when
+ * vendor, product page, vendor part number and quantity, and the system as the type when
  * it's one of the types. A vendor that isn't in the list becomes Other,
  * with the BOM's vendor in the notes.
  */
@@ -787,6 +819,8 @@ export function requestFromBomPart(part: Part, system: BomSystem | undefined): N
     name: part.name,
     vendor: vendor ?? 'Other',
     type: typeFor(system?.name),
+    // The product page from the BOM, if it has one (#169).
+    link: part.product_url ?? '',
     part_number: part.vendor_part_number ?? '',
     quantity: Math.min(Math.max(part.quantity, 1), MAX_QUANTITY),
     notes: !vendor && part.vendor ? `Vendor in the BOM: ${part.vendor}` : '',

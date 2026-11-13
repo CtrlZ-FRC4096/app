@@ -47,6 +47,20 @@ describe('changing a part', () => {
     expect(await db.sql('select quantity, location from public.inventory_items')).toEqual([{ quantity: 5, location: 'Shelf E1' }])
   })
 
+  it('lets a student add a part with a product link but not change it after, lets a mentor change it, and only takes https:// links', async () => {
+    const [added] = await db.as<{ id: string; link: string }>(
+      student,
+      "insert into public.inventory_items (name, vendor, vendor_part_number, location, link, created_by) values ('CANivore', 'CTR Electronics', '21-678682', 'Bin E2', 'https://example.com/canivore', $1) returning id, link",
+      [student],
+    )
+    expect(added.link).toBe('https://example.com/canivore')
+    const setLink = (person: string, link: string) =>
+      db.as<{ link: string }>(person, 'update public.inventory_items set link = $1 where id = $2 returning link', [link, added.id])
+    await expect(setLink(student, 'https://example.com/other')).rejects.toThrow('Only mentors and admins can change')
+    expect(await setLink(mentor, 'https://example.com/new')).toEqual([{ link: 'https://example.com/new' }])
+    await expect(setLink(mentor, 'javascript:alert(1)')).rejects.toThrow('check constraint')
+  })
+
   it('lets a mentor change the location and quantity', async () => {
     expect(
       await db.as(mentor, "update public.inventory_items set quantity = 9, location = 'Bin Z9' where id = $1 returning quantity, location", [part]),

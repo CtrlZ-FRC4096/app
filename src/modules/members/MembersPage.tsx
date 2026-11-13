@@ -1,11 +1,14 @@
 import { useState } from 'react'
-import { ROLES, isAdmin, isMentor, roleName, useSession, type Role } from '../../core/session'
+import { ROLES, isAdmin, isLeader, isMentor, roleName, useSession, type Role } from '../../core/session'
 import { initials, useMembers, type Member } from '../../core/members'
 import { isLive } from '../../core/supabase'
 import { toast } from '../../core/toast'
 import { shortDate } from '../../core/format'
 import { Callout, PageHead, Panel, Pill } from '../../core/ui'
 import { changeRole, checkServerFunctions, search, setAccess, type FunctionCheck } from './data'
+// Purchasers are Purchasing's: read and change them through its data.ts (#144).
+import { canBeBuyer, canChooseBuyers, setBuyer, useBuyers } from '../purchasing/data'
+// The scouting strategy team is Scouting's: read and change it through its data.ts (#167).
 import { addStrategyMember, removeStrategyMember, strategyTable } from '../scouting/data'
 
 export default function MembersPage() {
@@ -16,18 +19,23 @@ export default function MembersPage() {
   const active = found.filter((m) => m.active)
   const off = found.filter((m) => !m.active)
   const canChange = isAdmin(myRole)
-  // The scouting strategy team (#167): mentors and admins choose it.
+  const buyers = useBuyers()
+  const isBuyer = (m: Member) => buyers.some((b) => b.member_id === m.id)
   const strategy = new Set(strategyTable.useRows().map((s) => s.member_id))
-  const canChooseStrategy = isMentor(myRole)
-
-  async function setStrategy(member: Member, on: boolean) {
-    const result = on ? await addStrategyMember(member.id) : await removeStrategyMember(member.id)
-    toast(result.ok ? `${member.name} is ${on ? 'now on' : 'off'} the strategy team.` : result.error)
-  }
 
   async function role(member: Member, next: Role) {
     const result = await changeRole(member, next)
     toast(result.ok ? `${member.name} is now ${next === 'admin' ? 'an' : 'a'} ${roleName(next).toLowerCase()}.` : result.error)
+  }
+
+  async function purchaser(member: Member, on: boolean) {
+    const result = await setBuyer(member.id, on)
+    toast(result.ok ? `${member.name} ${on ? 'is now a purchaser' : 'is no longer a purchaser'}.` : result.error)
+  }
+
+  async function setStrategy(member: Member, on: boolean) {
+    const result = on ? await addStrategyMember(member.id) : await removeStrategyMember(member.id)
+    toast(result.ok ? `${member.name} is ${on ? 'now on' : 'off'} the strategy team.` : result.error)
   }
 
   async function access(member: Member, on: boolean) {
@@ -38,7 +46,8 @@ export default function MembersPage() {
   return (
     <>
       <PageHead title="Members">
-        Everyone who has signed in. Admins set roles, and switch off access for anyone who has left. Mentors choose the scouting strategy team, who see the scouting analysis and prescouting.
+        Everyone who has signed in. Admins set roles, and switch off access for anyone who has left. Mentors and admins choose
+        the purchasers, who place orders in Purchasing along with them, and the scouting strategy team, who see the scouting analysis and Prescouting.
       </PageHead>
       {!isLive && (
         <Callout title="Demo mode">
@@ -50,46 +59,66 @@ export default function MembersPage() {
         <input id="member-search" className="input" type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder="Name" />
       </label>
       <Panel title="On the team" aside={<span className="note">{active.length} shown</span>}>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Name</th><th>Role</th><th>Strategy team</th><th>Joined</th>{canChange && <th>Access</th>}</tr>
-            </thead>
-            <tbody>
-              {active.map((m) => (
-                <tr key={m.id}>
-                  <td><Person member={m} you={m.id === myId} /></td>
-                  <td>
-                    {canChange && m.id !== myId ? (
-                      <select className="input" aria-label={`Role for ${m.name}`} value={m.role} onChange={(e) => void role(m, e.target.value as Role)}>
-                        {ROLES.map((r) => <option key={r} value={r}>{roleName(r)}</option>)}
-                      </select>
-                    ) : (
-                      <Pill tone={m.role === 'student' ? 'plain' : 'info'}>{roleName(m.role)}</Pill>
-                    )}
-                  </td>
-                  <td>
-                    {isMentor(m.role) ? (
-                      <span className="note">Always</span>
-                    ) : (
-                      <label className="check" style={{ minHeight: 44 }}>
-                        <input type="checkbox" checked={strategy.has(m.id)} disabled={!canChooseStrategy} aria-label={`${m.name} is on the strategy team`}
-                          onChange={(e) => void setStrategy(m, e.target.checked)} />
-                        {strategy.has(m.id) ? 'Yes' : 'No'}
-                      </label>
-                    )}
-                  </td>
-                  <td className="note">{shortDate(m.created_at)}</td>
-                  {canChange && (
+        {text.trim() && found.length === 0 ? (
+          <div className="panel-body">
+            <p className="muted" style={{ margin: 0 }}>Nobody matches “{text.trim()}”.</p>
+            <div className="toolbar"><button type="button" className="btn" onClick={() => setText('')}>Clear the search</button></div>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            {/*
+              Two columns, so the table fits on a phone: when each person joined, and the
+              admins' Switch off button, sit under their name; the Purchaser and Strategy team ticks under their role.
+            */}
+            <table>
+              <thead>
+                <tr><th>Name</th><th>Role</th></tr>
+              </thead>
+              <tbody>
+                {active.map((m) => (
+                  <tr key={m.id}>
                     <td>
-                      {m.id !== myId && <button type="button" className="btn btn-sm" onClick={() => void access(m, false)}>Switch off</button>}
+                      <Person member={m} you={m.id === myId} />
+                      <span className="note">Joined {shortDate(m.created_at)}</span>
+                      {canChange && m.id !== myId && (
+                        <div style={{ marginTop: 6 }}>
+                          <button type="button" className="btn btn-sm" onClick={() => void access(m, false)}>Switch off access</button>
+                        </div>
+                      )}
                     </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                    <td>
+                      {canChange && m.id !== myId ? (
+                        <select className="input" aria-label={`Role for ${m.name}`} value={m.role} onChange={(e) => void role(m, e.target.value as Role)}>
+                          {ROLES.map((r) => <option key={r} value={r}>{roleName(r)}</option>)}
+                        </select>
+                      ) : (
+                        <Pill tone={m.role === 'student' ? 'plain' : 'info'}>{roleName(m.role)}</Pill>
+                      )}
+                      {/* Mentors and admins already place orders, so they don't need it. */}
+                      {canBeBuyer(m) && (canChooseBuyers(myRole) ? (
+                        <label className="check" style={{ display: 'flex', minHeight: 40 }}>
+                          <input type="checkbox" aria-label={`${m.name} is a purchaser`} checked={isBuyer(m)} onChange={(e) => void purchaser(m, e.target.checked)} />
+                          Purchaser
+                        </label>
+                      ) : (
+                        isBuyer(m) && <> <Pill tone="info">Purchaser</Pill></>
+                      ))}
+                      {/* Student leaders, mentors and admins always count as strategy (#167). */}
+                      {!isLeader(m.role) && (isMentor(myRole) ? (
+                        <label className="check" style={{ display: 'flex', minHeight: 40 }}>
+                          <input type="checkbox" aria-label={`${m.name} is on the strategy team`} checked={strategy.has(m.id)} onChange={(e) => void setStrategy(m, e.target.checked)} />
+                          Strategy team
+                        </label>
+                      ) : (
+                        strategy.has(m.id) && <> <Pill tone="info">Strategy team</Pill></>
+                      ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Panel>
       {off.length > 0 && (
         <Panel title="Access switched off">

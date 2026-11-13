@@ -8,8 +8,8 @@
 -- the app sends it with "on conflict do nothing", so sending a photo twice
 -- never makes two rows.
 --
--- The strategy team (and mentors) see every photo (#167); anyone else sees
--- the ones they took or sent. Signed-in members add their own. Only mentors
+-- The strategy team (and student leaders, mentors and admins) see every photo (#167); anyone else sees
+-- the ones they took or sent. Signed-in members add their own. Only student leaders, mentors
 -- and admins delete them. Nobody changes one after it's added.
 --
 -- The phone shrinks each photo to a JPEG before saving it, so the bucket
@@ -68,9 +68,9 @@ create policy "Members can send robot photos as themselves"
   on public.scouting_robot_photos for insert to authenticated
   with check ((select private.is_member()) and created_by = (select auth.uid()));
 
-create policy "Mentors can delete robot photos"
+create policy "Leaders can delete robot photos"
   on public.scouting_robot_photos for delete to authenticated
-  using ((select private.is_mentor()));
+  using ((select private.is_leader()));
 
 -- The rules for the files themselves. storage.objects holds every bucket's
 -- files, so each rule starts by naming this bucket. There's no update rule,
@@ -92,6 +92,6 @@ create policy "Members can add robot photos"
     and objects.name ~ '^[0-9a-z]{1,40}/[0-9]{1,5}/[0-9a-f-]{36}\.jpg$'
   );
 
-create policy "Mentors can delete robot photo files"
+create policy "Leaders can delete robot photo files"
   on storage.objects for delete to authenticated
-  using (bucket_id = 'robot-photos' and (select private.is_mentor()));
+  using (bucket_id = 'robot-photos' and (select private.is_leader()));

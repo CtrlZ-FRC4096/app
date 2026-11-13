@@ -4,8 +4,9 @@
 --
 -- Like purchasers (purchasing_buyers), being on the strategy team is an
 -- extra permission on top of someone's role, so a student can be on it.
--- Mentors and admins choose who, on the Members page, and always count as
--- strategy.
+-- Mentors and admins choose who, on the Members page. Student leaders,
+-- mentors and admins always count as strategy: student leaders already have
+-- the same Scouting permissions as mentors (..._scouting_student_leaders.sql).
 --
 -- Strategy only: the scouting overview, team pages, picklists, simulator,
 -- stats and prescouting. Everyone: the match and pit forms, the schedule and
@@ -42,7 +43,7 @@ create policy "Mentors take people off the strategy team"
   on public.scouting_strategy_team for delete to authenticated
   using ((select private.is_mentor()));
 
--- True for mentors, admins and strategy team members whose access is on.
+-- True for student leaders, mentors, admins and strategy team members whose access is on.
 create function private.is_strategy()
 returns boolean
 language sql
@@ -50,7 +51,7 @@ stable
 security definer
 set search_path = ''
 as $$
-  select private.is_mentor()
+  select private.is_leader()
     or (private.is_member() and exists (select 1 from public.scouting_strategy_team where member_id = auth.uid()))
 $$;
 
@@ -81,7 +82,8 @@ create policy "Strategy reads the picklist"
   using ((select private.is_strategy()));
 
 -- Prescouting notes: the whole Prescouting module is strategy only, so the
--- strategy team reads, adds and changes them. Only mentors delete, as before.
+-- strategy team reads, adds and changes them. Student leaders, mentors and
+-- admins delete them, as before.
 drop policy "Members can read prescouting" on public.prescouting_notes;
 create policy "Strategy reads prescouting"
   on public.prescouting_notes for select to authenticated
@@ -97,3 +99,25 @@ create policy "Strategy changes prescouting"
   on public.prescouting_notes for update to authenticated
   using ((select private.is_strategy()))
   with check ((select private.is_strategy()));
+
+-- Prescouting stars (..._prescouting_stars.sql): the strategy team only,
+-- with the same rules as before among them. Nobody sees anyone else's stars
+-- that are just for them; student leaders, mentors and admins can still
+-- remove any team star.
+drop policy "Members see team stars and their own" on public.prescouting_stars;
+create policy "Strategy sees team stars and their own"
+  on public.prescouting_stars for select to authenticated
+  using ((select private.is_strategy()) and (for_team or created_by = (select auth.uid())));
+
+drop policy "Members can star teams as themselves" on public.prescouting_stars;
+create policy "Strategy can star teams as themselves"
+  on public.prescouting_stars for insert to authenticated
+  with check ((select private.is_strategy()) and created_by = (select auth.uid()));
+
+drop policy "Members remove their own stars, and leaders any team star" on public.prescouting_stars;
+create policy "Strategy removes their own stars, and leaders any team star"
+  on public.prescouting_stars for delete to authenticated
+  using (
+    (select private.is_strategy())
+    and (created_by = (select auth.uid()) or (for_team and (select private.is_leader())))
+  );

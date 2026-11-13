@@ -3,7 +3,7 @@
  * If you need something that isn't here, ask a mentor before adding it: a
  * change here changes every module.
  */
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Tone } from './registry'
 import { parseCount } from './format'
 
@@ -30,6 +30,21 @@ export function Panel(props: { title?: ReactNode; aside?: ReactNode; children: R
       {props.children}
     </section>
   )
+}
+
+/**
+ * Scrolls its contents to the top of the screen, clear of the top bar, when it
+ * first appears. Wrap a form that opens away from the button that opened it,
+ * and give the wrapper a `key` so it scrolls again when it opens for something
+ * else: `<InView key={part.id}><PartForm … /></InView>`.
+ */
+export function InView(props: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  // Braces, so the effect returns nothing: newer Chrome returns a Promise from scrollIntoView().
+  useEffect(() => {
+    ref.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }, [])
+  return <div ref={ref} style={{ scrollMarginTop: 160 }}>{props.children}</div>
 }
 
 export function Pill(props: { tone: Tone; children: ReactNode }) {

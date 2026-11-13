@@ -9,15 +9,23 @@ import {
   bellLabel,
   deleteNotification,
   forPerson,
+  isOn,
   markAllRead,
   markRead,
+  notificationAreas,
   notificationHref,
+  notificationSettingsTable,
   notificationsTable,
+  setNotificationSetting,
   testNotificationText,
   unreadCount,
 } from './notifications'
+import type { ModuleDefinition, NotificationKind } from './registry'
 
-beforeEach(() => notificationsTable.reset())
+beforeEach(() => {
+  notificationsTable.reset()
+  notificationSettingsTable.reset()
+})
 afterEach(() => setDemoRole('student'))
 
 const alexs = () => forPerson(notificationsTable.rows(), DEMO_PEOPLE.alex)
@@ -105,5 +113,46 @@ describe('the test notification', () => {
     await addTestNotification()
     expect(unreadCount(forPerson(notificationsTable.rows(), DEMO_PEOPLE.pat))).toBe(2)
     expect(alexs()).toHaveLength(1)
+  })
+})
+
+describe('what to notify me about', () => {
+  const kind = (key: string, on: boolean): NotificationKind => ({ key, name: key, description: 'When it happens.', on })
+  const setting = (key: string, enabled: boolean) => ({ id: key, created_at: '2026-11-12T18:00:00Z', member_id: DEMO_PEOPLE.alex, key, enabled })
+
+  it("uses your choice, or the module's default when you haven't chosen", () => {
+    const cases: [boolean, boolean | null, boolean][] = [
+      // [default, your choice (null for none), on?]
+      [true, null, true],
+      [false, null, false],
+      [true, false, false],
+      [false, true, true],
+    ]
+    for (const [on, choice, expected] of cases) {
+      const settings = choice === null ? [] : [setting('a.b', choice)]
+      expect(isOn(settings, kind('a.b', on)), `default ${on}, choice ${choice}`).toBe(expected)
+    }
+  })
+
+  it('lists the modules you can open that send notifications, in order', () => {
+    const module = (id: string, extra: Partial<ModuleDefinition>): ModuleDefinition => ({ id, name: id.toUpperCase(), purpose: '', load: async () => ({ default: () => null }), ...extra })
+    const modules = [
+      module('one', { notifications: [kind('one.x', true), kind('one.y', false)] }),
+      module('none', {}),
+      module('empty', { notifications: [] }),
+      module('mentors', { roles: ['mentor', 'admin'], notifications: [kind('mentors.x', true)] }),
+    ]
+    const areas = notificationAreas(modules, 'student', [setting('one.x', false)])
+    expect(areas).toMatchObject([{ id: 'one', name: 'ONE', kinds: [{ key: 'one.x', enabled: false }, { key: 'one.y', enabled: false }] }])
+    expect(notificationAreas(modules, 'mentor', []).map((a) => a.id)).toEqual(['one', 'mentors'])
+  })
+
+  it('saves your choice, changing it in place the second time, and nobody else\'s', async () => {
+    const yours = () => forPerson(notificationSettingsTable.rows(), DEMO_PEOPLE.alex)
+    const others = notificationSettingsTable.rows().filter((s) => s.member_id !== DEMO_PEOPLE.alex)
+    expect((await setNotificationSetting('purchasing.request_updates', false)).ok).toBe(true)
+    expect((await setNotificationSetting('purchasing.request_updates', true)).ok).toBe(true)
+    expect(yours()).toMatchObject([{ key: 'purchasing.request_updates', enabled: true }])
+    expect(notificationSettingsTable.rows().filter((s) => s.member_id !== DEMO_PEOPLE.alex)).toEqual(others)
   })
 })

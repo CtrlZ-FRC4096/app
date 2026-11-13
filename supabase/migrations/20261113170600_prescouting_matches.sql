@@ -9,8 +9,8 @@
 -- Prescouting happens before the event, with Wi-Fi, so it saves straight
 -- here, like prescouting_notes, not on the phone first like match entries.
 --
--- Prescouting is strategy only (#167): the strategy team (and mentors) read
--- every row, add their own, and change or remove their own. Mentors and
+-- Prescouting is strategy only (#167): the strategy team (and leaders) read
+-- every row, add their own, and change or remove their own. Student leaders, mentors and
 -- admins can remove anyone's.
 
 create table public.prescouting_matches (
@@ -76,6 +76,6 @@ create policy "Strategy changes their own prescouted matches"
   using ((select private.is_strategy()) and created_by = (select auth.uid()))
   with check ((select private.is_strategy()) and created_by = (select auth.uid()));
 
-create policy "Strategy removes their own prescouted matches, and mentors anyone's"
+create policy "Strategy removes their own prescouted matches, and leaders anyone's"
   on public.prescouting_matches for delete to authenticated
-  using ((select private.is_strategy()) and (created_by = (select auth.uid()) or (select private.is_mentor())));
+  using ((select private.is_strategy()) and (created_by = (select auth.uid()) or (select private.is_leader())));

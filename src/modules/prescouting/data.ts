@@ -3,25 +3,25 @@
  *
  * Before an event, the scouting team looks up every team that's coming
  * (#116), writes down what we know about each one (#117), and stars the
- * ones they care about, for themselves or the whole team (#118).
+ * ones we care about (#118). Stars are read by the Scouting
+ * module too.
  *
  * The teams come from The Blue Alliance and their EPA from Match 13, both
  * through the Scouting module's data.ts, which holds those server
  * functions. Our notes are in the prescouting_notes table.
  */
 import { useEffect } from 'react'
-import { href } from '../../core/router'
 import { DEMO_PEOPLE } from '../../core/demo'
+import { href } from '../../core/router'
+import { currentUser, isLeader, useSession, type Role } from '../../core/session'
 import { createStore, useStore } from '../../core/store'
-import { isMentor } from '../../core/roles'
-import { currentUser } from '../../core/session'
 import { createTable, fail, ok, type Result, type Row } from '../../core/table'
 import {
-  COUNTERS, ENDGAME, EVENT_KEY, MAX_TEAM, STRATEGY_ONLY, useIsStrategy, getEventTeams, getRatings, matchLabel, tbaTeamUrl, videoLink,
+  COUNTERS, ENDGAME, EVENT_KEY, MAX_TEAM, STRATEGY_ONLY, getEventTeams, getRatings, matchLabel, tbaTeamUrl, useIsStrategy, videoLink,
   type Counter, type Match13Rating, type TbaMatchWithVideos, type TbaTeam,
 } from '../scouting/data'
 
-/** Prescouting is for the strategy team and mentors only (#167). What a page off limits says. */
+/** Prescouting is for the strategy team, student leaders, mentors and admins only (#167). What a page off limits says. */
 export { STRATEGY_ONLY, useIsStrategy }
 
 /** For the menu and home page: Prescouting is hidden from anyone off the strategy team. */
@@ -168,8 +168,7 @@ const EXAMPLE_PRESCOUT: PrescoutNotes[] = [
   { id: '00000000-0000-4000-8000-0000000e0102', event_key: EVENT_KEY, team_number: 9993, overall: '', strengths: 'Strong defense', weaknesses: '', key_task: 'Playing defense', auto_paths: '', performance: '', other_notes: 'Ask them about their intake in the pits', created_at: '2026-11-05T19:20:00Z', created_by: DEMO_PEOPLE.alex },
 ]
 
-// Version 3: the overall summary was added to the rows (#153), and the old
-// shared Mark taken out (#118).
+// Version 3: the overall summary was added to the rows (#153).
 export const prescoutTable = createTable<PrescoutNotes>('prescouting_notes', { demo: EXAMPLE_PRESCOUT, version: 3 })
 
 /** Every team's notes for an event. */
@@ -201,7 +200,7 @@ export function prescoutHref(event: string, team: number): string {
   return href('prescouting', event, String(team))
 }
 
-/** Whether anyone has written any answers for this team yet. A mark alone doesn't count. */
+/** Whether anyone has written any answers for this team yet. */
 export function hasAnswers(notes: PrescoutNotes | null | undefined): boolean {
   return !!notes && PRESCOUT_QUESTIONS.some((q) => notes[q.key].trim() !== '')
 }
@@ -225,126 +224,152 @@ export async function savePrescout(event: string, team: number, answers: Prescou
 
 // ---------------------------------------------------------------------------
 // Stars (#118): people star the teams they care about, so those teams come
-// first. A star is just for the person who made it, or for the whole team;
-// a star for the whole team needs a reason. Several people can star the
-// same team for the whole team, each with their own reason. Stars are in
-// the scouting_prescout_stars table
-// (supabase/migrations/..._scouting_prescout_stars.sql, rules tested in
-// supabase/tests/scouting-prescout-stars.test.ts). The database only lets
-// you see team stars and your own; visibleStars() does the same for demo
-// mode, which has everyone's.
+// first, here and in Scouting. A star is just for you, or for the whole
+// team with a reason. Several people can star a team for the whole team.
+// Stars are in the prescouting_stars table
+// (supabase/migrations/..._prescouting_stars.sql, rules tested in
+// supabase/tests/prescouting-stars.test.ts). The Scouting module reads them
+// from here too, so a star in either place shows in both.
 
-/** One star on one team at one event. */
+/** One row of the prescouting_stars table. */
 export interface PrescoutStar extends Row {
   event_key: string
   team_number: number
-  /** True for the whole team, false for just the person who made it. */
+  /** True: for the whole team, with a reason. False: just for the person who made it. */
   for_team: boolean
-  /** Why the team should look at them. Always there for a team star. */
-  reason: string | null
-  /** Who starred it. Show their name with useMemberNames(). Empty for marks from before stars. */
+  /** Why the team should look at them. Empty for most stars just for you. */
+  reason: string
+  /** Who starred it. Null for marks from before stars, and for people who've left. */
   created_by: string | null
 }
 
 export const MAX_STAR_REASON = 500
 
-// Made up, for demo mode. In demo mode a student is Alex, so Alex sees Jordan's
-// and Pat's team stars and their own star, but not Sam's star just for Sam.
+// Made up, for demo mode. Team numbers in the 9990s, so nobody mistakes them
+// for real scouting. In demo mode you're Alex (as a student), so you see
+// Alex's star just for them, but not Jordan's.
 const EXAMPLE_STARS: PrescoutStar[] = [
-  { id: '00000000-0000-4000-8000-0000000e0301', event_key: EVENT_KEY, team_number: 9991, for_team: true, reason: 'Fast, reliable auto. Good first pick.', created_at: '2026-11-05T19:05:00Z', created_by: DEMO_PEOPLE.jordan },
-  { id: '00000000-0000-4000-8000-0000000e0302', event_key: EVENT_KEY, team_number: 9991, for_team: true, reason: 'Never broke down at their last event', created_at: '2026-11-05T19:30:00Z', created_by: DEMO_PEOPLE.pat },
-  { id: '00000000-0000-4000-8000-0000000e0303', event_key: EVENT_KEY, team_number: 9993, for_team: false, reason: null, created_at: '2026-11-05T19:40:00Z', created_by: DEMO_PEOPLE.alex },
-  { id: '00000000-0000-4000-8000-0000000e0304', event_key: EVENT_KEY, team_number: 9994, for_team: false, reason: null, created_at: '2026-11-05T19:50:00Z', created_by: DEMO_PEOPLE.sam },
+  { id: '00000000-0000-4000-8000-0000000e0201', event_key: EVENT_KEY, team_number: 9991, for_team: true, reason: 'Fast, reliable auto. Good second pick.', created_at: '2026-11-05T19:05:00Z', created_by: DEMO_PEOPLE.jordan },
+  { id: '00000000-0000-4000-8000-0000000e0202', event_key: EVENT_KEY, team_number: 9991, for_team: true, reason: 'Steady driver, rarely breaks down.', created_at: '2026-11-06T18:30:00Z', created_by: DEMO_PEOPLE.pat },
+  { id: '00000000-0000-4000-8000-0000000e0203', event_key: EVENT_KEY, team_number: 9994, for_team: true, reason: 'Great defender if we need one.', created_at: '2026-11-06T18:40:00Z', created_by: DEMO_PEOPLE.casey },
+  { id: '00000000-0000-4000-8000-0000000e0204', event_key: EVENT_KEY, team_number: 9993, for_team: false, reason: '', created_at: '2026-11-06T19:00:00Z', created_by: DEMO_PEOPLE.alex },
+  { id: '00000000-0000-4000-8000-0000000e0205', event_key: EVENT_KEY, team_number: 9995, for_team: false, reason: '', created_at: '2026-11-06T19:10:00Z', created_by: DEMO_PEOPLE.jordan },
 ]
 
-export const starsTable = createTable<PrescoutStar>('scouting_prescout_stars', { demo: EXAMPLE_STARS, sort: (a, b) => a.created_at.localeCompare(b.created_at) })
+export const starsTable = createTable<PrescoutStar>('prescouting_stars', { demo: EXAMPLE_STARS })
 
-/** The stars someone can see: every team star, and their own. The same rule as the database. */
-export function visibleStars(stars: PrescoutStar[], me: string | null | undefined): PrescoutStar[] {
-  return stars.filter((s) => s.for_team || (me != null && s.created_by === me))
+/**
+ * The stars this person may see: every team star, and their own stars just
+ * for them. The database already hides other people's on the live site;
+ * this does the same in demo mode, where every example row is in the browser.
+ */
+export function visibleStars(stars: PrescoutStar[], me: string | null): PrescoutStar[] {
+  return stars.filter((s) => s.for_team || (me !== null && s.created_by === me))
 }
 
-/** The stars the signed-in person can see at an event, oldest first. */
+/** The stars the signed-in person can see at an event. */
 export function useStars(event: string): PrescoutStar[] {
-  const rows = starsTable.useRows()
-  return visibleStars(rows, currentUser()?.id).filter((s) => s.event_key === event)
+  const { id } = useSession()
+  return visibleStars(starsTable.useRows(), id).filter((s) => s.event_key === event)
+}
+
+/** One team's stars: the team stars (oldest first), and your own star just for you, if any. */
+export interface TeamStars {
+  forTeam: PrescoutStar[]
+  /** Your star just for you. */
+  mine: PrescoutStar | null
+}
+
+export function starsFor(stars: PrescoutStar[], team: number, me: string | null): TeamStars {
+  const forTeam = stars.filter((s) => s.team_number === team && s.for_team).sort((a, b) => a.created_at.localeCompare(b.created_at))
+  const mine = stars.find((s) => s.team_number === team && !s.for_team && me !== null && s.created_by === me) ?? null
+  return { forTeam, mine }
+}
+
+/** Where a team goes in a list: team stars first, then your own stars, then everyone else. */
+export type StarGroup = 'Team stars' | 'Your stars' | 'Everyone else'
+export const STAR_GROUPS: StarGroup[] = ['Team stars', 'Your stars', 'Everyone else']
+
+export function starGroup(stars: TeamStars): StarGroup {
+  return stars.forTeam.length > 0 ? 'Team stars' : stars.mine ? 'Your stars' : 'Everyone else'
 }
 
 /**
- * Star a team, just for you (`forTeam` false) or for the whole team, which
- * needs a reason. Says what to do when something's missing.
+ * Team numbers with starred teams first: team stars, then your own, then
+ * the rest, by number within each. For Scouting's Teams page. Starred teams
+ * that aren't in `teams` are added, so a starred team is easy to find before
+ * anyone has scouted them.
  */
-export async function starTeam(event: string, team: number, star: { forTeam: boolean; reason?: string }): Promise<Result<PrescoutStar>> {
+export function starredFirst(teams: number[], stars: PrescoutStar[], me: string | null): { team: number; group: StarGroup }[] {
+  const all = [...new Set([...teams, ...visibleStars(stars, me).map((s) => s.team_number)])]
+  return all
+    .map((team) => ({ team, group: starGroup(starsFor(stars, team, me)) }))
+    .sort((a, b) => STAR_GROUPS.indexOf(a.group) - STAR_GROUPS.indexOf(b.group) || a.team - b.team)
+}
+
+/**
+ * Star a team at an event, as the signed-in person: just for you, or for
+ * the whole team with a reason. Each person has at most one of each kind
+ * per team.
+ */
+export async function starTeam(event: string, team: number, star: { forTeam: boolean; reason: string }): Promise<Result<PrescoutStar>> {
+  const me = currentUser()
+  if (!me) return fail('Sign in to star teams.')
   if (!isEventKey(event)) return fail(NOT_AN_EVENT_KEY)
   if (!Number.isInteger(team) || team < 1 || team > MAX_TEAM) return fail('That team number looks wrong. Go back to the list and choose the team again.')
-  const me = currentUser()?.id
-  if (!me) return fail('Sign in to star teams.')
-  const reason = (star.reason ?? '').trim()
-  if (star.forTeam && !reason) return fail('Say why the team should look at them.')
-  if (reason.length > MAX_STAR_REASON) return fail(`Keep the reason under ${MAX_STAR_REASON} characters. It's ${reason.length}.`)
-  const already = starsTable.rows().some((s) => s.event_key === event && s.team_number === team && s.created_by === me && s.for_team === star.forTeam)
-  if (already) return fail(star.forTeam ? "You've already starred them for the team. Remove that star to give a new reason." : "You've already starred them for yourself.")
-  return starsTable.insert({ event_key: event, team_number: team, for_team: star.forTeam, reason: reason || null })
+  const reason = star.reason.trim()
+  if (star.forTeam && reason === '') return fail('Say why the team should look at them, like "Fast, reliable auto. Good second pick."')
+  if (reason.length > MAX_STAR_REASON) return fail(`Keep the reason under ${MAX_STAR_REASON} characters.`)
+  const already = starsTable.rows().some((s) => s.event_key === event && s.team_number === team && s.for_team === star.forTeam && s.created_by === me.id)
+  if (already) return fail(star.forTeam ? "You've already starred this team for the whole team. Remove that star to give a new reason." : "You've already starred this team for yourself.")
+  return starsTable.insert({ event_key: event, team_number: team, for_team: star.forTeam, reason })
 }
 
-/** Remove your own star on a team, of one kind. */
-export async function unstarTeam(event: string, team: number, forTeam: boolean): Promise<Result> {
-  const me = currentUser()?.id
-  const star = starsTable.rows().find((s) => s.event_key === event && s.team_number === team && s.created_by === me && s.for_team === forTeam)
-  if (!star) return fail("You haven't starred them that way.")
-  return starsTable.remove(star.id)
+/** Whether this person can remove a star: their own, or any team star if they're a student leader, mentor or admin. */
+export function canRemoveStar(star: PrescoutStar, me: { id: string; role: Role } | null): boolean {
+  if (!me) return false
+  return star.created_by === me.id || (star.for_team && isLeader(me.role))
 }
 
-/** Remove someone's team star. Mentors and admins only: the database checks too. */
-export async function removeTeamStar(star: PrescoutStar): Promise<Result> {
-  const user = currentUser()
-  const mine = user != null && star.created_by === user.id
-  if (!mine && !(star.for_team && user && isMentor(user.role))) return fail("Only mentors can remove someone else's team star.")
-  return starsTable.remove(star.id)
+/** Remove a star: your own, or any team star if you're a student leader, mentor or admin. */
+export async function unstarTeam(starId: string): Promise<Result> {
+  const star = starsTable.rows().find((s) => s.id === starId)
+  if (!star) return fail('That star has already been removed.')
+  if (!canRemoveStar(star, currentUser())) return fail('You can only remove your own stars. Ask a student leader or mentor to remove a team star.')
+  return starsTable.remove(starId)
 }
 
 // ---------------------------------------------------------------------------
-// The prescouting overview: every team at a glance, starred ones first.
+// The prescouting overview (#118): every team at a glance, starred ones first.
 
 export const PRESCOUT_SORTS = ['Team number', 'EPA'] as const
 export type PrescoutSort = (typeof PRESCOUT_SORTS)[number]
 
-/** Which group a team is in on the overview: starred for the team, starred by you, or everyone else. */
-export type StarGroup = 'team' | 'mine' | 'rest'
-
-/** One team in the overview: the list's details, their notes (or null) and their stars. */
+/** One team in the overview: the list's details, their notes (or null), and their stars. */
 export interface OverviewTeam extends PrescoutTeam {
   notes: PrescoutNotes | null
-  /** Everyone's team stars on them, with reasons, oldest first. */
-  teamStars: PrescoutStar[]
-  /** Your own stars on them, of either kind. */
-  myStars: PrescoutStar[]
-  group: StarGroup
   /** Whether anyone has written answers for them yet. */
   prescouted: boolean
+  stars: TeamStars
+  group: StarGroup
 }
 
-const GROUP_ORDER: StarGroup[] = ['team', 'mine', 'rest']
-
 /**
- * The overview's order: teams starred for the team first, then teams you
- * starred, then everyone else. Within each, by team number, or by EPA best
- * first, with teams with no EPA after those with one. Ties go by number.
- * `stars` should be the ones you can see (visibleStars()).
+ * The overview's order: team stars first, then your own stars, then
+ * everyone else. Within each, by team number, or by EPA best first (teams
+ * with no EPA after those with one). Ties go by number.
  */
-export function prescoutOverview(teams: PrescoutTeam[], notes: PrescoutNotes[], sort: PrescoutSort, stars: PrescoutStar[] = [], me: string | null = null): OverviewTeam[] {
+export function prescoutOverview(teams: PrescoutTeam[], notes: PrescoutNotes[], stars: PrescoutStar[], me: string | null, sort: PrescoutSort): OverviewTeam[] {
   const byTeam = new Map(notes.map((n) => [n.team_number, n]))
   const byEpa = (a: OverviewTeam, b: OverviewTeam) => (a.epa === null ? 1 : 0) - (b.epa === null ? 1 : 0) || (b.epa ?? 0) - (a.epa ?? 0)
+  const seen = visibleStars(stars, me)
   return teams
-    .map((t): OverviewTeam => {
+    .map((t) => {
       const n = byTeam.get(t.team) ?? null
-      const on = stars.filter((s) => s.team_number === t.team)
-      const teamStars = on.filter((s) => s.for_team)
-      const myStars = on.filter((s) => me !== null && s.created_by === me)
-      const group = teamStars.length > 0 ? 'team' : myStars.length > 0 ? 'mine' : 'rest'
-      return { ...t, notes: n, teamStars, myStars, group, prescouted: hasAnswers(n) }
+      const teamStars = starsFor(seen, t.team, me)
+      return { ...t, notes: n, prescouted: hasAnswers(n), stars: teamStars, group: starGroup(teamStars) }
     })
-    .sort((a, b) => GROUP_ORDER.indexOf(a.group) - GROUP_ORDER.indexOf(b.group) || (sort === 'EPA' ? byEpa(a, b) : 0) || a.team - b.team)
+    .sort((a, b) => STAR_GROUPS.indexOf(a.group) - STAR_GROUPS.indexOf(b.group) || (sort === 'EPA' ? byEpa(a, b) : 0) || a.team - b.team)
 }
 
 /** The first line of an answer, cut short with "…" if it's long, for the overview. */

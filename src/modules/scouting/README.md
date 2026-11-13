@@ -22,7 +22,7 @@
   - `matchesWithPredictions()` matches each prediction to its match by key and puts them in the order they're played.
   - `refreshSchedule()` gets both and saves them on the device (`scheduleStore`), so with no connection the page shows the last ones with when they're from. Other features that need the schedule offline, like #40, can read it with `savedSchedule()`.
   - `keepScheduleFresh()` asks again every 2 minutes while the page is open, when the app comes back on screen, and when the phone comes back online. (The `match13` function reuses its answer for 2 minutes, so asking more often doesn't help.)
-- An Overview / Match / Pit / Schedule / Rankings / Picklists / Simulator / Stats switch at the top of the page, and a Ranked / Mine / Team / Final switch under Picklists (#151). The choice is in the address: `#/scouting` is the overview (#160), `#/scouting/match` the match form, `#/scouting/pit` the pit form, `#/scouting/schedule` the schedule, `#/scouting/rankings` the rankings, `#/scouting/picklist` the picklist, `#/scouting/my-picklist` your own picklist, `#/scouting/team-picklist` the team picklist and `#/scouting/shared-picklist` the final picklist. Each form is one panel, with a line between its sections (`FormSection.tsx`). The pit form (`PitForm.tsx`) asks for the team, drivetrain, weight and size, motors, what the robot can see, preferred auto and strategy. Its choice lists are `DRIVETRAINS`, `VISION` and `AUTO_SIDES` in `season.ts`. Choosing the **Other** drivetrain shows a box to type it (#163); the team page's drivetrain bar counts typed ones, and any no longer in `DRIVETRAINS`, as Other, and lists the typed name with the pit answers. Vision is marked as a maybe in the requirements: check it with the scouting lead. Pit entries saved before #163 sync with these empty (`pitToRow()`). Save pit entry: `savePitEntry()` in `data.ts` keeps it on this device (`pitStore`). It needs a team number; the match number is optional. Pit entries are sent to the team database the same way as match entries (#35): `syncEntries()` sends both, to the `scouting_pit_entries` table (`supabase/migrations/..._scouting_pit_entries.sql`, rules tested in `supabase/tests/scouting-pit-entries.test.ts`). Every visit to a team is kept. Both forms show what's saved on this device, Waiting or Synced, with `SavedOnDevice.tsx`.
+- An Overview / Match / Pit / Schedule / Rankings / Picklists / Simulator / Stats switch at the top of the page, and a Ranked / Mine / Team / Final switch under Picklists (#151). The choice is in the address: `#/scouting` is the overview (#160), `#/scouting/match` the match form, `#/scouting/pit` the pit form, `#/scouting/schedule` the schedule, `#/scouting/rankings` the rankings, `#/scouting/picklist` the picklist, `#/scouting/my-picklist` your own picklist, `#/scouting/team-picklist` the team picklist and `#/scouting/shared-picklist` the final picklist. Each form is one panel, with a line between its sections (`FormSection.tsx`). The pit form (`PitForm.tsx`) asks for the team, drivetrain, weight and size, motors, what the robot can see, preferred auto and strategy. Its choice lists are `DRIVETRAINS`, `VISION` and `AUTO_SIDES` in `season.ts`. Choosing the **Other** drivetrain shows a box to type it (#163); the team page's drivetrain bar counts typed ones, and any no longer in `DRIVETRAINS`, as Other, and lists the typed name with the pit answers. Vision is marked as a maybe in the requirements: check it with the scouting lead. Pit entries saved before #163 sync with these empty (`pitToRow()`). Save pit entry: `savePitEntry()` in `data.ts` keeps it on this device (`pitStore`). It needs a team number. It doesn't ask for a match number: the table's `match_number` column is still there for older entries, and new ones send it empty. Pit entries are sent to the team database the same way as match entries (#35): `syncEntries()` sends both, to the `scouting_pit_entries` table (`supabase/migrations/..._scouting_pit_entries.sql`, rules tested in `supabase/tests/scouting-pit-entries.test.ts`). Every visit to a team is kept. Both forms show what's saved on this device, Waiting or Synced, with `SavedOnDevice.tsx`.
 - A team page (#36, `TeamPage.tsx`), at `#/scouting/team/9991`: everything scouted about one team at this event (`EVENT_KEY`). Type a team number, tap a team from the list of scouted teams, or tap "Team 9991" in the list of saved entries or on the Rankings page. It shows:
   - **Rank** (#39, `TeamRank.tsx`), at the top: the team's place in the event rankings and its record, like "Rank 3 of 42 · 5-1-0"
   - **Numbers**: each counter in `season.ts`, its average per match and each match's count
@@ -42,16 +42,17 @@
 - The Competition menu lists Overview, Match, Pit, Schedule, Rankings, Teams, Picklist, My picklist, Team picklist, Final picklist, Simulator and Stats under Scouting (`pages` in `index.ts`).
 - Match videos (#41): `useTeamQualVideos(team)` in `data.ts` gives a team's qualification matches in order, each with its alliance, Won / Lost / Tied (or not played yet), the scores, and a YouTube link for each video. A played match with no links has no video on The Blue Alliance yet. It loads when the page opens, and `reload()` is for a "Check again" button. The **Match videos** panel on the team page (`TeamVideos.tsx`) shows one line per qual, like "Qual 12 · Red · Won 84–71", with a **Watch ↗** button that opens the video in YouTube in a new tab ("Watch (2) ↗" for a second video), "No video yet", or "Not played yet". It's only links, no video players or thumbnails, to keep the page light on venue Wi-Fi. `VideoList` draws the lines from rows, so tests can use made-up ones.
 - Prescouting is its own module, just above Scouting in the Competition menu: see [its README](../prescouting/README.md). It gets the teams and EPA from `getEventTeams()` and `getRatings()` here.
+- Stars (#118) come from the Prescouting module, so they're the same in both: the Teams page (`TeamPage.tsx`) lists starred teams first (team stars, then your own), and each team's page has a **Stars** panel to see and add stars. It reads them with `useStars()` and `starredFirst()` from `../prescouting/data.ts`, and draws them with Prescouting's `Stars.tsx`.
 
 Entries are kept on the device in a store (`entryStore` in `data.ts`), not a table from `createTable()`, because a table needs a connection on the live site. `syncEntries()` sends the Waiting ones to the `scouting_entries` table (`supabase/migrations/..._scouting_entries.sql`, rules tested in `supabase/tests/scouting-entries.test.ts`) and marks them Synced.
 
-Each entry keeps the id its phone gave it, and the table skips an id it already has (`insertOnce()` in `src/core/table.ts`), so an entry sent twice is never saved twice. Everyone on the team can read every entry; only mentors change or delete them.
+Each entry keeps the id its phone gave it, and the table skips an id it already has (`insertOnce()` in `src/core/table.ts`), so an entry sent twice is never saved twice. Everyone on the team can read every entry; student leaders, mentors and admins can change or delete them.
 
 Don't raise `entryStore`'s version while entries are waiting on phones: entries saved under the old version would be ignored.
 
 ### Shared picklist (#43)
 
-The picklist the strategy team reorders on alliance selection day is saved in the `scouting_picklist` table (`supabase/migrations/..._scouting_picklist.sql`, rules tested in `supabase/tests/scouting-picklist.test.ts`), so every phone shows the same order and changes appear by themselves. Everyone signed in can read it; only mentors and admins can change it. Each event has its own list, and a team is on it once.
+The picklist the strategy team reorders on alliance selection day is saved in the `scouting_picklist` table (`supabase/migrations/..._scouting_picklist.sql`, rules tested in `supabase/tests/scouting-picklist.test.ts`), so every phone shows the same order and changes appear by themselves. Everyone signed in can read it; student leaders, mentors and admins can change it. Each event has its own list, and a team is on it once.
 
 The functions are in the "Shared picklist" part of `data.ts`:
 
@@ -65,9 +66,9 @@ The functions are in the "Shared picklist" part of `data.ts`:
 
 Each team has a `position`, smallest at the top, starting 1000 apart. A move changes only the moved team's position, to halfway between its new neighbours (`positionBetween()`), so two people moving different teams at once don't undo each other. If the halves get too close to tell apart, `moveTeam()` numbers the list 1000, 2000, … again. Only `position` and `status` can be changed, so not even a mentor can turn a row into a different team or event.
 
-The page is `SharedPicklist.tsx`. Everyone signed in sees the list: rank, team (tap it for the team page) and status. Picked and Do not pick teams stay in their place, greyed out, and **Hide picked** hides the Picked ones. Mentors and admins also see:
+The page is `SharedPicklist.tsx`. Everyone signed in sees the list: rank, team (tap it for the team page) and status. Picked and Do not pick teams stay in their place, greyed out, and **Hide picked** hides the Picked ones. Student leaders, mentors and admins also see:
 
-- **Start from the ranked list** when the list is empty: it starts with the teams on the Picklist page, in the order that mentor's weights give on their phone (`useRankedPicklist()`).
+- **Start from the ranked list** when the list is empty: it starts with the teams on the Picklist page, in the order the weights on their phone give (`useRankedPicklist()`).
 - **Add teams not on the list** when the ranked list has teams the picklist doesn't.
 - Big up and down buttons on each team, which wait while a move saves, and an Open / Picked / Do not pick choice. Screen readers hear "Moved team 9991 to place 2."
 
@@ -112,7 +113,7 @@ says so.
 
 ## The event
 
-A mentor picks the event the whole team is scouting, at the top of every
+A student leader, mentor or admin picks the event the whole team is scouting, at the top of every
 Scouting page (**Change event**, `EventPicker.tsx`). It lists our events this
 season and next from The Blue Alliance, with a search for any other event by
 name, city or key, like a World division. Every phone switches to it
@@ -121,9 +122,9 @@ picklists are for it, and new entries are saved under it.
 
 - **Where it's kept:** each pick is a row in the `scouting_events` table
   (`supabase/migrations/..._scouting_events.sql`, rules tested in
-  `supabase/tests/scouting-events.test.ts`): everyone reads it, only mentors
-  and admins add to it, and nobody changes or deletes a pick. The newest is
-  the current event.
+  `supabase/tests/scouting-events.test.ts`): everyone reads it, student
+  leaders, mentors and admins add to it, and nobody changes or deletes a
+  pick. The newest is the current event.
 - **In code:** `currentEvent()` in `data.ts` gives its key, and
   `useCurrentEvent()` gives it to a page, which redraws when a mentor picks
   another. Functions that take an event use the current one when you leave
@@ -134,7 +135,7 @@ picklists are for it, and new entries are saved under it.
   `EventPicker.tsx` keeps that copy up to date while Scouting is open with a
   connection. So **open Scouting once with a connection after the event is
   picked**, before going somewhere with no Wi-Fi.
-- **Until a mentor picks one,** it's `EVENT_KEY` in `season.ts`, and the
+- **Until someone picks the event,** it's `EVENT_KEY` in `season.ts`, and the
   top of the page says so.
 
 ## The strategy team (#167)

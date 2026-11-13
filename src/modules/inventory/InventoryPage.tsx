@@ -82,7 +82,18 @@ export default function InventoryPage() {
                 {shown.map((item) => (
                   <tr key={item.id}>
                     <td>{item.name} {isLow(item) && <Pill tone="warn">Low</Pill>}</td>
-                    <td><span className="note">{item.vendor}</span><br />{item.vendor_part_number}</td>
+                    <td>
+                      <span className="note">{item.vendor}</span>
+                      <br />
+                      {item.vendor_part_number}
+                      {/* The database only accepts https:// links here, so it's safe to open. */}
+                      {item.link && (
+                        <>
+                          <br />
+                          <a className="note" href={item.link} target="_blank" rel="noopener noreferrer">Product page ↗</a>
+                        </>
+                      )}
+                    </td>
                     <td>{item.location}</td>
                     <td className="num">{item.quantity}</td>
                     <td className="num">
@@ -110,6 +121,7 @@ function AddItemForm(props: { onDone: () => void }) {
   const [vendor, setVendor] = useState('')
   const [vendorPartNumber, setVendorPartNumber] = useState('')
   const [location, setLocation] = useState('')
+  const [link, setLink] = useState('')
   const [quantity, setQuantity] = useState(1)
   const [lowStockLevel, setLowStockLevel] = useState(0)
   const [saving, setSaving] = useState(false)
@@ -118,7 +130,7 @@ function AddItemForm(props: { onDone: () => void }) {
     event.preventDefault()
     setSaving(true)
     const result = await addItem({
-      name, vendor, vendor_part_number: vendorPartNumber, location, quantity, low_stock_level: lowStockLevel,
+      name, vendor, vendor_part_number: vendorPartNumber, location, link, quantity, low_stock_level: lowStockLevel,
     })
     setSaving(false)
     if (!result.ok) {
@@ -128,6 +140,7 @@ function AddItemForm(props: { onDone: () => void }) {
     toast(`Added ${result.value.name}.`)
     setName('')
     setVendorPartNumber('')
+    setLink('')
     setQuantity(1)
     setLowStockLevel(0)
     // The vendor and location stay filled in, since parts often come in batches from one vendor to one bin.
@@ -151,6 +164,10 @@ function AddItemForm(props: { onDone: () => void }) {
         <label className="field" htmlFor="item-location">
           Location (bin or shelf)
           <input id="item-location" className="input" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Bin E2" />
+        </label>
+        <label className="field" htmlFor="item-link">
+          Product link (optional): the vendor's page for it
+          <input id="item-link" className="input" type="url" value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://…" />
         </label>
         <div className="field">
           Quantity on the shelf
@@ -237,11 +254,12 @@ function StockForm(props: { item: Item; onDone: () => void }) {
   )
 }
 
-/** Change a part's quantity and location, or delete it. Mentors and admins only. */
+/** Change a part's quantity, location and product link, or delete it. Mentors and admins only. */
 function EditItemForm(props: { item: Item; onDone: () => void }) {
   const { item } = props
   const [quantity, setQuantity] = useState(item.quantity)
   const [location, setLocation] = useState(item.location)
+  const [link, setLink] = useState(item.link ?? '')
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -254,7 +272,7 @@ function EditItemForm(props: { item: Item; onDone: () => void }) {
   async function save(event: FormEvent) {
     event.preventDefault()
     setSaving(true)
-    const result = await changeItem(item, { quantity, location })
+    const result = await changeItem(item, { quantity, location, link })
     setSaving(false)
     toast(result.ok ? `Saved ${item.name}.` : result.error)
     if (result.ok) props.onDone()
@@ -279,6 +297,10 @@ function EditItemForm(props: { item: Item; onDone: () => void }) {
           <label className="field" htmlFor="edit-item-location">
             Location (bin or shelf)
             <input id="edit-item-location" className="input" value={location} onChange={(e) => setLocation(e.target.value)} />
+          </label>
+          <label className="field" htmlFor="edit-item-link">
+            Product link (optional)
+            <input id="edit-item-link" className="input" type="url" value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://…" />
           </label>
           <div className="field">
             Quantity on the shelf

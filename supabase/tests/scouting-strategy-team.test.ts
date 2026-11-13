@@ -35,11 +35,12 @@ describe('the strategy team', () => {
     expect(await db.as(scout, 'delete from public.scouting_strategy_team returning id')).toEqual([])
   })
 
-  it('counts mentors, admins and strategy members, but not other students or leaders, or anyone switched off', async () => {
+  it('counts student leaders, mentors, admins and strategy members, but not other students, or anyone switched off', async () => {
     expect(await isStrategy(mentor)).toBe(true)
     expect(await isStrategy(await db.member('Sam Admin', 'admin'))).toBe(true)
+    // Student leaders have the same Scouting permissions as mentors (..._scouting_student_leaders.sql).
+    expect(await isStrategy(leader)).toBe(true)
     expect(await isStrategy(scout)).toBe(false)
-    expect(await isStrategy(leader)).toBe(false)
     await db.strategy(scout)
     expect(await isStrategy(scout)).toBe(true)
     await db.switchOff(scout)

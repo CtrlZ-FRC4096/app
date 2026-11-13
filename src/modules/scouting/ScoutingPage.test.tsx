@@ -14,6 +14,13 @@ import SharedPicklist from './SharedPicklist'
 import TeamPage, { TeamLink } from './TeamPage'
 import { AUTO_SIDES, COUNTERS, DRIVETRAINS, EVENT_KEY, ROLES } from './season'
 
+// Strategy-only pages (#167): these tests look at them as a student leader,
+// who always counts as strategy. Alex, the demo student, isn't on the
+// example strategy team, so tests that set the student role see what
+// someone off the team sees.
+beforeEach(() => setDemoRole('leader'))
+afterEach(() => setDemoRole('student'))
+
 describe('the team page', () => {
   // Team 9991 is in the example entries (EXAMPLE_ENTRIES in data.ts), in match 1.
   it("shows a team's numbers, answers and notes", () => {
@@ -61,8 +68,8 @@ describe('strategy-only pages (#167)', () => {
   afterEach(() => setDemoRole('student'))
 
   it('opens the match form at #/scouting for someone off the strategy team, with only the pages they can use', () => {
-    // Casey, the demo student leader, isn't on the strategy team.
-    setDemoRole('leader')
+    // Alex, the demo student, isn't on the strategy team.
+    setDemoRole('student')
     const html = renderToString(<ScoutingPage />)
     expect(html).toContain('aria-pressed="true">Match</button>')
     expect(html).not.toContain('Scouting overview')
@@ -71,9 +78,9 @@ describe('strategy-only pages (#167)', () => {
   })
 
   it("shows team numbers as words, not links to team pages they can't open", () => {
-    setDemoRole('leader')
-    expect(renderToString(<TeamLink team={9991} />)).toBe('Team <!-- -->9991')
     setDemoRole('student')
+    expect(renderToString(<TeamLink team={9991} />)).toBe('Team <!-- -->9991')
+    setDemoRole('leader')
     expect(renderToString(<TeamLink team={9991} />)).toContain('href="#/scouting/team/9991"')
   })
 })
@@ -166,10 +173,11 @@ describe('the final picklist', () => {
   it('shows a student the list with no buttons to change it', () => {
     setDemoRole('student')
     const html = renderToString(<SharedPicklist />)
-    expect(html).toContain('href="#/scouting/team/9991"')
+    // Off the strategy team, team numbers aren't links (#167).
+    expect(html).toContain('Team <!-- -->9991')
     expect(html).not.toContain('Move team')
     expect(html).not.toContain('Start from the ranked list')
-    expect(html).toContain('Only mentors can change it.')
+    expect(html).toContain('Only student leaders, mentors and admins can change it.')
   })
 
   it('gives a mentor up and down buttons, and a status for each team', () => {
@@ -183,6 +191,14 @@ describe('the final picklist', () => {
     expect(html).toMatch(/aria-label="Move team 9994 down" disabled=""/)
   })
 
+  it('gives a student leader up and down buttons and a status for each team', () => {
+    setDemoRole('leader')
+    const html = renderToString(<SharedPicklist />)
+    expect(html).toContain('aria-label="Move team 9992 up"')
+    expect(html).toContain('aria-label="Move team 9992 down"')
+    expect(html).toContain('aria-label="Team 9992&#x27;s status"')
+  })
+
   it('keeps Picked and Do not pick teams in their place, with their status', () => {
     const html = renderToString(<SharedPicklist />)
     const places = [...html.matchAll(/team\/(\d+)"/g)].map((m) => m[1])
@@ -193,6 +209,7 @@ describe('the final picklist', () => {
 
   it('tells a student the picklist is not made yet, and offers a mentor to start it', async () => {
     await emptyList()
+    setDemoRole('student')
     expect(renderToString(<SharedPicklist />)).toContain('The strategy team hasn&#x27;t made the picklist yet.')
     setDemoRole('mentor')
     expect(renderToString(<SharedPicklist />)).toContain('Start from the ranked list')
@@ -207,9 +224,10 @@ describe('the pit form', () => {
 
   it('has the number boxes and text boxes', () => {
     const html = renderToString(<ScoutingPage />)
-    for (const id of ['pit-match', 'pit-team','pit-weight', 'pit-length', 'pit-width', 'pit-height', 'pit-motors', 'pit-auto-path', 'pit-partners', 'pit-they-do']) {
+    for (const id of ['pit-team', 'pit-weight', 'pit-length', 'pit-width', 'pit-height', 'pit-motors', 'pit-auto-path', 'pit-partners', 'pit-they-do']) {
       expect(html).toContain(`id="${id}"`)
     }
+    expect(html).not.toContain('id="pit-match"')
   })
 })
 
@@ -298,11 +316,17 @@ describe('the event picker', () => {
   beforeEach(() => eventStore.reset())
   afterEach(() => setDemoRole('student'))
 
-  it("shows a student which event it is, and that a mentor picks it, with no way to change it", () => {
+  it("shows a student which event it is, and who can pick it, with no way to change it", () => {
+    setDemoRole('student')
     const html = renderToString(<EventPicker />)
     expect(html).toContain(EVENT_KEY)
-    expect(html).toContain('A mentor picks the event for the whole team.')
+    expect(html).toContain('A student leader, mentor or admin picks the event for the whole team.')
     expect(html).not.toContain('Change event')
+  })
+
+  it('lets a student leader change it', () => {
+    setDemoRole('leader')
+    expect(renderToString(<EventPicker />)).toContain('Change event')
   })
 
   it('lets a mentor change it, and says when nobody has picked one yet', () => {
