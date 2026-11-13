@@ -9,8 +9,20 @@ describe('match13Path', () => {
     expect(match13Path({ kind: 'predictions', event: '2026ilch' })).toEqual({ path: '/v1/events/2026ilch/matches' })
   })
 
+  it("allows the event's simulation (#152) and a team's events in a season (#153)", () => {
+    expect(match13Path({ kind: 'sim', event: '2026ilch' })).toEqual({ path: '/v1/events/2026ilch/sim' })
+    expect(match13Path({ kind: 'team-events', team: 4096, year: 2026 })).toEqual({ path: '/v1/teams/4096/years/2026/events' })
+  })
+
+  it("refuses a team's events with a team or year that isn't one", () => {
+    for (const bad of [{ team: '4096', year: 2026 }, { team: 0, year: 2026 }, { team: 4096.5, year: 2026 }, { team: 4096, year: 26 }, { team: 4096 }, { team: '1/../../account', year: 2026 }]) {
+      expect(match13Path({ kind: 'team-events', ...bad }), JSON.stringify(bad)).toHaveProperty('error')
+    }
+  })
+
   it("refuses anything else, so the key can't be used for other requests", () => {
-    expect(match13Path({ kind: 'sim', event: '2026ilch' })).toHaveProperty('error')
+    expect(match13Path({ kind: 'account', event: '2026ilch' })).toHaveProperty('error')
+    expect(match13Path({ kind: 'sim' })).toHaveProperty('error')
     expect(match13Path(null)).toHaveProperty('error')
     expect(match13Path({ kind: 'ratings' })).toHaveProperty('error')
     expect(match13Path({ kind: 'ratings', event: '../../account' })).toHaveProperty('error')

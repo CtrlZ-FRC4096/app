@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
+import { useState, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
 import { useMemberNames, useMembers, type Member } from '../../core/members'
 import { href, navigate, useRoute } from '../../core/router'
 import { isMentor, useSession } from '../../core/session'
@@ -6,9 +6,10 @@ import { toast } from '../../core/toast'
 import { shortDate } from '../../core/format'
 import { InView, PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
 import { partsTable, systemsTable } from '../bom/data'
+// Inventory's parts, for its Order more button. Purchasing has its own useItems, so this one is renamed.
+import { useItems as useInventoryItems } from '../inventory/data'
 import {
   EMPTY_ITEM,
-  RECEIPT_ACCEPT,
   STATUSES,
   TYPES,
   VENDORS,
@@ -16,7 +17,6 @@ import {
   canChooseBuyers,
   addItem,
   arrivalText,
-  addReceipt,
   changeItem,
   choices,
   duplicateItem,
@@ -29,12 +29,10 @@ import {
   itemToForm,
   priceText,
   receiptCountText,
-  receiptLink,
-  receiptText,
   receiptAddingShown,
   removeItem,
-  removeReceipt,
   requestFromBomPart,
+  requestFromInventoryItem,
   searchItems,
   statusOf,
   summaryText,
@@ -44,9 +42,9 @@ import {
   useItems,
   type NewItem,
   type PurchaseItem,
-  type Receipt,
   type View,
 } from './data'
+import { Receipts } from './Receipts'
 
 // Fields and their boxes may shrink to the screen's width. Without this, a
 // dropdown grows to fit its longest choice and the page scrolls sideways
@@ -65,6 +63,8 @@ const EMPTY_TEXT: Record<View, string> = {
 interface Asking {
   start: NewItem
   bomPartId: string | null
+  /** Filled in from an Inventory part's Order more button (#194). */
+  fromInventory?: boolean
   /** Changes when a different item is duplicated, so the form starts over. */
   key: string
 }
@@ -73,8 +73,9 @@ interface Asking {
 // functions from data.ts. It never saves anything itself.
 //
 // Its address can say what to open, for the BOM page's links:
-//   #/purchasing/from-bom/<part id>   Add new item, filled in from a BOM part
-//   #/purchasing/item/<item id>       That item, open for changing
+//   #/purchasing/from-bom/<part id>         Add new item, filled in from a BOM part
+//   #/purchasing/from-inventory/<part id>   Add new item, filled in from an Inventory part (Order more)
+//   #/purchasing/item/<item id>             That item, open for changing
 export default function PurchasingPage() {
   const items = useItems()
   const route = useRoute()
@@ -85,19 +86,22 @@ export default function PurchasingPage() {
   const [openId, setOpenId] = useState<string | null>(null)
   const groups = groupItems(searchItems(items, search), view)
 
+  // Two hooks, each called every time (a hook can't be skipped).
   const fromBom = useBomRequest(route.rest)
+  const fromInventory = useInventoryRequest(route.rest)
+  const fromLink = fromBom ?? fromInventory
   const routeItem = route.rest[0] === 'item' ? items.find((i) => i.id === route.rest[1]) : undefined
-  // A link from the BOM opens its form until it's sent or cancelled.
-  const form = fromBom ?? asking
+  // A link from the BOM or Inventory opens its form until it's sent or cancelled.
+  const form = fromLink ?? asking
   const closeForm = () => {
     setAsking(null)
-    if (fromBom) navigate('purchasing')
+    if (fromLink) navigate('purchasing')
   }
 
   return (
     <>
       <PageHead title="Purchasing">
-        What the team needs to buy, from asking for it to it being in the shop. Add anything we need to order, or use Purchase on a BOM part. Tap an item to change it.
+        What the team needs to buy, from asking for it to it being in the shop. Add anything we need to order, or use Purchase on a BOM part or Order more on an Inventory part. Tap an item to change it.
       </PageHead>
 
       {routeItem && (
@@ -132,7 +136,7 @@ export default function PurchasingPage() {
       {form && (
         <InView key={form.key}>
           <Panel title="Add new item">
-            <ItemForm item={null} start={form.start} bomPartId={form.bomPartId} onDone={closeForm} />
+            <ItemForm item={null} start={form.start} bomPartId={form.bomPartId} fromInventory={form.fromInventory} onDone={closeForm} />
           </Panel>
         </InView>
       )}
@@ -194,6 +198,19 @@ function useBomRequest(rest: string[]): Asking | null {
 }
 
 /**
+ * The Add new item form for an Inventory part's Order more link, or null when
+ * the address isn't one. A part that isn't found (deleted, or a bad link) opens
+ * Purchasing as normal.
+ */
+function useInventoryRequest(rest: string[]): Asking | null {
+  const parts = useInventoryItems()
+  if (rest[0] !== 'from-inventory') return null
+  const part = parts.find((p) => p.id === rest[1])
+  if (!part) return null
+  return { start: requestFromInventoryItem(part), bomPartId: null, fromInventory: true, key: `inventory-${part.id}` }
+}
+
+/**
  * One item in a list. Tapping it opens it for changing, except on its
  * buttons, which sit apart so they're easy to hit on a phone.
  */
@@ -248,7 +265,7 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
  * request can start filled in (`start`), for Duplicate and the BOM's
  * Purchase button.
  */
-function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId?: string | null; onDone: () => void }) {
+function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId?: string | null; fromInventory?: boolean; onDone: () => void }) {
   const { item } = props
   const nameOf = useMemberNames()
   const members = useMembers()
@@ -328,6 +345,7 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
       <p className="note" style={{ margin: 0 }}>
         {item ? `Requested by ${nameOf(item.requested_by)} · ${shortDate(item.created_at)}` : `Requested by ${me.name}`}
         {props.bomPartId && ' · from the BOM: fill in what\'s missing, like the link and the priority'}
+        {props.fromInventory && ' · from Inventory: check the number needed and the priority'}
       </p>
       {text('name', 'What to buy', 'Like "Ethernet cables, 5 ft (10 pack)"')}
       {locked && item ? (
@@ -367,7 +385,8 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
         </label>
       )}
       {item && <OrderDetails item={item} form={form} canOrder={canOrder} set={set} id={id} people={people} orderers={orderers} />}
-      {item && <Receipts item={item} showAdd={receiptAddingShown(form.status)} />}
+      {/* Re-key when the item or permission changes, clearing any local file waiting for review. */}
+      {item && <Receipts key={`${item.id}-${canOrder}-${receiptAddingShown(form.status)}`} item={item} showAdd={receiptAddingShown(form.status)} />}
       <div className="toolbar">
         {!locked && <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : item ? 'Save' : 'Add to the list'}</button>}
         <button type="button" className="btn" onClick={props.onDone}>{locked ? 'Close' : 'Cancel'}</button>
@@ -448,100 +467,6 @@ function OrderDetails(props: {
             </label>
           )}
         </>
-      )}
-    </div>
-  )
-}
-
-/** Who the purchasers are, so people know who to ask. Mentors and admins add and remove them. */
-/**
- * An item's receipts, on the opened item. Everyone sees how many there are.
- * Mentors, admins and purchasers add, open and delete them.
- * The buttons are only tidiness: the database's rules are what stop people.
- */
-function Receipts(props: { item: PurchaseItem; showAdd: boolean }) {
-  const nameOf = useMemberNames()
-  const canManage = useCanOrder()
-  const receipts = useReceipts(props.item.id)
-  const picker = useRef<HTMLInputElement>(null)
-  const [uploading, setUploading] = useState(false)
-  // The receipt whose Delete was pressed once: it takes two presses.
-  const [deletingId, setDeletingId] = useState<string | null>(null)
-
-  async function pick(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    // Cleared so picking the same file again, after a problem, still counts.
-    event.target.value = ''
-    if (!file) return
-    setUploading(true)
-    const result = await addReceipt(props.item, file)
-    setUploading(false)
-    toast(result.ok ? 'Receipt added.' : result.error)
-  }
-
-  async function open(receipt: Receipt) {
-    // The tab has to open during the tap, or phones block it. The address
-    // comes after, once the link is made.
-    const tab = window.open('', '_blank')
-    const result = await receiptLink(receipt)
-    if (!result.ok) {
-      tab?.close()
-      toast(result.error)
-      return
-    }
-    if (!tab) {
-      toast('Your browser blocked the new tab. Allow pop-ups for this site and try again.')
-      return
-    }
-    tab.opener = null
-    tab.location.href = result.value
-  }
-
-  async function remove(receipt: Receipt) {
-    if (deletingId !== receipt.id) {
-      setDeletingId(receipt.id)
-      return
-    }
-    const result = await removeReceipt(receipt)
-    setDeletingId(null)
-    toast(result.ok ? 'Receipt deleted.' : result.error)
-  }
-
-  // Nothing to see or do here for a student, on an item with no receipts.
-  if (!canManage && receipts.length === 0) return null
-
-  return (
-    <div className="field" style={FIELD}>
-      <span>Receipts</span>
-      {canManage ? (
-        receipts.map((receipt, i) => (
-          <div key={receipt.id} className="toolbar" style={{ justifyContent: 'space-between', padding: '4px 0' }}>
-            <span style={{ minWidth: 0, color: 'var(--ink)' }}>
-              Receipt {i + 1}: {receiptText(receipt)}
-              <br />
-              <span className="note">Added by {nameOf(receipt.created_by)} · {shortDate(receipt.created_at)}</span>
-            </span>
-            <span className="toolbar">
-              <button type="button" className="btn btn-sm" onClick={() => void open(receipt)}>Open</button>
-              <button type="button" className="btn btn-sm" onClick={() => void remove(receipt)}>
-                {deletingId === receipt.id ? 'Press again to delete' : 'Delete'}
-              </button>
-            </span>
-          </div>
-        ))
-      ) : (
-        <span className="note">
-          {receipts.length > 0 ? `${receiptCountText(receipts.length)} added. ` : ''}Only mentors and purchasers can open receipts, because they can show card digits and addresses.
-        </span>
-      )}
-      {canManage && props.showAdd && (
-        <div className="toolbar">
-          <button type="button" className="btn btn-sm" disabled={uploading} onClick={() => picker.current?.click()}>
-            {uploading ? 'Uploading…' : 'Add receipt'}
-          </button>
-          <span className="note">PDF or photo, up to 10 MB</span>
-          <input ref={picker} type="file" accept={RECEIPT_ACCEPT} aria-label="Add receipt" hidden onChange={(e) => void pick(e)} />
-        </div>
       )}
     </div>
   )

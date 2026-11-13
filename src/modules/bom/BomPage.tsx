@@ -16,6 +16,8 @@ import {
   stationName, stationQueue, stepName, stepsFor, useSteps, type Machine, type Stage, type Station, type Step,
 } from './data'
 import { assignStep, dueText, isOverdue } from './data'
+import { assignWholePart } from './work'
+import { MyWork } from './MyWork'
 import { planImport, type OnshapeImportPlan } from './onshape'
 import { href } from '../../core/router'
 import { useItems, type Item } from '../inventory/data'
@@ -23,6 +25,8 @@ import { arrivalText, isLate, statusOf, useRequestsByBomPart, type PurchaseItem 
 import { camStockFor, markReadyToCam, shapesTable, useOnBoard, useStock, type CamStock } from '../cnc/data'
 // The CNC module's material and thickness picker, so flagging a part looks the same here and on the CNC board.
 import { CamStockPicker } from '../cnc/CamStockPicker'
+import { canAddToCatalog, catalogEntryFor, useCatalog, type CatalogEntry } from './catalog'
+import { CatalogForm, CatalogList, CatalogName } from './Catalog'
 
 // The form open at the top of the page, if any. A null robot, system or
 // part means adding a new one; otherwise it's the one being changed.
@@ -33,6 +37,8 @@ type Editing =
   | { form: 'cnc'; part: Part }
   | { form: 'stages'; part: Part }
   | { form: 'assign'; part: Part; step: Step }
+  // Adding to the catalog from a part, adding by hand (both null), or changing an entry.
+  | { form: 'catalog'; part: Part | null; entry: CatalogEntry | null }
 
 const INTRO = 'The parts in each system of the robot: what we make in the shop, and what we buy (COTS).'
 
@@ -74,6 +80,8 @@ export default function BomPage() {
   const items = useItems()
   // Each COTS part added up across the robot's systems, so a part two systems share isn't counted as enough twice.
   const short = shortages(useRobotParts(robot?.id), items)
+  // The catalog of bought parts, for each COTS line's name and link to buy (#20).
+  const catalog = useCatalog()
 
   async function readOnshape(s: BomSystem) {
     setReading(true)
@@ -147,6 +155,17 @@ export default function BomPage() {
         <button type="button" className="btn btn-sm" onClick={() => setEditing({ form: 'system', system: null })}>Add a system</button>
       </div>
 
+      {/* The signed-in person's stages (#16). Show part picks the part's system, showing every part, so its row is there to scroll to. */}
+      <MyWork
+        onOpen={(item) => {
+          setRobotId(item.system.robot_id)
+          setSystemId(item.system.id)
+          setStation({ kind: 'all' })
+          setFilter('All')
+          if (editing?.form !== 'robot') close()
+        }}
+      />
+
       {/* Each form scrolls into view when it opens (InView), because it's drawn up here, above the parts list. */}
       {editing?.form === 'robot' && (
         <InView key={editing.robot?.id ?? 'new'}>
@@ -202,6 +221,11 @@ export default function BomPage() {
       {editing?.form === 'assign' && (
         <InView key={editing.step.id}>
           <AssignForm part={editing.part} step={editing.step} onDone={close} />
+        </InView>
+      )}
+      {editing?.form === 'catalog' && (
+        <InView key={editing.entry?.id ?? editing.part?.id ?? 'new'}>
+          <CatalogForm part={editing.part} entry={editing.entry} onDone={close} />
         </InView>
       )}
       {importing && importing.system.id === system?.id && (
@@ -282,9 +306,10 @@ export default function BomPage() {
                     // Made parts get a second row with their stages, the table's full width.
                     const hasStages = p.kind === 'made' && !p.removed_in_onshape
                     const under = hasStages ? { borderBottom: 0 } : undefined
+                    const entry = catalogEntryFor(p, catalog)
                     return (
                       <Fragment key={p.id}>
-                        <tr aria-selected={editing?.form === 'part' && editing.part?.id === p.id}>
+                        <tr id={`part-${p.id}`} aria-selected={editing?.form === 'part' && editing.part?.id === p.id}>
                           <td style={under}>
                             <span className="mono" style={{ whiteSpace: 'nowrap' }}>{p.part_number}</span>
                             <br />
@@ -300,12 +325,15 @@ export default function BomPage() {
                             <span className="note">
                               {p.kind === 'made' ? p.material : [p.vendor, p.vendor_part_number].filter(Boolean).join(' · ')}
                             </span>
+                            <CatalogName entry={entry} />
                             {p.kind === 'cots' && !p.removed_in_onshape && <Shelf part={p} items={items} request={requests.get(p.id)} shortage={shortageFor(p, short)} />}
                             <PartActions
                               part={p}
                               request={requests.get(p.id)}
                               onBoard={onBoard.get(p.id) ?? 0}
                               canEdit={leader}
+                              catalogLink={entry?.product_url}
+                              onAddToCatalog={leader && canAddToCatalog(p, catalog) ? () => setEditing({ form: 'catalog', part: p, entry: null }) : undefined}
                               onCam={() => setEditing({ form: 'cnc', part: p })}
                               onEdit={() => setEditing({ form: 'part', part: p })}
                             />
@@ -335,6 +363,11 @@ export default function BomPage() {
         </Panel>
       )}
       {systems.length > 0 && <ToOrder robot={robot} orders={toOrder(short, requests)} />}
+      <CatalogList
+        canEdit={leader}
+        onAdd={() => setEditing({ form: 'catalog', part: null, entry: null })}
+        onEdit={(entry) => setEditing({ form: 'catalog', part: null, entry })}
+      />
     </>
   )
 }
@@ -782,7 +815,8 @@ function Shelf(props: { part: Part; items: Item[]; request: PurchaseItem | undef
  * 1. COTS: its order status from Purchasing and Open in Purchasing, or Purchase.
  *    Custom: how many are on the CNC board, and Ready to CAM.
  *    (Neither for a part removed in Onshape.)
- * 2. COTS: Product page ↗, from the part or else its Purchasing request (#169).
+ * 2. COTS: Product page ↗, from the part, else its catalog entry (#20), else its Purchasing request (#169).
+ *    Then Add to catalog, for student leaders and mentors, if it isn't in the catalog yet.
  * 3. Open CAD ↗, if it has an Onshape link.
  * 4. Edit, for student leaders, mentors and admins.
  * A button that doesn't apply is left out. On a phone the row wraps.
@@ -792,14 +826,18 @@ function PartActions(props: {
   request: PurchaseItem | undefined
   onBoard: number
   canEdit: boolean
+  /** The link to buy it from its catalog entry, if it has one. */
+  catalogLink: string | undefined
+  /** Given when the part can be added to the catalog (student leaders and mentors only). */
+  onAddToCatalog: (() => void) | undefined
   onCam: () => void
   onEdit: () => void
 }) {
   const { part, request } = props
   const status = request && statusOf(request.status)
   const active = !part.removed_in_onshape
-  // Both are only ever https:// links (the database checks), so they're safe to open. Checked again here to be sure.
-  const productPage = part.kind === 'cots' ? [part.product_url, request?.link].find((link) => link?.startsWith('https://')) : undefined
+  // These are only ever https:// links (the database checks), so they're safe to open. Checked again here to be sure.
+  const productPage = part.kind === 'cots' ? [part.product_url, props.catalogLink, request?.link].find((link) => link?.startsWith('https://')) : undefined
   if (!active && !productPage && !part.onshape_url && !props.canEdit) return null
   return (
     <span className="toolbar" style={{ marginTop: 6, gap: 6 }}>
@@ -820,6 +858,7 @@ function PartActions(props: {
         </>
       )}
       {productPage && <a className="btn btn-sm" href={productPage} target="_blank" rel="noopener noreferrer">Product page ↗</a>}
+      {props.onAddToCatalog && <button type="button" className="btn btn-sm" onClick={props.onAddToCatalog}>Add to catalog</button>}
       {/* The database only accepts https:// links here, so it's safe to open. */}
       {part.onshape_url && <a className="btn btn-sm" href={part.onshape_url} target="_blank" rel="noopener noreferrer">Open CAD ↗</a>}
       {props.canEdit && <button type="button" className="btn btn-sm" onClick={props.onEdit}>Edit</button>}
@@ -882,20 +921,35 @@ function AssignForm(props: { part: Part; step: Step; onDone: () => void }) {
   const [assignedTo, setAssignedTo] = useState(step.assigned_to ?? '')
   const [dueDate, setDueDate] = useState(step.due_date ?? '')
   const [saving, setSaving] = useState(false)
+  // Assign every stage of the part at once (assignWholePart() in work.ts). Done stages keep who did them.
+  const partSteps = stepsFor(part, useSteps())
+  const notDone = partSteps.filter((s) => s.status !== 'done').length
+  const [wholePart, setWholePart] = useState(false)
 
   async function save(event: FormEvent) {
     event.preventDefault()
     setSaving(true)
-    const result = await assignStep(step, { assigned_to: assignedTo || null, due_date: dueDate || null })
+    const assignment = { assigned_to: assignedTo || null, due_date: dueDate || null }
+    const result = wholePart ? await assignWholePart(part, partSteps, assignment) : await assignStep(step, assignment)
     setSaving(false)
     if (!result.ok) return toast(result.error)
-    toast(`Saved who has ${part.name}'s ${stepName(step)}.`)
+    toast(wholePart ? `Saved who has ${part.name}'s stages.` : `Saved who has ${part.name}'s ${stepName(step)}.`)
     props.onDone()
   }
 
   return (
-    <Panel title={`${part.name}: ${stepName(step)}`}>
+    <Panel title={wholePart ? `${part.name}: every stage` : `${part.name}: ${stepName(step)}`}>
       <form className="panel-body" onSubmit={save}>
+        {notDone > 1 && (
+          <label className="check" style={{ minHeight: 44 }}>
+            <input type="checkbox" checked={wholePart} onChange={(e) => setWholePart(e.target.checked)} />
+            <span>
+              Assign every stage that isn't done ({notDone})
+              <br />
+              <span className="note">Done stages keep who did them.</span>
+            </span>
+          </label>
+        )}
         <div className="field">
           <label htmlFor="assign-person">Who's doing it</label>
           <select id="assign-person" className="input" value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)}>

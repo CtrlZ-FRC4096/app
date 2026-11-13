@@ -7,8 +7,8 @@
  * adds to its alliance's score. It also predicts who wins each match. It
  * has no schedule, scores or team names: those come from The Blue Alliance.
  *
- * The app can only ask for the two things below, so the team's Match 13 key
- * can't be used for anything else. Docs: https://match13.com/docs/api
+ * The app can only ask for the four things below, so the team's Match 13
+ * key can't be used for anything else. Docs: https://match13.com/docs/api
  */
 
 export const MATCH13_API = 'https://actions.match13.com'
@@ -17,6 +17,10 @@ export const MATCH13_API = 'https://actions.match13.com'
 export type Match13Request =
   | { kind: 'ratings'; event: string }
   | { kind: 'predictions'; event: string }
+  // Match 13's simulation of the event: each team's likely final rank (#152).
+  | { kind: 'sim'; event: string }
+  // One team's numbers at each event it played in a season, for prescouting (#153).
+  | { kind: 'team-events'; team: number; year: number }
 
 // Event keys are the same as The Blue Alliance's: the year and a short code, like 2026ilch.
 const EVENT_KEY = /^\d{4}[a-z0-9]{1,16}$/
@@ -31,8 +35,15 @@ export function match13Path(request: unknown): { path: string } | { error: strin
       return event ? { path: `/v1/events/${event}/teams` } : needEvent
     case 'predictions':
       return event ? { path: `/v1/events/${event}/matches` } : needEvent
+    case 'sim':
+      return event ? { path: `/v1/events/${event}/sim` } : needEvent
+    case 'team-events': {
+      const team = Number.isInteger(r.team) && (r.team as number) >= 1 && (r.team as number) <= 99999 ? (r.team as number) : null
+      const year = Number.isInteger(r.year) && (r.year as number) >= 1992 && (r.year as number) <= 2100 ? (r.year as number) : null
+      return team && year ? { path: `/v1/teams/${team}/years/${year}/events` } : { error: 'Ask with a team number and a year, like 4096 and 2026.' }
+    }
     default:
-      return { error: 'Ask for one of: ratings or predictions.' }
+      return { error: 'Ask for one of: ratings, predictions, sim or team-events.' }
   }
 }
 

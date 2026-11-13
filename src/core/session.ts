@@ -13,6 +13,13 @@
  * last person signed in on this device, with the member list kept on the
  * device (offline.ts). Signing out forgets both.
  *
+ * On a shared computer, "Switch user" in the account menu signs out of the
+ * app so someone else can sign in. Slack signs in whoever is signed in to
+ * Slack in that browser, and has no way to ask "which account?", so the
+ * sign-in page shows how to sign out of Slack first. If Slack signs the same
+ * person straight back in, the app signs them out again and says why
+ * (checkSwitch()).
+ *
  * Hiding a button is not security. The database's permission rules decide
  * what each role can read and change. These checks only keep the screens
  * tidy. That's true offline too: nothing reaches the database until the
@@ -55,6 +62,46 @@ const signInStore = createStore<SignIn>(
 // Where to go back to after signing in.
 const RETURN_TO = 'ctrlz-app:return-to'
 
+// Who tapped Switch user, kept until the next sign-in comes back from Slack.
+const SWITCHED_FROM = 'ctrlz-app:switched-from'
+
+/**
+ * Whether the sign-in page should show the steps for a shared computer
+ * open: after Switch user, or when Slack signed the same person back in.
+ */
+const switchingStore = createStore<boolean>('switching-user', 1, () => false, { keepOnReset: true, persist: false })
+
+/** For the sign-in page: did someone just tap Switch user? */
+export function useSwitching(): boolean {
+  return useStore(switchingStore)
+}
+
+/** Said when Slack signs the same person back in after Switch user. */
+export const SAME_PERSON =
+  'Slack signed in the same person as before, because Slack in this browser is still signed in as them. ' +
+  'Sign out of Slack first (the steps are below), then tap Sign in with Slack again. ' +
+  'If you did mean to sign in as the same person, just tap Sign in with Slack again.'
+
+/**
+ * After Switch user, whether the sign-in that came back from Slack is the
+ * same person who switched away: then Slack didn't let anyone else in.
+ * Gives the message to show, or null if it's fine.
+ */
+export function checkSwitch(switchedFrom: string | null, signedIn: string): string | null {
+  return switchedFrom !== null && switchedFrom === signedIn ? SAME_PERSON : null
+}
+
+/** Who tapped Switch user, and forget it: it's only checked once. */
+function takeSwitchedFrom(): string | null {
+  try {
+    const id = sessionStorage.getItem(SWITCHED_FROM)
+    sessionStorage.removeItem(SWITCHED_FROM)
+    return id
+  } catch {
+    return null
+  }
+}
+
 // Who signed in last on this device, so the app can open with no connection.
 const lastSignIn = createStore<string | null>('last-sign-in', 1, () => null, { keepOnReset: true })
 
@@ -85,7 +132,19 @@ if (supabase) {
     } else {
       signInStore.set({ status: 'signed-out', error: current.status === 'checking' ? signInError : null })
     }
-    if (event === 'SIGNED_IN') returnToPage()
+    if (event === 'SIGNED_IN') {
+      const problem = session ? checkSwitch(takeSwitchedFrom(), session.user.id) : null
+      if (problem) {
+        // Not inside this callback (see above): straight after it.
+        setTimeout(() => void signOut().then(() => {
+          switchingStore.set(true)
+          signInStore.set({ status: 'signed-out', error: problem })
+        }))
+        return
+      }
+      switchingStore.set(false)
+      returnToPage()
+    }
   })
   // Back online: check the sign-in straight away, instead of waiting for
   // Supabase's next try, so anything waiting to send can go.
@@ -179,6 +238,21 @@ export async function signOut() {
   lastSignIn.set(null)
   forgetOfflineCopies()
   signInStore.set({ status: 'signed-out', error: null })
+}
+
+/**
+ * Sign out of the app so someone else can sign in on this computer. The
+ * sign-in page then shows how to sign out of Slack in this browser too.
+ */
+export async function switchUser() {
+  const me = currentUser()
+  try {
+    if (me) sessionStorage.setItem(SWITCHED_FROM, me.id)
+  } catch {
+    // Without storage the same-person check is skipped, which is fine.
+  }
+  await signOut()
+  switchingStore.set(true)
 }
 
 function returnToPage() {

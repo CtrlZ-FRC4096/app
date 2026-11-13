@@ -1124,3 +1124,7 @@ export function bomSummary(systems: BomSystem[], parts: Part[]): Notice {
 export function useBomSummary(): Notice {
   return bomSummary(systemsTable.useRows(), partsTable.useRows())
 }
+
+// The catalog of bought parts (#20) is in catalog.ts. Passing it on from here
+// lets other modules read it from data.ts, and makes the database tests check its table.
+export * from './catalog'

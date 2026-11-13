@@ -10,7 +10,8 @@ The bill of materials for each robot, checked against Inventory, so the team can
 | `data.ts` | The four tables (`bom_robots`, `bom_systems`, `bom_parts`, `bom_steps`), their example rows, adding and changing them, moving stages along, assigning them, and reading a system from Onshape. |
 | `onshape.ts` | Works out what an import from Onshape changes: `planOnshapeImport()`. |
 | `numbering.ts` | Team part numbers: `nextPartNumber()`, and the `bom_part_counters` table that remembers every number used (see [Part numbers](#part-numbers-21)). |
-| `data.test.ts`, `onshape.test.ts`, `numbering.test.ts` | Tests for them. |
+| `catalog.ts`, `Catalog.tsx` | The catalog of bought parts (`bom_catalog`): see [Catalog of bought parts](#catalog-of-bought-parts). |
+| `data.test.ts`, `onshape.test.ts`, `numbering.test.ts`, `catalog.test.ts` | Tests for them. |
 | `BomPage.tsx` | Pick a system, then see its parts in a table with their stages, change them, and import from Onshape. Below, the robot's To order list. |
 
 The tables are made by `supabase/migrations/20261027150000_bom.sql`, and their permission rules are tested in `supabase/tests/bom.test.ts`.
@@ -36,7 +37,8 @@ The rules are in `supabase/migrations/20261110130000_bom_student_leaders.sql` (u
 |:--|:--|:--|
 | **Purchase**, or **Open in Purchasing** once there's a request | COTS parts | Opens a request in Purchasing filled in from the part, or the request it already has. Its status, **Late** and "Arrives Nov 12" sit just before it. |
 | **Ready to CAM** | Custom parts | Puts the part on the CNC board. "2 on the CNC board" sits just before it. |
-| **Product page ↗** | COTS parts with a product page, or whose Purchasing request has a link | Opens the product's page in a new tab. |
+| **Product page ↗** | COTS parts with a product page, a catalog entry, or a Purchasing request with a link | Opens the product's page in a new tab: the part's own, else the catalog's, else the request's. |
+| **Add to catalog** | COTS parts with a vendor part number that aren't in the catalog yet, for student leaders, mentors and admins | Opens a form to add it to the catalog, filled in from the part. |
 | **Open CAD ↗** | Parts with an Onshape link | Opens the part in Onshape in a new tab. |
 | **Edit** | Every part, for student leaders, mentors and admins | Opens the part's form, to change or delete it. Tapping the name does too. |
 
@@ -56,6 +58,25 @@ The product page column is added by `supabase/migrations/20261113120000_bom_part
 
 **Part numbers.** Every part gets a team number like `4096-26-INT-001`: team, year, system code, then a number. Custom parts also have a material, such as "6061 aluminum, 1/4 in plate". COTS (bought) parts have a vendor and the vendor's part number.
 
+## Catalog of bought parts
+
+A list of the parts we buy, with each one's name and a link to buy it (#20). The team fills it in once and reuses it every season, so nobody looks up the same motor twice.
+
+- **A COTS part that's in the catalog** shows "Catalog: …" with the catalog's name under its vendor details, and its **Product page ↗** button opens the catalog's link (unless the part has its own product page).
+- **A COTS part that isn't in the catalog yet** shows **Add to catalog** to student leaders, mentors and admins. The form is filled in from the part: check the name, paste the link to buy it, and save. The vendor is named the way Purchasing names it ("WCP" becomes "West Coast Products").
+- **Catalog of bought parts**, at the bottom of the page, lists every entry with a **Buy ↗** link. Tap **Show** to open it. Student leaders and mentors tap an entry's name to change or delete it, or **Add an entry** by hand.
+
+**How a part finds its entry:** `catalogEntryFor()` in `catalog.ts` looks for the same **vendor part number** (ignoring capitals and spaces, like `shelfItem()`) from the **same vendor**. Vendors are compared the way Purchasing names them (`vendorFor()`), so "REV" and "REV Robotics" are one vendor, and so are "AndyMark" and "Andy Mark". Both have to match, so another vendor's part with the same number never shows the wrong link to buy. A part with no vendor yet matches on the number alone, if only one entry has it. A COTS part with no vendor part number can't be matched: **Edit** it to add one.
+
+Every entry needs a vendor, a vendor part number, a name and a link to buy it (`https://` only), and there's one entry per vendor and vendor part number. **Prices aren't in the catalog**: everyone on the team can read it, so prices go in a mentor-only table later.
+
+| | Students | Student leaders, mentors and admins |
+|:--|:--|:--|
+| See the catalog | Yes | Yes |
+| Add, change and delete entries | | Yes |
+
+The table is made by `supabase/migrations/20261114100000_bom_catalog.sql`, with its rules tested in `supabase/tests/bom-catalog.test.ts`. `data.ts` passes on everything in `catalog.ts` (`export * from './catalog'`), so other modules read the catalog from `data.ts`.
+
 ## Stages
 
 Every custom part goes through stages before it's on the robot (#15): **Design → Pre-process → Process 1 → Process 2 → Post-process**. A part only has the stages it needs.
@@ -73,6 +94,22 @@ The **station filter** shows one station's queue: "Lathe only" lists the parts w
 The table is made by `supabase/migrations/20261102120000_bom_steps.sql`, with its rules tested in `supabase/tests/bom-steps.test.ts`: anyone on the team can read, add and remove stages, and change their status and how many are done. Deleting a part deletes its stages. The assignee and due date columns are added by `supabase/migrations/20261110140000_bom_steps_assign.sql`.
 
 The CNC board tracks routing separately (Ready to CAM → To cut → Cutting → Cut), so for now a part's CNC router stage is moved along by hand here too.
+
+## My work
+
+What's assigned to you, and giving a whole part to someone at once (#16).
+
+- **My work** is a panel at the top of the BOM page with the stages assigned to you, grouped **To do**, **In progress** and **Done**. Done is folded away. In each group, **Late** stages come first, then the soonest due. Each line shows the stage, the part's number, name and system, and when it's due. **Show part** picks the part's system (showing every part) and scrolls to it, where you move the stage along as usual. The panel only shows when you have a stage that isn't done. Stages of parts marked "Removed in Onshape" aren't listed, because the page doesn't show their stages.
+- **Assign every stage at once.** In a stage's **Assign** form, tick **Assign every stage that isn't done** to give all of the part's unfinished stages the same person and due date. Done stages keep who did them. It shows when the part has more than one stage left.
+- **The home page** shows your open stages under "Needs attention", like "3 stages to do (1 late)", in the warning colour when any are late. "To do" there means every stage that isn't done, started or not. Nothing shows when you have none.
+
+| File | What it does |
+|:--|:--|
+| `work.ts` | `myWork()` (your stages, grouped), `workNotices()` (the home page line, set as `useAttention` in `index.ts`), and `assignWholePart()`, which uses `assignStep()` from `data.ts` for each stage. |
+| `work.test.ts` | Tests for it. |
+| `MyWork.tsx` | The My work panel, mounted near the top of `BomPage.tsx`. |
+
+Anyone on the team can assign stages and move any stage along, as with one stage at a time: no database change was needed.
 
 ## On the shelf
 
@@ -145,9 +182,7 @@ Files are named by part number and revision, like `4096-26-INT-014_revB.step`.
 ## Still to do
 
 - View 3D and download buttons for a part's files, and a whole queue's (#23). They need a mentor: a viewer library, and file exports in the `onshape` server function
-- A shared catalog of bought parts with names and links to buy them, filled in once and reused each season (#20)
 - Try **Write part numbers to Onshape** on the team's real CAD, once a mentor has checked the Onshape keys can write (#21). It's only been tested against a made-up Onshape
-- A "My work" list of the stages assigned to you
 - Slack reminders about assigned stages (#22)
 - Move a part's CNC router stage along when the CNC board marks it cut
 - Mentors mark short parts as ordered
