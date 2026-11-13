@@ -48,6 +48,7 @@ import {
   priceFrom,
   priceProblem,
   priceText,
+  prepareReceipt,
   receiptBody,
   receiptAddingShown,
   receiptCountText,
@@ -696,6 +697,56 @@ describe('receipts', () => {
     expect(receiptCountText(0)).toBe('')
     expect(receiptCountText(1)).toBe('1 receipt')
     expect(receiptCountText(2)).toBe('2 receipts')
+  })
+
+  describe('prepareReceipt', () => {
+    it('uses a PDF unchanged, without decoding or compressing it', async () => {
+      const original = new File(['PDF bytes'], 'order.pdf', { type: 'application/pdf' })
+      let called = false
+      const result = await prepareReceipt(original, async () => {
+        called = true
+        throw new Error('A PDF must not go through the raster decoder')
+      })
+      expect(called).toBe(false)
+      expect(result).toEqual({ ok: true, value: { original, compressed: null, previewable: false } })
+    })
+
+    it('refuses active image content before trying to decode it', async () => {
+      let called = false
+      const result = await prepareReceipt(new File(['<svg/>'], 'photo.svg', { type: 'image/svg+xml' }), async () => {
+        called = true
+        return new Blob(['compressed'], { type: 'image/webp' })
+      })
+      expect(called).toBe(false)
+      expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/PDF or a photo/) })
+    })
+
+    it('offers a smaller image with its actual type, and uploads that size and type to the existing path', async () => {
+      const original = new File([new Uint8Array(4000)], 'someone’s card photo.png', { type: 'image/png' })
+      const prepared = await prepareReceipt(original, async () => new Blob([new Uint8Array(400)], { type: 'image/webp' }))
+      if (!prepared.ok || !prepared.value.compressed) throw new Error('Expected a compressed image')
+      expect(prepared.value.original).toBe(original)
+      expect(prepared.value.previewable).toBe(true)
+      expect(prepared.value.compressed).toMatchObject({ type: 'image/webp', size: 400 })
+
+      setDemoRole('mentor')
+      const item = find('Timing belt, 60T')
+      const added = await addReceipt(item, prepared.value.compressed)
+      expect(added.ok && added.value.content_type).toBe('image/webp')
+      expect(added.ok && added.value.size_bytes).toBe(400)
+      expect(added.ok && added.value.path).toMatch(new RegExp(`^${item.id}/[0-9a-f-]{36}\\.webp$`))
+      expect(added.ok && added.value.path).not.toContain('someone')
+    })
+
+    it('keeps the original when compression is larger, fails, produces an invalid type, or is not supported', async () => {
+      const original = new File([new Uint8Array(1000)], 'photo.heic', { type: 'image/heic' })
+      const larger = await prepareReceipt(original, async () => new Blob([new Uint8Array(2000)], { type: 'image/webp' }))
+      expect(larger).toEqual({ ok: true, value: { original, compressed: null, previewable: true } })
+      const invalid = await prepareReceipt(original, async () => new Blob(['wrong type'], { type: 'text/html' }))
+      expect(invalid).toEqual({ ok: true, value: { original, compressed: null, previewable: true } })
+      const failed = await prepareReceipt(original, async () => { throw new Error('HEIC decoding is unavailable') })
+      expect(failed).toEqual({ ok: true, value: { original, compressed: null, previewable: false } })
+    })
   })
 
   describe('addReceipt', () => {

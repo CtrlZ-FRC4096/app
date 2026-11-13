@@ -33,6 +33,7 @@ import { isLive, supabase } from '../../core/supabase'
 import { money, plural } from '../../core/format'
 import type { Notice, Tone } from '../../core/registry'
 import type { BomSystem, Part } from '../bom/data'
+import { compressReceiptImage, type ImageEncoder } from './receipt-image'
 
 // ---------------------------------------------------------------------------
 // The lists. Change these to change the choices on the page.
@@ -484,6 +485,32 @@ export function receiptText(receipt: Receipt): string {
 /** "2 receipts", for an item in the list. Empty when it has none. */
 export function receiptCountText(count: number): string {
   return count > 0 ? plural(count, 'receipt', 'receipts') : ''
+}
+
+/** The original file, plus a smaller alternative if the browser managed to make one. */
+export interface PreparedReceipt {
+  original: File
+  compressed: File | null
+  /** A decoded image is safe to preview. A PDF or an image the browser can't decode needs no image preview. */
+  previewable: boolean
+}
+
+/**
+ * Prepare a photo locally, without uploading anything. PDFs are used unchanged.
+ * If decoding fails, the caller can still use the original within the same
+ * size and type rules. addReceipt() checks again before actually uploading.
+ */
+export async function prepareReceipt(file: File, encoder?: ImageEncoder): Promise<Result<PreparedReceipt>> {
+  const problem = checkReceipt(file)
+  if (problem) return fail(problem)
+  if (receiptType(file) === 'application/pdf') return ok({ original: file, compressed: null, previewable: false })
+  try {
+    const compressedFile = await compressReceiptImage(file, encoder)
+    const compressed = compressedFile && compressedFile.size < file.size && !checkReceipt(compressedFile) ? compressedFile : null
+    return ok({ original: file, compressed, previewable: true })
+  } catch {
+    return ok({ original: file, compressed: null, previewable: false })
+  }
 }
 
 /**
