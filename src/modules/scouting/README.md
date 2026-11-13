@@ -62,15 +62,18 @@ The functions are in the "Shared picklist" part of `data.ts`:
 | `startPicklist(teams)` | Starts an empty list with these teams, best first. Refuses if the list already has teams |
 | `addMissingTeams(teams)` | Adds the teams that aren't on the list to the bottom |
 | `moveTeam(id, -1 or 1)` | Moves a team one place up or down. Nothing happens at the top or bottom |
+| `moveTeamTo(id, place)` | Moves a team to any place (1 is the top), for dragging and Move to…. Past either end means the top or bottom |
 | `setPickStatus(id, status)` | Marks a team Open, Picked (on another alliance) or Do not pick. It keeps its place |
+| `removeTeam(id)` | Takes a team off the list for everyone. The others keep their order, and only its row changes |
 
-Each team has a `position`, smallest at the top, starting 1000 apart. A move changes only the moved team's position, to halfway between its new neighbours (`positionBetween()`), so two people moving different teams at once don't undo each other. If the halves get too close to tell apart, `moveTeam()` numbers the list 1000, 2000, … again. Only `position` and `status` can be changed, so not even a mentor can turn a row into a different team or event.
+Each team has a `position`, smallest at the top, starting 1000 apart. A move changes only the moved team's position, to halfway between its new neighbours (`positionBetween()`), so two people moving different teams at once don't undo each other. If the halves get too close to tell apart, `moveTeamTo()` numbers the list 1000, 2000, … again. Only `position` and `status` can be changed, so not even a mentor can turn a row into a different team or event.
 
 The page is `SharedPicklist.tsx`. Everyone signed in sees the list: rank, team (tap it for the team page) and status. Picked and Do not pick teams stay in their place, greyed out, and **Hide picked** hides the Picked ones. Student leaders, mentors and admins also see:
 
 - **Start from the ranked list** when the list is empty: it starts with the teams on the Picklist page, in the order the weights on their phone give (`useRankedPicklist()`).
 - **Add teams not on the list** when the ranked list has teams the picklist doesn't.
-- Big up and down buttons on each team, which wait while a move saves, and an Open / Picked / Do not pick choice. Screen readers hear "Moved team 9991 to place 2."
+- A drag handle (⠿) at the right of each team, and an Open / Picked / Do not pick choice beside it. See "Dragging and Move to…" below.
+- A ⋯ menu on each team with **Move to…** (type a place, then **Move**), **Move to top**, **Move to bottom** and **Remove from the picklist**. Remove asks first, in the menu, and suggests Do not pick for a team that should keep its place. A removed team counts as "not on the list", so **Add teams not on the list** puts it back at the bottom.
 
 Hiding the buttons is only tidiness: the table's rules are what stop anyone else changing the list.
 
@@ -308,8 +311,11 @@ Everyone signed in can make their own picklist for the event
 (`MyPicklist.tsx`, at `#/scouting/my-picklist`): **Start my list** fills it
 from the Picklist page's order with this phone's weights, **Add teams not
 on my list** adds teams that joined later, the up and down buttons move a
-team one place and **Move to…** moves it to any place. Each team can have a
-note of up to 500 characters.
+team by its handle (⠿), and the ⋯ menu has **Move to…**, **Move to top**,
+**Move to bottom**, **Add a note** and **Remove from my list** (it asks
+first; the note goes too, and **Add teams not on my list** would add the
+team back). Each team can have a note of up to 500 characters. See
+"Dragging and Move to…" below.
 
 The team picklist (`TeamPicklist.tsx`, at `#/scouting/team-picklist`)
 averages everyone's lists: each team's average place, its best and worst,
@@ -334,7 +340,9 @@ and say so.
 | `startMyPicklist(teams)` | Starts an empty list in this order. Refuses if it's started |
 | `addToMyPicklist(teams)` | Adds the missing teams to the bottom |
 | `moveOnMyPicklist(team, place)` | Moves a team to a place; the teams between shift one place |
+| `checkPlace(text, count)` | Reads a place typed into Move to…: a whole number from 1 to `count`, or an error saying which places there are |
 | `setPicklistNote(team, note)` | Adds, changes or clears (with '') a note |
+| `removeFromMyPicklist(team)` | Takes a team and its note off your list. The teams below move up a place, so a team added later goes last |
 | `teamPicklist(rows)`, `useTeamPicklist()` | Everyone's lists averaged, as above |
 
 Questions for the strategy team (from #151): should every list count the
@@ -382,3 +390,29 @@ makes it in the team database, with its permission rules and tests; see
 one step.
 
 **Works with:** Robot status (can show entries waiting to sync).
+
+## Dragging and Move to…
+
+My picklist and the Final picklist use the same pieces:
+
+- `useDragOrder.ts` does the dragging. It's based on the pit checklist's
+  `usePitDrag.ts` in the status module (a module can't import another
+  module's files, so it's a copy; a mentor could move one into `src/core/`).
+  Drag a team by the ⠿ handle on the right with a finger or mouse: the
+  other teams slide out of the way, and the page scrolls near the top or
+  bottom edge. Let go outside the list to cancel. With a keyboard, focus the
+  handle and press Up or Down to move one place, or Home or End for the top
+  or bottom. Escape cancels a drag.
+- The new order shows as soon as you let go, and stays on screen while it
+  saves. If saving fails, the list goes back and a message says why. Only
+  one move saves at a time.
+- When the order changes, for any reason (another phone, too), teams slide
+  to their new places. A team you moved lights up for a moment and scrolls
+  into view if it went off screen. With "reduce motion" turned on in the
+  phone's settings, nothing slides.
+- `RowMenu.tsx` is the ⋯ menu (it closes when you tap outside it or press
+  Escape), its **Move to…** dropdown, which checks the place with
+  `checkPlace()`, and `ConfirmAction`, the red Remove at the bottom that
+  asks before it does anything. A team being removed fades while it saves,
+  moves wait until it's done, and then the teams below slide up. The
+  styles are `lists.css`.

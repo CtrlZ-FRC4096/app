@@ -3,10 +3,12 @@ import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel } from '../../core/ui'
 import {
-  MAX_PICKLIST_NOTE, addToMyPicklist, allWeightsZero, moveOnMyPicklist, setPicklistNote, startMyPicklist, useMyPicklist, useRankedPicklist,
+  MAX_PICKLIST_NOTE, addToMyPicklist, allWeightsZero, moveOnMyPicklist, removeFromMyPicklist, setPicklistNote, startMyPicklist, useMyPicklist, useRankedPicklist,
   type MyPicklistRow,
 } from './data'
+import { ConfirmAction, MenuAction, MoveTo, RowMenu } from './RowMenu'
 import { TeamLink } from './TeamPage'
+import { useDragOrder } from './useDragOrder'
 
 /** Width and height of the buttons, in pixels. Big enough to tap. */
 const TAP_SIZE = 44
@@ -15,26 +17,37 @@ const TAP_SIZE = 44
 // team database (scouting_my_picklist), so it's on all your devices and the
 // team picklist can average it. It still shows with no Wi-Fi, but changes
 // need a connection. Changes go through data.ts: startMyPicklist(),
-// addToMyPicklist(), moveOnMyPicklist() and setPicklistNote().
+// addToMyPicklist(), moveOnMyPicklist(), setPicklistNote() and
+// removeFromMyPicklist(). Dragging is useDragOrder.ts, and the ⋯ menu with
+// Move to… and Remove is RowMenu.tsx.
 export default function MyPicklist() {
   useSession()
   const list = useMyPicklist()
-  // True while a change is saving, so a second tap can't move from the old order.
-  const [busy, setBusy] = useState(false)
   const [announcement, setAnnouncement] = useState('')
+  // The team being taken off the list, while that saves.
+  const [removing, setRemoving] = useState<string | null>(null)
+  const { items: ordered, busy, list: attachList, rowProps, handleProps, moveTo } = useDragOrder({
+    items: list,
+    idOf: (row) => row.id,
+    save: (id, to) => moveOnMyPicklist(list.find((row) => row.id === id)?.team_number ?? 0, to + 1),
+    onDone: (id, result, place) => {
+      if (!result.ok) toast(result.error ?? 'Something went wrong. Try again.')
+      else setAnnouncement(`Moved team ${list.find((row) => row.id === id)?.team_number} to place ${place}.`)
+    },
+    removing,
+  })
 
-  async function move(row: MyPicklistRow, rank: number) {
-    setBusy(true)
-    const result = await moveOnMyPicklist(row.team_number, rank)
-    setBusy(false)
-    if (!result.ok) toast(result.error)
-    else setAnnouncement(`Moved team ${row.team_number} to place ${Math.min(list.length, Math.max(1, rank))}.`)
+  async function remove(row: MyPicklistRow) {
+    setRemoving(row.id)
+    const result = await removeFromMyPicklist(row.team_number)
+    setRemoving(null)
+    toast(result.ok ? `Took team ${row.team_number} off your list.` : result.error)
   }
 
   return (
     <div className="stack">
       <PageHead title="My picklist">
-        Your own order for picking teams, with a note on any team. Everyone can see it, and the team picklist averages everyone's. It's saved to the team, so changing it needs a connection.
+        Your own order for picking teams, with a note on any team. Drag a team by the handle on the right, or use its ⋯ menu to move it to a place, add a note or take it off your list. Everyone can see your list, and the team picklist averages everyone's. It's saved to the team, so changing it needs a connection.
       </PageHead>
       <StartOrAdd list={list} />
       <Panel title="My list" aside={<span className="note">{list.length} {list.length === 1 ? 'team' : 'teams'}</span>}>
@@ -42,8 +55,13 @@ export default function MyPicklist() {
         {list.length === 0 ? (
           <p className="panel-body muted" style={{ margin: 0 }}>No teams yet. Start it from the ranked list above.</p>
         ) : (
-          <ol style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {list.map((row, i) => <Line key={row.id} row={row} place={i + 1} last={list.length} busy={busy} move={move} />)}
+          <ol ref={attachList} className="drag-list">
+            {ordered.map((row, i) => (
+              <li key={row.id} {...rowProps(row.id)}>
+                <Line row={row} place={i + 1} last={list.length} busy={busy} moveTo={(place) => moveTo(row.id, place - 1)} remove={() => void remove(row)} />
+                <button {...handleProps(row.id, `Move team ${row.team_number}. Drag, or use the arrow keys.`)}><span aria-hidden="true">⠿</span></button>
+              </li>
+            ))}
           </ol>
         )}
       </Panel>
@@ -51,11 +69,12 @@ export default function MyPicklist() {
   )
 }
 
-function Line(props: { row: MyPicklistRow; place: number; last: number; busy: boolean; move: (row: MyPicklistRow, rank: number) => Promise<void> }) {
+// One team: its place, the team and its note, then the ⋯ menu.
+function Line(props: { row: MyPicklistRow; place: number; last: number; busy: boolean; moveTo: (place: number) => void; remove: () => void }) {
   const { row, place } = props
   const [editing, setEditing] = useState(false)
   const [note, setNote] = useState(row.note ?? '')
-  const [moveTo, setMoveTo] = useState('')
+  const name = `Team ${row.team_number}`
 
   async function saveNote() {
     const result = await setPicklistNote(row.team_number, note)
@@ -64,43 +83,42 @@ function Line(props: { row: MyPicklistRow; place: number; last: number; busy: bo
   }
 
   return (
-    <li style={{ display: 'grid', gap: 8, padding: '10px 16px', borderBottom: '1px solid var(--line)' }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px 12px' }}>
-        <strong className="tnum" style={{ fontSize: 18, minWidth: '2ch' }}>{`${place}.`}</strong>
-        <strong style={{ fontSize: 18 }}><TeamLink team={row.team_number} /></strong>
-        <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
-          <button type="button" className="btn" style={{ minWidth: TAP_SIZE, minHeight: TAP_SIZE, fontSize: 20 }}
-            aria-label={`Move team ${row.team_number} up`} disabled={props.busy || place === 1} onClick={() => void props.move(row, place - 1)}>
-            <span aria-hidden="true">↑</span>
-          </button>
-          <button type="button" className="btn" style={{ minWidth: TAP_SIZE, minHeight: TAP_SIZE, fontSize: 20 }}
-            aria-label={`Move team ${row.team_number} down`} disabled={props.busy || place === props.last} onClick={() => void props.move(row, place + 1)}>
-            <span aria-hidden="true">↓</span>
-          </button>
-          {/* Move to any place, for long moves. */}
-          <form style={{ display: 'flex', gap: 6 }} onSubmit={(e) => { e.preventDefault(); if (moveTo) void props.move(row, Number(moveTo)).then(() => setMoveTo('')) }}>
-            <input className="input" style={{ width: '5ch', minHeight: TAP_SIZE, fontSize: 16 }} inputMode="numeric" aria-label={`Move team ${row.team_number} to place`} placeholder="#"
-              value={moveTo} onChange={(e) => setMoveTo(e.target.value.replace(/\D/g, ''))} />
-            <button type="submit" className="btn" style={{ minHeight: TAP_SIZE }} disabled={props.busy || !moveTo}>Move to…</button>
+    <>
+      <div className="drag-row-body">
+        <div className="drag-row-top">
+          <strong className="tnum" style={{ fontSize: 18, minWidth: '2ch' }}>{`${place}.`}</strong>
+          <strong style={{ fontSize: 18 }}><TeamLink team={row.team_number} /></strong>
+        </div>
+        {editing ? (
+          <form style={{ display: 'grid', gap: 6 }} onSubmit={(e) => { e.preventDefault(); void saveNote() }}>
+            <textarea className="input" style={{ fontSize: 16 }} rows={2} maxLength={MAX_PICKLIST_NOTE} aria-label={`Note on team ${row.team_number}`} autoFocus
+              value={note} onChange={(e) => setNote(e.target.value)} placeholder="Like: great defender, slow climb" />
+            <div className="toolbar">
+              <button type="submit" className="btn btn-primary" style={{ minHeight: TAP_SIZE }}>Save note</button>
+              <button type="button" className="btn" style={{ minHeight: TAP_SIZE }} onClick={() => { setNote(row.note ?? ''); setEditing(false) }}>Cancel</button>
+              <span className="note">{`${note.trim().length} of ${MAX_PICKLIST_NOTE}`}</span>
+            </div>
           </form>
-        </span>
+        ) : (
+          <button type="button" className="link-btn" style={{ justifySelf: 'start', minHeight: TAP_SIZE, textAlign: 'left', overflowWrap: 'anywhere' }} onClick={() => setEditing(true)}>
+            {row.note ?? 'Add a note'}
+          </button>
+        )}
       </div>
-      {editing ? (
-        <form style={{ display: 'grid', gap: 6 }} onSubmit={(e) => { e.preventDefault(); void saveNote() }}>
-          <textarea className="input" style={{ fontSize: 16 }} rows={2} maxLength={MAX_PICKLIST_NOTE} aria-label={`Note on team ${row.team_number}`}
-            value={note} onChange={(e) => setNote(e.target.value)} placeholder="Like: great defender, slow climb" />
-          <div className="toolbar">
-            <button type="submit" className="btn btn-primary" style={{ minHeight: TAP_SIZE }}>Save note</button>
-            <button type="button" className="btn" style={{ minHeight: TAP_SIZE }} onClick={() => { setNote(row.note ?? ''); setEditing(false) }}>Cancel</button>
-            <span className="note">{`${note.trim().length} of ${MAX_PICKLIST_NOTE}`}</span>
-          </div>
-        </form>
-      ) : (
-        <button type="button" className="link-btn" style={{ justifySelf: 'start', minHeight: TAP_SIZE, textAlign: 'left', overflowWrap: 'anywhere' }} onClick={() => setEditing(true)}>
-          {row.note ?? 'Add a note'}
-        </button>
-      )}
-    </li>
+      <RowMenu label={`More options for team ${row.team_number}`}>
+        {(close) => (
+          <>
+            <MoveTo name={name} place={place} count={props.last} disabled={props.busy} onMove={(to) => { close(); props.moveTo(to) }} />
+            <MenuAction disabled={props.busy || place === 1} onClick={() => { close(); props.moveTo(1) }}>Move to top</MenuAction>
+            <MenuAction disabled={props.busy || place === props.last} onClick={() => { close(); props.moveTo(props.last) }}>Move to bottom</MenuAction>
+            <MenuAction onClick={() => { close(); setEditing(true) }}>{row.note ? 'Change note' : 'Add a note'}</MenuAction>
+            <ConfirmAction label="Remove from my list" confirm="Remove" disabled={props.busy}
+              question={row.note ? `Take team ${row.team_number} off your list? Its note goes too.` : `Take team ${row.team_number} off your list?`}
+              onConfirm={() => { close(); props.remove() }} />
+          </>
+        )}
+      </RowMenu>
+    </>
   )
 }
 

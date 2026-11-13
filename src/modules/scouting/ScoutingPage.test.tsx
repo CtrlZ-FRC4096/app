@@ -176,27 +176,19 @@ describe('the final picklist', () => {
     // Off the strategy team, team numbers aren't links (#167).
     expect(html).toContain('Team <!-- -->9991')
     expect(html).not.toContain('Move team')
+    expect(html).not.toContain('More options')
     expect(html).not.toContain('Start from the ranked list')
     expect(html).toContain('Only student leaders, mentors and admins can change it.')
   })
 
-  it('gives a mentor up and down buttons, and a status for each team', () => {
-    setDemoRole('mentor')
-    const html = renderToString(<SharedPicklist />)
-    expect(html).toContain('aria-label="Move team 9992 up"')
-    expect(html).toContain('aria-label="Move team 9992 down"')
-    expect(html).toContain('aria-label="Team 9992&#x27;s status"')
-    // The top team can't go up, and the bottom one can't go down.
-    expect(html).toMatch(/aria-label="Move team 9991 up" disabled=""/)
-    expect(html).toMatch(/aria-label="Move team 9994 down" disabled=""/)
-  })
-
-  it('gives a student leader up and down buttons and a status for each team', () => {
-    setDemoRole('leader')
-    const html = renderToString(<SharedPicklist />)
-    expect(html).toContain('aria-label="Move team 9992 up"')
-    expect(html).toContain('aria-label="Move team 9992 down"')
-    expect(html).toContain('aria-label="Team 9992&#x27;s status"')
+  it('gives student leaders, mentors and admins a drag handle, a ⋯ menu and a status for each team', () => {
+    for (const role of ['leader', 'mentor', 'admin'] as const) {
+      setDemoRole(role)
+      const html = renderToString(<SharedPicklist />)
+      expect(html, role).toContain('aria-label="Move team 9992. Drag, or use the arrow keys."')
+      expect(html, role).toContain('aria-label="More options for team 9992"')
+      expect(html, role).toContain('aria-label="Team 9992&#x27;s status"')
+    }
   })
 
   it('keeps Picked and Do not pick teams in their place, with their status', () => {

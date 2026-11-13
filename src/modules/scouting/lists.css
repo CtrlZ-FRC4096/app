@@ -1,0 +1,55 @@
+/* Lists you can drag to reorder: My picklist and the Final picklist.
+   The dragging is useDragOrder.ts; the three-dot menu is RowMenu.tsx. */
+.drag-list { list-style: none; margin: 0; padding: 0; position: relative; }
+.drag-list > li { position: relative; display: flex; align-items: stretch; gap: 4px; padding-left: 16px; border-bottom: 1px solid var(--line); background: var(--surface); transition: transform 180ms cubic-bezier(.2, .8, .2, 1), box-shadow 180ms ease; }
+.drag-list > li:has(.row-menu[open]) { z-index: 7; }
+.drag-list .drag-lifted { background: var(--blue-soft); box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 20%, transparent); border-radius: var(--radius); will-change: transform; }
+.drag-list .drag-moved { animation: drag-moved 1.2s ease-out; }
+@keyframes drag-moved { from { background: var(--blue-soft); } to { background: var(--surface); } }
+.drag-row-body { flex: 1; min-width: 0; display: grid; gap: 8px; padding: 10px 12px 10px 0; align-content: center; }
+.drag-row-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+/* The right end of a row's top line, like the Final picklist's Open / Picked / Do not pick.
+   On a narrow phone it goes under the team, still on the right. */
+.drag-row-end { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
+.drag-row-end .pick { justify-content: flex-end; }
+/* A little narrower than usual, so Open, Picked and Do not pick fit on one line on most phones. */
+.drag-row-end .pick button { padding-left: 9px; padding-right: 9px; }
+/* A row being removed fades while it saves. An animation, because rows turn transitions off. */
+.drag-list .drag-leaving { animation: drag-leaving 200ms ease-out forwards; pointer-events: none; }
+@keyframes drag-leaving { to { opacity: 0.4; } }
+
+/* The handle at the right edge. touch-action: none lets a finger drag it without scrolling the page. */
+.drag-handle { flex: none; width: 44px; min-height: 56px; border: 0; border-left: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 24px; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.drag-handle:active { cursor: grabbing; background: var(--blue-soft); }
+.drag-handle[aria-disabled='true'] { cursor: progress; opacity: 0.6; }
+
+/* The three-dot menu. */
+.row-menu { position: relative; flex: none; align-self: flex-start; margin-top: 6px; }
+.row-menu > summary { display: grid; place-items: center; width: 44px; height: 44px; font-size: 26px; border-radius: var(--radius); cursor: pointer; list-style: none; }
+.row-menu > summary::-webkit-details-marker { display: none; }
+.row-menu > summary:hover, .row-menu[open] > summary { background: var(--surface-2); }
+.row-menu-panel { position: absolute; right: 0; top: calc(100% + 4px); z-index: 8; display: grid; gap: 2px; width: min(280px, calc(100vw - 48px)); padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); transform-origin: top right; animation: row-menu-in 140ms ease-out; }
+@keyframes row-menu-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } }
+.row-menu-action, .row-submenu > summary { display: block; width: 100%; min-height: 44px; padding: 12px; border: 0; border-radius: var(--radius); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.row-menu-action:hover:not(:disabled), .row-submenu > summary:hover { background: var(--surface-2); }
+.row-menu-action:disabled { color: var(--muted); cursor: default; }
+.row-submenu[open] > summary { font-weight: 600; }
+.move-to { display: grid; gap: 8px; padding: 4px 12px 12px; }
+.move-to-row { display: flex; gap: 8px; }
+.move-to .input { width: 8ch; min-width: 0; min-height: 44px; font-size: 16px; }
+.move-to .btn { min-height: 44px; }
+
+/* Remove, at the bottom of the menu (ConfirmAction), and the question it asks first. */
+.row-menu-end { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 4px; }
+.row-menu-danger:not(:disabled) { color: var(--crit); }
+.row-menu-confirm { display: grid; gap: 8px; padding: 8px 12px 12px; }
+.row-menu-confirm p { margin: 0; overflow-wrap: anywhere; }
+.row-menu-confirm .btn { min-height: 44px; }
+.row-menu-confirm .btn-remove, .row-menu-confirm .btn-remove:hover { background: var(--crit); border-color: var(--crit); color: var(--surface); }
+.row-menu-confirm .btn-remove:hover { filter: brightness(1.1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .drag-list > li { transition: none; }
+  .drag-list .drag-moved, .row-menu-panel { animation: none; }
+  .drag-list .drag-leaving { animation: none; opacity: 0.4; }
+}
