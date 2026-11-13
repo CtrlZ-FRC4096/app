@@ -15,6 +15,8 @@ import {
   stationName, stationQueue, stepName, stepsFor, useSteps, type Machine, type Stage, type Station, type Step,
 } from './data'
 import { assignStep, dueText, isOverdue } from './data'
+import { assignWholePart } from './work'
+import { MyWork } from './MyWork'
 import { planImport, type OnshapeImportPlan } from './onshape'
 import { href } from '../../core/router'
 import { useItems, type Item } from '../inventory/data'
@@ -122,6 +124,17 @@ export default function BomPage() {
         )}
         <button type="button" className="btn btn-sm" onClick={() => setEditing({ form: 'system', system: null })}>Add a system</button>
       </div>
+
+      {/* The signed-in person's stages (#16). Show part picks the part's system, showing every part, so its row is there to scroll to. */}
+      <MyWork
+        onOpen={(item) => {
+          setRobotId(item.system.robot_id)
+          setSystemId(item.system.id)
+          setStation({ kind: 'all' })
+          setFilter('All')
+          if (editing?.form !== 'robot') close()
+        }}
+      />
 
       {/* Each form scrolls into view when it opens (InView), because it's drawn up here, above the parts list. */}
       {editing?.form === 'robot' && (
@@ -252,7 +265,7 @@ export default function BomPage() {
                     const under = hasStages ? { borderBottom: 0 } : undefined
                     return (
                       <Fragment key={p.id}>
-                        <tr aria-selected={editing?.form === 'part' && editing.part?.id === p.id}>
+                        <tr id={`part-${p.id}`} aria-selected={editing?.form === 'part' && editing.part?.id === p.id}>
                           <td style={under}>
                             <span className="mono" style={{ whiteSpace: 'nowrap' }}>{p.part_number}</span>
                             <br />
@@ -847,20 +860,35 @@ function AssignForm(props: { part: Part; step: Step; onDone: () => void }) {
   const [assignedTo, setAssignedTo] = useState(step.assigned_to ?? '')
   const [dueDate, setDueDate] = useState(step.due_date ?? '')
   const [saving, setSaving] = useState(false)
+  // Assign every stage of the part at once (assignWholePart() in work.ts). Done stages keep who did them.
+  const partSteps = stepsFor(part, useSteps())
+  const notDone = partSteps.filter((s) => s.status !== 'done').length
+  const [wholePart, setWholePart] = useState(false)
 
   async function save(event: FormEvent) {
     event.preventDefault()
     setSaving(true)
-    const result = await assignStep(step, { assigned_to: assignedTo || null, due_date: dueDate || null })
+    const assignment = { assigned_to: assignedTo || null, due_date: dueDate || null }
+    const result = wholePart ? await assignWholePart(part, partSteps, assignment) : await assignStep(step, assignment)
     setSaving(false)
     if (!result.ok) return toast(result.error)
-    toast(`Saved who has ${part.name}'s ${stepName(step)}.`)
+    toast(wholePart ? `Saved who has ${part.name}'s stages.` : `Saved who has ${part.name}'s ${stepName(step)}.`)
     props.onDone()
   }
 
   return (
-    <Panel title={`${part.name}: ${stepName(step)}`}>
+    <Panel title={wholePart ? `${part.name}: every stage` : `${part.name}: ${stepName(step)}`}>
       <form className="panel-body" onSubmit={save}>
+        {notDone > 1 && (
+          <label className="check" style={{ minHeight: 44 }}>
+            <input type="checkbox" checked={wholePart} onChange={(e) => setWholePart(e.target.checked)} />
+            <span>
+              Assign every stage that isn't done ({notDone})
+              <br />
+              <span className="note">Done stages keep who did them.</span>
+            </span>
+          </label>
+        )}
         <div className="field">
           <label htmlFor="assign-person">Who's doing it</label>
           <select id="assign-person" className="input" value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)}>
