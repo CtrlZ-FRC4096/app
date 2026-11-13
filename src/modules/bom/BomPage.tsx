@@ -359,7 +359,11 @@ function ImportPreview(props: { system: BomSystem; plan: OnshapeImportPlan; onDo
   const changed = plan.change.filter((c) => c.what.length > 0)
   const nothing = plan.add.length === 0 && plan.change.length === 0 && plan.removed.length === 0
   const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => ref.current?.scrollIntoView({ block: 'nearest' }), [])
+  // Braces, so the effect returns nothing. Newer Chrome returns a Promise from
+  // scrollIntoView(), and React would try to call it as a cleanup (#173).
+  useEffect(() => {
+    ref.current?.scrollIntoView({ block: 'nearest' })
+  }, [])
 
   async function apply() {
     setSaving(true)
