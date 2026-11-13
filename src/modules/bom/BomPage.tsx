@@ -26,6 +26,8 @@ import { arrivalText, isLate, statusOf, useRequestsByBomPart, type PurchaseItem 
 import { camStockFor, markReadyToCam, shapesTable, useOnBoard, useStock, type CamStock } from '../cnc/data'
 // The CNC module's material and thickness picker, so flagging a part looks the same here and on the CNC board.
 import { CamStockPicker } from '../cnc/CamStockPicker'
+// Slack reminders (#22): your daily reminder switch, and a mentor's Remind now on a stage.
+import { DailyReminderSwitch, RemindNow } from './ReminderControls'
 import { PartDownloads, QueueDownloads } from './Downloads'
 import { canAddToCatalog, catalogEntryFor, useCatalog, type CatalogEntry } from './catalog'
 import { CatalogForm, CatalogList, CatalogName } from './Catalog'
@@ -381,6 +383,7 @@ export default function BomPage() {
         onAdd={() => setEditing({ form: 'catalog', part: null, entry: null })}
         onEdit={(entry) => setEditing({ form: 'catalog', part: null, entry })}
       />
+      <DailyReminderSwitch />
     </>
   )
 }
@@ -905,6 +908,7 @@ function StageList(props: { part: Part; steps: Step[]; canChange: boolean; onCha
               {isOverdue(s) && <> <Pill tone="warn">Late</Pill></>}
               {' · '}
               <button type="button" className="link-btn" onClick={() => props.onAssign(s)}>{s.assigned_to ? 'Change' : 'Assign'}</button>
+              <RemindNow step={s} name={nameOf(s.assigned_to)} />
             </span>
           </span>
           <span style={{ display: 'flex', gap: 6 }}>

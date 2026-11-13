@@ -213,11 +213,26 @@ Files are named by part number and revision, like `4096-26-INT-014_revB.step`.
 
 **View 3D** isn't built yet: it needs a 3D viewer library, which is an npm package, so a mentor decides (see the pull request for #24).
 
+## Slack reminders
+
+Messages from the team's Slack bot about the stages assigned to people (#22). They use the team's scheduled reminders (`src/core/reminders.ts`), switched on in `src/modules/reminders.ts`, and are sent by the "Send Slack reminders" workflow at about 3 PM Chicago time. No Slack token is in the app: the workflow and the `slack` server function hold it.
+
+| File | What it does |
+|:--|:--|
+| `reminders.ts` | The two scheduled reminders, the text of every message, and **Remind now**. The choices the team should confirm are constants at the top. |
+| `reminders.test.ts` | Tests for them. |
+| `ReminderControls.tsx` | The **Daily Slack reminder about my stages** switch at the bottom of the page, and **Remind now** on a stage. |
+
+- **Daily, Monday to Friday** (`DAILY_DAYS`): each person with stages assigned to them that aren't done gets one direct message listing them (part number, name and stage), late ones first, with a link to the BOM. Only custom parts' stages, not parts removed in Onshape. At most 15 are listed, then "…and 4 more".
+- **Weekly, on Mondays** (`WEEKLY_DAYS`), for mentors and admins: what's late (and who has it), and what isn't given to anyone yet. It goes to each of them directly. If the team makes a mentors' channel, put its ID in `MENTOR_CHANNEL` and invite the app to it: then it goes there instead.
+- **Remind now** (mentors and admins): after a stage's assignee, sends them a reminder about that one stage straight away, saying which mentor asked. It goes through the `slack` server function, which checks it's a mentor too.
+- **Turning it off.** Anyone can turn their own daily reminder off and on with the switch at the bottom of the BOM page. Remind now still reaches them: a mentor asked. The setting is a row in `bom_reminder_opt_outs` (a row means "off"), made by `supabase/migrations/20261114120000_bom_reminder_opt_outs.sql`: each person sees, adds and removes only their own. Its rules are tested in `supabase/tests/bom-reminder-opt-outs.test.ts`. The scheduled reminders read every row because they read the database as its owner.
+
 ## Still to do
 
 - View 3D, and DXF downloads for the laser and router (#24). 3D needs a mentor to pick a viewer library
 - Try **Write part numbers to Onshape** on the team's real CAD, once a mentor has checked the Onshape keys can write (#21). It's only been tested against a made-up Onshape
-- Slack reminders about assigned stages (#22)
+- Slack reminders (#22): the team to confirm the days and who gets the weekly summary (see [Slack reminders](#slack-reminders))
 - Move a part's CNC router stage along when the CNC board marks it cut
 - Mentors mark short parts as ordered
 - Costs, visible only to mentors and admins
