@@ -17,6 +17,7 @@ export const scouting: ModuleDefinition = {
     { name: 'Picklist', path: 'picklist' },
     { name: 'Final picklist', path: 'shared-picklist' },
     { name: 'Simulator', path: 'simulate' },
+    { name: 'Stats', path: 'stats' },
   ],
   useSummary: useEntrySummary,
 }

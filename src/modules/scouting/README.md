@@ -34,7 +34,8 @@
 - The picklist (#42, `Picklist.tsx`, at `#/scouting/picklist`): every team at the event ranked best first, from our scouting and Match 13. See "Picklist score" below.
 - The final picklist (#43, `SharedPicklist.tsx`, at `#/scouting/shared-picklist`): the order the strategy team wants to pick teams in, shared by every phone. See "Shared picklist" below.
 - The match simulator (#166, `Simulator.tsx`, at `#/scouting/simulate`): see "Average points and the simulator" below.
-- The Competition menu lists Match, Pit, Schedule, Rankings, Teams, Picklist, Final picklist and Simulator under Scouting (`pages` in `index.ts`).
+- The stats table (#152, `StatsTable.tsx`, at `#/scouting/stats`): every team's Match 13 numbers in one table. See "More of Match 13's numbers" below.
+- The Competition menu lists Match, Pit, Schedule, Rankings, Teams, Picklist, Final picklist, Simulator and Stats under Scouting (`pages` in `index.ts`).
 - Match videos (#41): `useTeamQualVideos(team)` in `data.ts` gives a team's qualification matches in order, each with its alliance, Won / Lost / Tied (or not played yet), the scores, and a YouTube link for each video. A played match with no links has no video on The Blue Alliance yet. It loads when the page opens, and `reload()` is for a "Check again" button. The **Match videos** panel on the team page (`TeamVideos.tsx`) shows one line per qual, like "Qual 12 · Red · Won 84–71", with a **Watch ↗** button that opens the video in YouTube in a new tab ("Watch (2) ↗" for a second video), "No video yet", or "Not played yet". It's only links, no video players or thumbnails, to keep the page light on venue Wi-Fi. `VideoList` draws the lines from rows, so tests can use made-up ones.
 - Prescouting is its own module, just above Scouting in the Competition menu: see [its README](../prescouting/README.md). It gets the teams and EPA from `getEventTeams()` and `getRatings()` here.
 
@@ -180,6 +181,31 @@ shows with no Wi-Fi.
 | `teamRecord(rankings, team)` | Their wins, losses and ties, or `null` |
 | `signed(n)` | A change like "+4.6" or "−1.4" |
 | `savedWhen(loadedAt)` | When the saved numbers are from, like "Today at 3:40 PM" |
+
+### More of Match 13's numbers (#152)
+
+Match 13 sends more than we first used. `Match13Rating` now also has
+`xVar` (how much a team's score varies: lower is steadier), `xRp1` to
+`xRp3` (the chance of each ranking point) and `components` (this season's
+game in parts, named the way Match 13 names them). Match 13's docs give
+the names but not their meanings, so these are our reading: **check them on
+match13.com, and ask the strategy team which they want**, before relying
+on them. They're optional, because copies saved on phones before #152 don't
+have them; a missing one shows "not given".
+
+| In `data.ts` | Does |
+|:--|:--|
+| `STAT_COLUMNS` | The numbers every season has, in the stats table's order, with which are lower-is-better and which are chances |
+| `statColumns(ratings)` | Those, then a column for each game part any team has |
+| `statValue(rating, key)`, `statText(value, column)` | One team's number, and as text ("48.6", "72%" or "not given") |
+| `ratingComponents(rating)` | The game parts, leaving out anything that isn't a number |
+| `sortStats(ratings, column, bestFirst)` | Sorts by a column, best first or the other way round; missing numbers go last |
+
+The team page's Match 13 panel shows OPR, DPR and all of these. The stats
+page shows them for every team: tap a heading to sort, tap a team to open
+its page. Only the table scrolls sideways on a phone. Anything from Match
+13 endpoints we don't ask for yet (like its event simulation) needs a
+mentor to allow it in the `match13` server function first.
 
 If a load doesn't work, the last copy stays and `error` says why. Match 13
 having nothing for the event yet isn't an error: nobody's rated yet. A copy

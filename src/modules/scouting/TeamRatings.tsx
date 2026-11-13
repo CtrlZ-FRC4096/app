@@ -1,5 +1,5 @@
 import { Panel, Pill } from '../../core/ui'
-import { savedWhen, signed, teamRating, teamRecord, useRatings } from './data'
+import { STAT_COLUMNS, ratingComponents, savedWhen, signed, statText, statValue, teamRating, teamRecord, useRatings } from './data'
 
 /** "48.6", or "not given" when Match 13 left it out. */
 function points(n: number | null): string {
@@ -58,6 +58,16 @@ export default function TeamRatings(props: { team: number }) {
           <Line label="Teleop" value={points(rating.xTele)} />
           <Line label="Endgame" value={points(rating.xEnd)} />
           <Line label="Statbotics EPA" value={points(rating.epa)} />
+          <Line label="OPR (The Blue Alliance)" value={points(rating.opr)} />
+          <Line label="DPR (points given up, lower is better)" value={points(rating.dpr)} />
+          {/* #152: Match 13's other numbers. Their meanings are our reading of Match 13's names: see data.ts. */}
+          <Line label="Variation (lower is steadier)" value={points(rating.xVar ?? null)} />
+          {STAT_COLUMNS.filter((c) => c.percent).map((c) => (
+            <Line key={c.key} label={c.label} value={statText(statValue(rating, c.key), c)} />
+          ))}
+          {ratingComponents(rating).map((c) => (
+            <Line key={c.name} label={`Game part: ${c.name}`} value={statText(c.value)} />
+          ))}
           <Line label="Record" value={recordText} />
         </div>
       </>

@@ -14,6 +14,7 @@ import Schedule from './Schedule'
 import SavedOnDevice from './SavedOnDevice'
 import SharedPicklist from './SharedPicklist'
 import Simulator from './Simulator'
+import StatsTable from './StatsTable'
 import TeamPage, { TeamLink } from './TeamPage'
 import { AUTO_SIDES, BREAKDOWN_PARTS, COUNTERS, ENDGAME, RANKING_POINTS, ROLES } from './season'
 
@@ -45,11 +46,11 @@ function ShortAnswer(props: { id: string; label: string; value: string; onChange
   )
 }
 
-const VIEWS = ['Match', 'Pit', 'Schedule', 'Rankings', 'Picklist', 'Final picklist', 'Simulator']
+const VIEWS = ['Match', 'Pit', 'Schedule', 'Rankings', 'Picklist', 'Final picklist', 'Simulator', 'Stats']
 /** Each view's address after #/scouting/. */
-const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule', Rankings: 'rankings', Picklist: 'picklist', 'Final picklist': 'shared-picklist', Simulator: 'simulate' }
+const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule', Rankings: 'rankings', Picklist: 'picklist', 'Final picklist': 'shared-picklist', Simulator: 'simulate', Stats: 'stats' }
 
-// A Match / Pit / Schedule / Rankings / Picklist / Final picklist / Simulator switch at
+// A Match / Pit / Schedule / Rankings / Picklist / Final picklist / Simulator / Stats switch at
 // the top. The choice is in the address, so #/scouting/pit opens the pit form
 // straight away: a menu or a bookmark can link to any of them. Both forms
 // stay on the page, and the one not chosen is hidden, so switching doesn't
@@ -76,6 +77,7 @@ export default function ScoutingPage() {
       {view === 'Picklist' && <Picklist />}
       {view === 'Final picklist' && <SharedPicklist />}
       {view === 'Simulator' && <Simulator />}
+      {view === 'Stats' && <StatsTable />}
       {view === 'Team' && <TeamPage team={Number.isInteger(team) && team > 0 ? team : null} />}
     </>
   )

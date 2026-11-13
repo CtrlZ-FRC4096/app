@@ -1283,6 +1283,86 @@ export interface Match13Rating {
   epa: number | null
   opr: number | null
   dpr: number | null
+  // The rest came in #152. Match 13's docs give these names but not what
+  // they mean, so these are our reading of them: check on match13.com.
+  // Copies saved on phones before #152 don't have them, so they're optional.
+  /** How much the team's score varies from match to match. Lower is steadier. */
+  xVar?: number | null
+  /** The chance, 0 to 1, of the team earning each of the season's ranking points. */
+  xRp1?: number | null
+  xRp2?: number | null
+  xRp3?: number | null
+  /** This season's game broken into parts, named the way Match 13 names them (they change each season). */
+  components?: Record<string, unknown> | null
+}
+
+// ---------------------------------------------------------------------------
+// More of Match 13's numbers (#152): for the team page and the stats table.
+// They come from the same saved copy as the rest (useRatings()).
+
+/** One number in the stats table, or on the team page. */
+export interface StatColumn {
+  key: string
+  label: string
+  /** True if lower is better, like DPR (points given up) or score variation. Sorting puts these lowest first. */
+  lowerIsBetter?: boolean
+  /** True for a chance from 0 to 1, shown as a percent. */
+  percent?: boolean
+}
+
+/** The numbers every season has, in the order the stats table shows them. */
+export const STAT_COLUMNS: StatColumn[] = [
+  { key: 'xpEnd', label: 'xP' },
+  { key: 'xAuto', label: 'Auto' },
+  { key: 'xTele', label: 'Teleop' },
+  { key: 'xEnd', label: 'Endgame' },
+  { key: 'epa', label: 'EPA' },
+  { key: 'opr', label: 'OPR' },
+  { key: 'dpr', label: 'DPR', lowerIsBetter: true },
+  { key: 'xVar', label: 'Variation', lowerIsBetter: true },
+  { key: 'xRp1', label: 'RP 1 chance', percent: true },
+  { key: 'xRp2', label: 'RP 2 chance', percent: true },
+  { key: 'xRp3', label: 'RP 3 chance', percent: true },
+]
+
+/** The parts of this season's game a rating has, as numbers. Anything Match 13 sends that isn't a number is left out. */
+export function ratingComponents(rating: Match13Rating): { name: string; value: number }[] {
+  return Object.entries(rating.components ?? {}).flatMap(([name, value]) => (typeof value === 'number' && Number.isFinite(value) ? [{ name, value }] : []))
+}
+
+/** Every column for these ratings: the ones every season has, then a column for each game part any team has. */
+export function statColumns(ratings: Match13Rating[]): StatColumn[] {
+  const parts = [...new Set(ratings.flatMap((r) => ratingComponents(r).map((c) => c.name)))]
+  return [...STAT_COLUMNS, ...parts.map((name) => ({ key: `part:${name}`, label: name }))]
+}
+
+/** One team's number for a column, or null if Match 13 left it out. */
+export function statValue(rating: Match13Rating, key: string): number | null {
+  if (key.startsWith('part:')) return ratingComponents(rating).find((c) => c.name === key.slice(5))?.value ?? null
+  const value = (rating as unknown as Record<string, unknown>)[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/** "48.6", "72%" for a chance, or "not given" when Match 13 left it out. */
+export function statText(value: number | null, column: Pick<StatColumn, 'percent'> = {}): string {
+  if (value === null) return 'not given'
+  return column.percent ? `${Math.round(value * 100)}%` : value.toFixed(1)
+}
+
+/**
+ * The ratings sorted by one column: best first (lowest first for a
+ * lower-is-better column), or the other way round with `bestFirst` false.
+ * Teams with no number for it go at the bottom either way. Equal numbers go
+ * in team number order.
+ */
+export function sortStats(ratings: Match13Rating[], column: StatColumn, bestFirst = true): Match13Rating[] {
+  const flip = (column.lowerIsBetter ? 1 : -1) * (bestFirst ? 1 : -1)
+  return [...ratings].sort((a, b) => {
+    const x = statValue(a, column.key)
+    const y = statValue(b, column.key)
+    if (x === null || y === null) return x === y ? a.teamNumber - b.teamNumber : x === null ? 1 : -1
+    return (x - y) * flip || a.teamNumber - b.teamNumber
+  })
 }
 
 /** Who Match 13 thinks will win a match, and by how much. */
@@ -2087,6 +2167,12 @@ function demoRatings(): Match13Rating[] {
     epa: round(xpEnd * 0.95),
     opr: round(xpEnd * 1.05),
     dpr: round(30 - xpEnd * 0.2),
+    xVar: round(60 - xpEnd),
+    xRp1: round(Math.min(1, xpEnd / 50)),
+    xRp2: round(Math.min(1, xpEnd / 80)),
+    xRp3: round(Math.min(1, xpEnd / 60)),
+    // Made-up part names: Match 13 names them for each season's game.
+    components: { fuel: round(xpEnd * 0.7), tower: round(xpEnd * 0.3) },
   }))
 }
 

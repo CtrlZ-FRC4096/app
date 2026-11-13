@@ -21,6 +21,7 @@ import { addMissingTeams, byPosition, moveTeam, picklist, picklistTable, positio
 import { COUNTERS, DRIVETRAINS, EVENT_KEY } from './season'
 import { loadSchedule, positionStore, setPosition, teamFor, type SavedSchedule } from './data'
 import { rankOf } from './data'
+import { STAT_COLUMNS, ratingComponents, sortStats, statColumns, statText, statValue } from './data'
 import { MIN_MATCHES, allianceScore, entryPoints, pointsRange, redWinChance, teamAps, teamPoints, upcomingMatches } from './data'
 import { chooseEvent, currentEvent, eventStore, eventWhenWhere, eventsTable, getOurEvents, latestEvent, lookupSeasons, searchEvents, type TbaEvent } from './data'
 
@@ -1721,5 +1722,57 @@ describe('average points and the match simulator', () => {
     // The example schedule's first two matches are played.
     expect(upcomingMatches(saved).map((m) => m.match_number)).toEqual([3, 4])
     expect(upcomingMatches(null)).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// More of Match 13's numbers (#152).
+
+describe("more of Match 13's numbers", () => {
+  const rating = (teamNumber: number, extra: Partial<Match13Rating> = {}): Match13Rating => ({
+    teamNumber, xpStart: 30, xpEnd: 40, xAuto: 10, xTele: 25, xEnd: 5, epa: 38, opr: 41, dpr: 12, ...extra,
+  })
+
+  it("reads each number, with a number Match 13 leaves out (or a copy saved before #152 doesn't have) as not given", () => {
+    const full = rating(9991, { xVar: 8.4, xRp1: 0.72 })
+    expect(statValue(full, 'opr')).toBe(41)
+    expect(statValue(full, 'xRp1')).toBe(0.72)
+    expect(statText(statValue(full, 'xRp1'), { percent: true })).toBe('72%')
+    expect(statText(statValue(full, 'xVar'))).toBe('8.4')
+    // Saved before #152: no xVar or xRp2 at all.
+    expect(statValue(rating(9991), 'xVar')).toBeNull()
+    expect(statText(statValue(full, 'xRp2'), { percent: true })).toBe('not given')
+    expect(statValue(rating(9991, { dpr: null }), 'dpr')).toBeNull()
+  })
+
+  it('reads the game parts with the names Match 13 sends, leaving out anything that is not a number', () => {
+    const r = rating(9991, { components: { barge: 12.5, coral: 20, notes: 'x', nested: { a: 1 } } })
+    expect(ratingComponents(r)).toEqual([{ name: 'barge', value: 12.5 }, { name: 'coral', value: 20 }])
+    expect(ratingComponents(rating(9991))).toEqual([])
+    expect(ratingComponents(rating(9991, { components: null }))).toEqual([])
+    expect(statValue(r, 'part:coral')).toBe(20)
+    expect(statValue(r, 'part:algae')).toBeNull()
+  })
+
+  it("has a column for every number, then each game part any team has, once", () => {
+    const columns = statColumns([rating(1, { components: { barge: 1 } }), rating(2, { components: { barge: 2, coral: 3 } }), rating(3)])
+    expect(columns.slice(0, STAT_COLUMNS.length)).toEqual(STAT_COLUMNS)
+    expect(columns.slice(STAT_COLUMNS.length).map((c) => [c.key, c.label])).toEqual([['part:barge', 'barge'], ['part:coral', 'coral']])
+    expect(STAT_COLUMNS.find((c) => c.key === 'dpr')?.lowerIsBetter).toBe(true)
+  })
+
+  it('sorts best first, lowest first for lower-is-better columns, either way round, with missing numbers always last', () => {
+    const ratings = [rating(1, { opr: 30, dpr: 10 }), rating(2, { opr: 50, dpr: 20 }), rating(3, { opr: null, dpr: null }), rating(4, { opr: 50, dpr: 5 })]
+    const column = (key: string) => STAT_COLUMNS.find((c) => c.key === key)!
+    const teams = (sorted: Match13Rating[]) => sorted.map((r) => r.teamNumber)
+    expect(teams(sortStats(ratings, column('opr')))).toEqual([2, 4, 1, 3])
+    expect(teams(sortStats(ratings, column('opr'), false))).toEqual([1, 2, 4, 3])
+    expect(teams(sortStats(ratings, column('dpr')))).toEqual([4, 1, 2, 3])
+  })
+
+  it('has the new numbers in the example ratings', async () => {
+    const result = await getRatings()
+    if (!result.ok) throw new Error(result.error)
+    expect(result.value.every((r) => statValue(r, 'xVar') !== null && ratingComponents(r).length > 0)).toBe(true)
   })
 })
