@@ -3,7 +3,7 @@ import { plural, shortDate } from '../../core/format'
 import { useMemberNames, useMembers } from '../../core/members'
 import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
-import { PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
+import { InView, PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
 import {
   PART_FILTERS, addPart, addRobot, addSystem, applyOnshapeImport, canEditRobotsAndParts, changePart, changeSystem, filterParts, getOnshapeBom, kindLabel,
   nextPartNumber, partCountText, removePart, removeSystem, renameRobot, shelfText, shortageFor, shortages, toOrder, toOrderCsv, useParts, useRobotParts, useRobots, useSystems,
@@ -123,39 +123,56 @@ export default function BomPage() {
         <button type="button" className="btn btn-sm" onClick={() => setEditing({ form: 'system', system: null })}>Add a system</button>
       </div>
 
+      {/* Each form scrolls into view when it opens (InView), because it's drawn up here, above the parts list. */}
       {editing?.form === 'robot' && (
-        <RobotForm
-          key={editing.robot?.id ?? 'new'}
-          robot={editing.robot}
-          onDone={(saved) => {
-            if (saved && !editing.robot) {
-              setRobotId(saved.id)
-              setSystemId(undefined)
-            }
-            close()
-          }}
-        />
+        <InView key={editing.robot?.id ?? 'new'}>
+          <RobotForm
+            robot={editing.robot}
+            onDone={(saved) => {
+              if (saved && !editing.robot) {
+                setRobotId(saved.id)
+                setSystemId(undefined)
+              }
+              close()
+            }}
+          />
+        </InView>
       )}
       {(editing?.form === 'system' || (!system && !editing)) && (
-        <SystemForm
-          key={editing?.form === 'system' ? (editing.system?.id ?? 'new') : 'first'}
-          robot={robot}
-          system={editing?.form === 'system' ? editing.system : null}
-          partCount={editing?.form === 'system' && editing.system ? parts.length : 0}
-          canCancel={editing?.form === 'system'}
-          canDelete={leader}
-          onDone={(saved) => {
-            if (saved) setSystemId(saved.id)
-            close()
-          }}
-        />
+        <InView key={editing?.form === 'system' ? (editing.system?.id ?? 'new') : 'first'}>
+          <SystemForm
+            robot={robot}
+            system={editing?.form === 'system' ? editing.system : null}
+            partCount={editing?.form === 'system' && editing.system ? parts.length : 0}
+            canCancel={editing?.form === 'system'}
+            canDelete={leader}
+            onDone={(saved) => {
+              if (saved) setSystemId(saved.id)
+              close()
+            }}
+          />
+        </InView>
       )}
       {editing?.form === 'part' && system && (
-        <PartForm key={editing.part?.id ?? `new-${system.id}`} system={system} parts={parts} part={editing.part} onDone={close} />
+        <InView key={editing.part?.id ?? `new-${system.id}`}>
+          <PartForm system={system} parts={parts} part={editing.part} onDone={close} />
+        </InView>
       )}
-      {editing?.form === 'cnc' && <CncForm key={editing.part.id} part={editing.part} onDone={close} />}
-      {editing?.form === 'stages' && <StagesForm key={editing.part.id} part={editing.part} steps={stepsFor(editing.part, steps)} onDone={close} />}
-      {editing?.form === 'assign' && <AssignForm key={editing.step.id} part={editing.part} step={editing.step} onDone={close} />}
+      {editing?.form === 'cnc' && (
+        <InView key={editing.part.id}>
+          <CncForm part={editing.part} onDone={close} />
+        </InView>
+      )}
+      {editing?.form === 'stages' && (
+        <InView key={editing.part.id}>
+          <StagesForm part={editing.part} steps={stepsFor(editing.part, steps)} onDone={close} />
+        </InView>
+      )}
+      {editing?.form === 'assign' && (
+        <InView key={editing.step.id}>
+          <AssignForm part={editing.part} step={editing.step} onDone={close} />
+        </InView>
+      )}
       {importing && importing.system.id === system?.id && (
         <ImportPreview system={importing.system} plan={importing.plan} onDone={() => setImporting(null)} />
       )}
@@ -197,7 +214,7 @@ export default function BomPage() {
                   ? `Last imported from Onshape ${shortDate(system.onshape_imported_at)}. `
                   : 'Not imported from Onshape yet. '
                 : "To import this system's parts from Onshape, add its assembly's link with Change system. "}
-              {shown.length > 0 && leader && "Choose a part's name to change or delete it."}
+              {shown.length > 0 && leader && "Use a part's Edit button to change or delete it."}
             </p>
           </div>
           {shown.length === 0 ? (
@@ -243,20 +260,16 @@ export default function BomPage() {
                             <br />
                             <span className="note">
                               {p.kind === 'made' ? p.material : [p.vendor, p.vendor_part_number].filter(Boolean).join(' · ')}
-                              {/* The database only accepts https:// links here, so it's safe to open. */}
-                              {p.onshape_url && <>{(p.material || p.vendor || p.vendor_part_number) && ' · '}<a href={p.onshape_url} target="_blank" rel="noopener noreferrer">CAD</a></>}
                             </span>
-                            {p.kind === 'made' && !p.removed_in_onshape && (
-                              <>
-                                <br />
-                                <span className="note">
-                                  {onBoard.get(p.id) ? `${onBoard.get(p.id)} on the CNC board · ` : ''}
-                                  <button type="button" className="link-btn" onClick={() => setEditing({ form: 'cnc', part: p })}>Ready to CAM</button>
-                                </span>
-                              </>
-                            )}
                             {p.kind === 'cots' && !p.removed_in_onshape && <Shelf part={p} items={items} request={requests.get(p.id)} shortage={shortageFor(p, short)} />}
-                            {p.kind === 'cots' && !p.removed_in_onshape && <PurchaseStatus part={p} request={requests.get(p.id)} />}
+                            <PartActions
+                              part={p}
+                              request={requests.get(p.id)}
+                              onBoard={onBoard.get(p.id) ?? 0}
+                              canEdit={leader}
+                              onCam={() => setEditing({ form: 'cnc', part: p })}
+                              onEdit={() => setEditing({ form: 'part', part: p })}
+                            />
                           </td>
                           <td className="num" style={under}>{p.quantity}</td>
                         </tr>
@@ -359,7 +372,11 @@ function ImportPreview(props: { system: BomSystem; plan: OnshapeImportPlan; onDo
   const changed = plan.change.filter((c) => c.what.length > 0)
   const nothing = plan.add.length === 0 && plan.change.length === 0 && plan.removed.length === 0
   const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => ref.current?.scrollIntoView({ block: 'nearest' }), [])
+  // Braces, so the effect returns nothing. Newer Chrome returns a Promise from
+  // scrollIntoView(), and React would try to call it as a cleanup (#173).
+  useEffect(() => {
+    ref.current?.scrollIntoView({ block: 'nearest' })
+  }, [])
 
   async function apply() {
     setSaving(true)
@@ -408,11 +425,11 @@ function ImportPreview(props: { system: BomSystem; plan: OnshapeImportPlan; onDo
   )
 }
 
-/** Put the cursor in a form's first box when it opens, which also scrolls it into view. */
+/** Put the cursor in a form's first box when it opens. InView does the scrolling. */
 function useFocusOnOpen() {
   const ref = useRef<HTMLFormElement>(null)
   useEffect(() => {
-    ref.current?.querySelector<HTMLInputElement>('input')?.focus()
+    ref.current?.querySelector<HTMLInputElement>('input')?.focus({ preventScroll: true })
   }, [])
   return ref
 }
@@ -700,15 +717,29 @@ function Shelf(props: { part: Part; items: Item[]; request: PurchaseItem | undef
 }
 
 /**
- * A COTS part's order, from Purchasing: its status, which opens the request
- * there, or a Purchase button that opens a request filled in from the part.
+ * A part's buttons, in one row, always in the same order (#172):
+ * 1. COTS: its order status from Purchasing and Open in Purchasing, or Purchase.
+ *    Custom: how many are on the CNC board, and Ready to CAM.
+ *    (Neither for a part removed in Onshape.)
+ * 2. Open CAD ↗, if it has an Onshape link.
+ * 3. Edit, for student leaders, mentors and admins.
+ * A button that doesn't apply is left out. On a phone the row wraps.
  */
-function PurchaseStatus(props: { part: Part; request: PurchaseItem | undefined }) {
-  const { request } = props
+function PartActions(props: {
+  part: Part
+  request: PurchaseItem | undefined
+  onBoard: number
+  canEdit: boolean
+  onCam: () => void
+  onEdit: () => void
+}) {
+  const { part, request } = props
   const status = request && statusOf(request.status)
+  const active = !part.removed_in_onshape
+  if (!active && !part.onshape_url && !props.canEdit) return null
   return (
-    <span className="toolbar" style={{ marginTop: 6 }}>
-      {request && status ? (
+    <span className="toolbar" style={{ marginTop: 6, gap: 6 }}>
+      {active && part.kind === 'cots' && (request && status ? (
         <>
           <Pill tone={status.tone}>{status.label}</Pill>
           {isLate(request) && <Pill tone="warn">Late</Pill>}
@@ -716,8 +747,17 @@ function PurchaseStatus(props: { part: Part; request: PurchaseItem | undefined }
           <a className="btn btn-sm" href={href('purchasing', 'item', request.id)}>Open in Purchasing</a>
         </>
       ) : (
-        <a className="btn btn-sm" href={href('purchasing', 'from-bom', props.part.id)}>Purchase</a>
+        <a className="btn btn-sm" href={href('purchasing', 'from-bom', part.id)}>Purchase</a>
+      ))}
+      {active && part.kind === 'made' && (
+        <>
+          {props.onBoard > 0 && <span className="note">{props.onBoard} on the CNC board</span>}
+          <button type="button" className="btn btn-sm" onClick={props.onCam}>Ready to CAM</button>
+        </>
       )}
+      {/* The database only accepts https:// links here, so it's safe to open. */}
+      {part.onshape_url && <a className="btn btn-sm" href={part.onshape_url} target="_blank" rel="noopener noreferrer">Open CAD ↗</a>}
+      {props.canEdit && <button type="button" className="btn btn-sm" onClick={props.onEdit}>Edit</button>}
     </span>
   )
 }

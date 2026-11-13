@@ -115,7 +115,11 @@ function SheetDetail(props: { view: SheetView; onClose: () => void; onOpen: (id:
   const [reading, setReading] = useState(false)
   const chosen = cuts.find((c) => c.id === selected)
   const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => ref.current?.scrollIntoView({ block: 'nearest' }), [])
+  // Braces, so the effect returns nothing. Newer Chrome returns a Promise from
+  // scrollIntoView(), and React would try to call it as a cleanup (#173).
+  useEffect(() => {
+    ref.current?.scrollIntoView({ block: 'nearest' })
+  }, [])
 
   const items: Drawn[] = [
     ...cuts.map((c): Drawn => ({ id: c.id, name: c.name, box: boxOf(c), outline: c.outline, kind: c.status === 'cut' ? 'cut' : 'planned' })),

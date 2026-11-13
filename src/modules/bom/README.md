@@ -28,6 +28,19 @@ The tables are made by `supabase/migrations/20261027150000_bom.sql`, and their p
 
 The rules are in `supabase/migrations/20261110130000_bom_student_leaders.sql` (using `private.is_leader()`), and tested in `supabase/tests/bom.test.ts` and `bom-steps.test.ts`. In the app, `canEditRobotsAndParts()` in `data.ts` decides which buttons a student sees, and the functions in `data.ts` explain who to ask.
 
+**A part's buttons.** Under each part's name and details is one row of buttons, always in this order (#172). A button that doesn't apply is left out, and on a phone the row wraps onto a second line.
+
+| Button | Shows on | Does |
+|:--|:--|:--|
+| **Purchase**, or **Open in Purchasing** once there's a request | COTS parts | Opens a request in Purchasing filled in from the part, or the request it already has. Its status, **Late** and "Arrives Nov 12" sit just before it. |
+| **Ready to CAM** | Custom parts | Puts the part on the CNC board. "2 on the CNC board" sits just before it. |
+| **Open CAD ↗** | Parts with an Onshape link | Opens the part in Onshape in a new tab. |
+| **Edit** | Every part, for student leaders, mentors and admins | Opens the part's form, to change or delete it. Tapping the name does too. |
+
+Parts marked "Removed in Onshape" don't show Purchase or Ready to CAM.
+
+Every form (a part, Ready to CAM, stages, assigning a stage) opens near the top of the page, above the parts list, and scrolls itself into view when it opens (`InView` from `src/core/ui.tsx`, which Purchasing uses too), so it's never out of sight (#170).
+
 **Custom and COTS.** Custom parts are made in our shop; COTS parts are bought. The page calls them Custom, but the database still stores them as `made`, so no migration was needed for the name.
 
 **Part numbers.** Every part gets a team number like `4096-26-INT-001`: team, year, system code, then a number. Custom parts also have a material, such as "6061 aluminum, 1/4 in plate". COTS (bought) parts have a vendor and the vendor's part number.
