@@ -1,6 +1,6 @@
 import { href } from '../../core/router'
 import { PageHead, Pill } from '../../core/ui'
-import { nexusEventUrl, useCurrentEvent, useScoutingOverview } from './data'
+import { nexusEventUrl, queueTime, savedWhen, useCurrentEvent, useNexusStatus, useScoutingOverview } from './data'
 
 // The scouting overview (#160), at #/scouting: a card for each scouting
 // page, with how it's going and its latest results. The sums are
@@ -16,10 +16,7 @@ export default function Overview(props: { paths: Record<string, string> }) {
       <PageHead title="Scouting overview">
         {`How scouting is going at ${event.name ?? event.key}. Tap a card to open that page.`}
       </PageHead>
-      <div className="toolbar" style={{ marginBottom: 12 }}>
-        <a className="btn" style={{ minHeight: 44 }} href={nexusEventUrl(event.key)} target="_blank" rel="noreferrer">Open in Nexus ↗</a>
-        <span className="note">What's on the field now, and who should be queuing</span>
-      </div>
+      <NexusLive eventKey={event.key} />
       <div className="modules">
         {cards.map((card) => (
           <a key={card.view} className="panel tile" href={href('scouting', props.paths[card.view] ?? '')}>
@@ -37,5 +34,35 @@ export default function Overview(props: { paths: Record<string, string> }) {
         ))}
       </div>
     </>
+  )
+}
+
+// What's happening at the event right now, from Nexus (#165): what's on the
+// field, what's queuing, and when our next match should queue. The last
+// answer is kept on the phone, so it shows with no Wi-Fi.
+function NexusLive(props: { eventKey: string }) {
+  const { saved, problem } = useNexusStatus()
+  const s = saved?.status
+  const lines = s
+    ? [
+        s.onField && `On the field: ${s.onField}`,
+        s.nowQueuing && `Now queuing: ${s.nowQueuing}`,
+        s.ourNext && `Our next: ${s.ourNext.label} (${s.ourNext.alliance === 'red' ? 'Red' : 'Blue'})${s.ourNext.queueAt ? `, queue at ${queueTime(s.ourNext.queueAt)}` : ''}${s.ourNext.status ? ` · ${s.ourNext.status}` : ''}`,
+        s.announcements[0] && `Announcement: ${s.announcements[0]}`,
+      ].filter((line): line is string => typeof line === 'string' && line !== '')
+    : []
+  return (
+    <div className="panel" style={{ marginBottom: 12 }}>
+      <div className="panel-body" style={{ gap: 6 }}>
+        <div className="toolbar">
+          <strong>Live from Nexus</strong>
+          <a className="btn" style={{ minHeight: 44, marginLeft: 'auto' }} href={nexusEventUrl(props.eventKey)} target="_blank" rel="noreferrer">Open in Nexus ↗</a>
+        </div>
+        {lines.map((line) => <span key={line} style={{ overflowWrap: 'anywhere' }}>{line}</span>)}
+        <span className="note" role="status">
+          {saved ? `Updated ${savedWhen(saved.savedAt)}${problem ? ` · ${problem}` : ''}` : problem ?? 'Checking Nexus…'}
+        </span>
+      </div>
+    </div>
   )
 }

@@ -1,5 +1,5 @@
 import type { ModuleDefinition } from '../../core/registry'
-import { useEntrySummary } from './data'
+import { useEntrySummary, useHiddenScoutingPages } from './data'
 
 export const scouting: ModuleDefinition = {
   id: 'scouting',
@@ -23,4 +23,6 @@ export const scouting: ModuleDefinition = {
     { name: 'Stats', path: 'stats' },
   ],
   useSummary: useEntrySummary,
+  // Strategy-only pages (#167) aren't in the menu for anyone else.
+  useHiddenPages: useHiddenScoutingPages,
 }

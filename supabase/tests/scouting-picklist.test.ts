@@ -1,5 +1,6 @@
-// Permission rules for the Scouting module's shared picklist (#43): signed-in
-// members read it; only mentors and admins add, move, mark and remove teams.
+// Permission rules for the Scouting module's shared picklist (#43): the
+// strategy team (#167) and mentors read it; only mentors and admins add,
+// move, mark and remove teams.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
@@ -47,9 +48,11 @@ describe('the shared picklist', () => {
     ).rejects.toThrow(PERMISSION_DENIED)
   })
 
-  it('lets every member read the list', async () => {
+  it('lets the strategy team read the list, but not other members (#167)', async () => {
     await add(mentor, 9991)
     await add(mentor, 9992, 2000)
+    expect(await db.as(student, 'select team_number from public.scouting_picklist')).toEqual([])
+    await db.strategy(student)
     expect(await db.as(student, 'select team_number from public.scouting_picklist order by position')).toEqual([{ team_number: 9991 }, { team_number: 9992 }])
   })
 

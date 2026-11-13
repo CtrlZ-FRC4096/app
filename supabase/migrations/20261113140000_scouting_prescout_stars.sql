@@ -6,12 +6,12 @@
 -- This replaces the shared Mark on prescouting_notes (its "marked" column):
 -- every team marked so far becomes a team star below, with a reason saying
 -- so. Nobody knows who marked it, so its created_by is empty. The app no
--- longer reads "marked"; a later migration can drop it once a mentor agrees.
+-- longer reads "marked", and ..._prescouting_notes_drop_marked.sql drops it.
 --
--- Who sees what:
---   - Your own stars, of both kinds.
---   - Everyone's team stars.
---   - Nobody else's stars that are just for them.
+-- Prescouting is strategy only (#167), so only the strategy team (and
+-- mentors) star teams. Among them:
+--   - You see your own stars, of both kinds, and everyone's team stars.
+--   - Nobody sees anyone else's stars that are just for them.
 -- You add stars only as yourself, and remove your own. Mentors and admins
 -- can also remove anyone's team star. Nobody changes a star: remove it and
 -- star the team again.
@@ -47,18 +47,18 @@ alter publication supabase_realtime add table public.scouting_prescout_stars;
 -- The rules. Wrapping the helpers in (select ...) lets the database work out
 -- the answer once per query instead of once per row.
 
-create policy "Members see team stars and their own"
+create policy "Strategy sees team stars and their own"
   on public.scouting_prescout_stars for select to authenticated
-  using ((select private.is_member()) and (for_team or created_by = (select auth.uid())));
+  using ((select private.is_strategy()) and (for_team or created_by = (select auth.uid())));
 
-create policy "Members star teams as themselves"
+create policy "Strategy stars teams as themselves"
   on public.scouting_prescout_stars for insert to authenticated
-  with check ((select private.is_member()) and created_by = (select auth.uid()));
+  with check ((select private.is_strategy()) and created_by = (select auth.uid()));
 
-create policy "Members remove their own stars, and mentors any team star"
+create policy "Strategy removes their own stars, and mentors any team star"
   on public.scouting_prescout_stars for delete to authenticated
   using (
-    (select private.is_member())
+    (select private.is_strategy())
     and (created_by = (select auth.uid()) or (for_team and (select private.is_mentor())))
   );
 

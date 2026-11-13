@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { ROLES, isAdmin, roleName, useSession, type Role } from '../../core/session'
+import { ROLES, isAdmin, isMentor, roleName, useSession, type Role } from '../../core/session'
 import { initials, useMembers, type Member } from '../../core/members'
 import { isLive } from '../../core/supabase'
 import { toast } from '../../core/toast'
 import { shortDate } from '../../core/format'
 import { Callout, PageHead, Panel, Pill } from '../../core/ui'
 import { changeRole, checkServerFunctions, search, setAccess, type FunctionCheck } from './data'
+import { addStrategyMember, removeStrategyMember, strategyTable } from '../scouting/data'
 
 export default function MembersPage() {
   const { id: myId, role: myRole } = useSession()
@@ -15,6 +16,14 @@ export default function MembersPage() {
   const active = found.filter((m) => m.active)
   const off = found.filter((m) => !m.active)
   const canChange = isAdmin(myRole)
+  // The scouting strategy team (#167): mentors and admins choose it.
+  const strategy = new Set(strategyTable.useRows().map((s) => s.member_id))
+  const canChooseStrategy = isMentor(myRole)
+
+  async function setStrategy(member: Member, on: boolean) {
+    const result = on ? await addStrategyMember(member.id) : await removeStrategyMember(member.id)
+    toast(result.ok ? `${member.name} is ${on ? 'now on' : 'off'} the strategy team.` : result.error)
+  }
 
   async function role(member: Member, next: Role) {
     const result = await changeRole(member, next)
@@ -29,7 +38,7 @@ export default function MembersPage() {
   return (
     <>
       <PageHead title="Members">
-        Everyone who has signed in. Admins set roles, and switch off access for anyone who has left.
+        Everyone who has signed in. Admins set roles, and switch off access for anyone who has left. Mentors choose the scouting strategy team, who see the scouting analysis and prescouting.
       </PageHead>
       {!isLive && (
         <Callout title="Demo mode">
@@ -44,7 +53,7 @@ export default function MembersPage() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Name</th><th>Role</th><th>Joined</th>{canChange && <th>Access</th>}</tr>
+              <tr><th>Name</th><th>Role</th><th>Strategy team</th><th>Joined</th>{canChange && <th>Access</th>}</tr>
             </thead>
             <tbody>
               {active.map((m) => (
@@ -57,6 +66,17 @@ export default function MembersPage() {
                       </select>
                     ) : (
                       <Pill tone={m.role === 'student' ? 'plain' : 'info'}>{roleName(m.role)}</Pill>
+                    )}
+                  </td>
+                  <td>
+                    {isMentor(m.role) ? (
+                      <span className="note">Always</span>
+                    ) : (
+                      <label className="check" style={{ minHeight: 44 }}>
+                        <input type="checkbox" checked={strategy.has(m.id)} disabled={!canChooseStrategy} aria-label={`${m.name} is on the strategy team`}
+                          onChange={(e) => void setStrategy(m, e.target.checked)} />
+                        {strategy.has(m.id) ? 'Yes' : 'No'}
+                      </label>
                     )}
                   </td>
                   <td className="note">{shortDate(m.created_at)}</td>

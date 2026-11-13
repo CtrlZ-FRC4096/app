@@ -7,6 +7,13 @@ import { PRESCOUT_QUESTIONS } from './data'
 import PrescoutPage, { TeamCard, TeamPage } from './PrescoutPage'
 
 describe('the prescouting pages', () => {
+  it('are only for the strategy team and mentors (#167)', () => {
+    // Casey, the demo student leader, isn't on the strategy team.
+    setDemoRole('leader')
+    expect(renderToString(<PrescoutPage />)).toContain('Only the strategy team and mentors can see this.')
+    setDemoRole('student')
+  })
+
   it("start on this season's event, and say the teams are loading", () => {
     const html = renderToString(<PrescoutPage />)
     expect(html).toContain(`value="${EVENT_KEY}"`)

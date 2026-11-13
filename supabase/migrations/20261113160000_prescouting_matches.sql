@@ -9,8 +9,9 @@
 -- Prescouting happens before the event, with Wi-Fi, so it saves straight
 -- here, like prescouting_notes, not on the phone first like match entries.
 --
--- Signed-in members read every row, add their own, and change or remove
--- their own. Mentors and admins can remove anyone's.
+-- Prescouting is strategy only (#167): the strategy team (and mentors) read
+-- every row, add their own, and change or remove their own. Mentors and
+-- admins can remove anyone's.
 
 create table public.prescouting_matches (
   id uuid primary key default gen_random_uuid(),
@@ -62,19 +63,19 @@ alter publication supabase_realtime add table public.prescouting_matches;
 -- The rules. Wrapping the helpers in (select ...) lets the database work out
 -- the answer once per query instead of once per row.
 
-create policy "Members can read prescouted matches"
+create policy "Strategy reads prescouted matches"
   on public.prescouting_matches for select to authenticated
-  using ((select private.is_member()));
+  using ((select private.is_strategy()));
 
-create policy "Members prescout matches as themselves"
+create policy "Strategy prescouts matches as themselves"
   on public.prescouting_matches for insert to authenticated
-  with check ((select private.is_member()) and created_by = (select auth.uid()));
+  with check ((select private.is_strategy()) and created_by = (select auth.uid()));
 
-create policy "Members change their own prescouted matches"
+create policy "Strategy changes their own prescouted matches"
   on public.prescouting_matches for update to authenticated
-  using ((select private.is_member()) and created_by = (select auth.uid()))
-  with check ((select private.is_member()) and created_by = (select auth.uid()));
+  using ((select private.is_strategy()) and created_by = (select auth.uid()))
+  with check ((select private.is_strategy()) and created_by = (select auth.uid()));
 
-create policy "Members remove their own prescouted matches, and mentors anyone's"
+create policy "Strategy removes their own prescouted matches, and mentors anyone's"
   on public.prescouting_matches for delete to authenticated
-  using ((select private.is_member()) and (created_by = (select auth.uid()) or (select private.is_mentor())));
+  using ((select private.is_strategy()) and (created_by = (select auth.uid()) or (select private.is_mentor())));

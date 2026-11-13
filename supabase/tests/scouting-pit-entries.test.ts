@@ -44,7 +44,7 @@ describe('scouting pit entries', () => {
   it('keeps every visit to the same team', async () => {
     await send(scout, [{ team: 9991 }])
     await send(other, [{ team: 9991 }])
-    expect(await db.as(scout, 'select id from public.scouting_pit_entries')).toHaveLength(2)
+    expect(await db.sql('select id from public.scouting_pit_entries')).toHaveLength(2)
   })
 
   it('skips a pit entry sent twice, so there is only one row', async () => {
@@ -67,9 +67,12 @@ describe('scouting pit entries', () => {
     ).rejects.toThrow(PERMISSION_DENIED)
   })
 
-  it('lets every member read every pit entry', async () => {
+  it('lets the strategy team and mentors read every pit entry, and anyone else only their own (#167)', async () => {
     await send(scout, [{ team: 9991 }])
     await send(other, [{ team: 9992 }])
+    expect(await db.as(scout, 'select team_number from public.scouting_pit_entries')).toEqual([{ team_number: 9991 }])
+    expect(await db.as(mentor, 'select team_number from public.scouting_pit_entries order by team_number')).toEqual([{ team_number: 9991 }, { team_number: 9992 }])
+    await db.strategy(scout)
     expect(await db.as(scout, 'select team_number from public.scouting_pit_entries order by team_number')).toEqual([{ team_number: 9991 }, { team_number: 9992 }])
   })
 

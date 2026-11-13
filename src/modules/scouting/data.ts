@@ -32,7 +32,7 @@ import { TEAM_TIME_ZONE } from '../../core/calendar'
 import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
-import { isMentor } from '../../core/roles'
+import { isMentor, type Role } from '../../core/roles'
 import { currentUser, onSignedIn } from '../../core/session'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore, type Store } from '../../core/store'
@@ -202,6 +202,75 @@ function demoEvents(year: number): (TbaEvent & { ours: boolean })[] {
     event(`${year}demo3`, 'Demo Valley Regional', 'Springfield', 'Missouri', '03-30', '04-02', false),
     event(`${year}demo4`, 'Placeholder Championship', 'Houston', 'Texas', '04-15', '04-18', false),
   ]
+}
+
+// ---------------------------------------------------------------------------
+// The strategy team (#167). From the scouting requirements: only strategy
+// people and mentors see the analysis. Like purchasers, being on it is an
+// extra permission on top of someone's role; mentors and admins always count.
+//
+// Strategy only: the overview, team pages, the picklists, the simulator,
+// stats and Prescouting. Everyone: the match and pit forms, the schedule and
+// the rankings, so any scout can do their job. Hiding pages is only
+// tidiness: the read rules in supabase/migrations/..._scouting_strategy_team.sql
+// (and the strategy tables' own migrations) keep the data safe.
+
+/** One person on the strategy team. */
+export interface StrategyMember extends Row {
+  member_id: string
+  /** Which mentor added them. */
+  created_by: string | null
+}
+
+// Made up, for demo mode: Alex (the demo student) and Jordan are on it, so a
+// student sees every page; Casey (the demo student leader) isn't, so viewing
+// as a student leader shows what someone off the team sees.
+const EXAMPLE_STRATEGY: StrategyMember[] = [
+  { id: '00000000-0000-4000-8000-0000000d0401', member_id: DEMO_PEOPLE.alex, created_at: '2026-11-01T18:00:00Z', created_by: DEMO_PEOPLE.pat },
+  { id: '00000000-0000-4000-8000-0000000d0402', member_id: DEMO_PEOPLE.jordan, created_at: '2026-11-01T18:00:00Z', created_by: DEMO_PEOPLE.pat },
+]
+
+// keepOffline: a phone with no Wi-Fi still knows which pages to show.
+export const strategyTable = createTable<StrategyMember>('scouting_strategy_team', { demo: EXAMPLE_STRATEGY, keepOffline: true })
+
+/** True for strategy team members, mentors and admins. */
+export function isStrategy(user: { id: string; role: Role } | null | undefined, members: StrategyMember[]): boolean {
+  if (!user) return false
+  return isMentor(user.role) || members.some((m) => m.member_id === user.id)
+}
+
+/** Whether the signed-in person is on the strategy team (or a mentor or admin), for a page. */
+export function useIsStrategy(): boolean {
+  const members = strategyTable.useRows()
+  return isStrategy(currentUser(), members)
+}
+
+/** The Scouting pages only the strategy team sees, by their address after #/scouting/. '' is the overview. */
+export const STRATEGY_PATHS = ['', 'team', 'picklist', 'my-picklist', 'team-picklist', 'shared-picklist', 'simulate', 'stats']
+
+/** What a page off limits says. */
+export const STRATEGY_ONLY = 'Only the strategy team and mentors can see this.'
+
+/** The Scouting pages to hide from the signed-in person in the Competition menu. */
+export function useHiddenScoutingPages(): string[] {
+  return useIsStrategy() ? [] : STRATEGY_PATHS
+}
+
+/** Put someone on the strategy team. Mentors and admins only: the database checks too. */
+export async function addStrategyMember(memberId: string): Promise<Result<StrategyMember>> {
+  const user = currentUser()
+  if (!user || !isMentor(user.role)) return fail('Only mentors choose the strategy team.')
+  if (strategyTable.rows().some((m) => m.member_id === memberId)) return fail("They're already on the strategy team.")
+  return strategyTable.insert({ member_id: memberId })
+}
+
+/** Take someone off the strategy team. Mentors and admins only. */
+export async function removeStrategyMember(memberId: string): Promise<Result> {
+  const user = currentUser()
+  if (!user || !isMentor(user.role)) return fail('Only mentors choose the strategy team.')
+  const row = strategyTable.rows().find((m) => m.member_id === memberId)
+  if (!row) return fail("They're not on the strategy team.")
+  return strategyTable.remove(row.id)
 }
 
 // ---------------------------------------------------------------------------
@@ -1545,6 +1614,14 @@ export interface Match13Rating {
   xRp3?: number | null
   /** This season's game broken into parts, named the way Match 13 names them (they change each season). */
   components?: Record<string, unknown> | null
+  // From Match 13's simulation of the event (#152, getEventSim()), added to
+  // each rating when the ratings load. Missing until Match 13 has one.
+  /** The team's average final rank in the simulation, and the range most runs land in (5th to 95th percentile). */
+  simRank?: number | null
+  simRankLow?: number | null
+  simRankHigh?: number | null
+  /** The team's average ranking points in the simulation. */
+  simRp?: number | null
 }
 
 // ---------------------------------------------------------------------------
@@ -1574,6 +1651,8 @@ export const STAT_COLUMNS: StatColumn[] = [
   { key: 'xRp1', label: 'RP 1 chance', percent: true },
   { key: 'xRp2', label: 'RP 2 chance', percent: true },
   { key: 'xRp3', label: 'RP 3 chance', percent: true },
+  { key: 'simRank', label: 'Sim rank', lowerIsBetter: true },
+  { key: 'simRp', label: 'Sim RP' },
 ]
 
 /** The parts of this season's game a rating has, as numbers. Anything Match 13 sends that isn't a number is left out. */
@@ -1614,6 +1693,97 @@ export function sortStats(ratings: Match13Rating[], column: StatColumn, bestFirs
     if (x === null || y === null) return x === y ? a.teamNumber - b.teamNumber : x === null ? 1 : -1
     return (x - y) * flip || a.teamNumber - b.teamNumber
   })
+}
+
+/** One team in Match 13's simulation of the event (#152). */
+export interface SimTeam {
+  team: number
+  /** Average final rank, and the 5th and 95th percentile ranks. Null if Match 13 didn't send them. */
+  rank: number | null
+  rankLow: number | null
+  rankHigh: number | null
+  /** Average ranking points. */
+  rp: number | null
+}
+
+const num = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+
+/** The first of these fields that's a number. */
+function firstNumber(from: Record<string, unknown> | undefined, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = num(from?.[key])
+    if (value !== null) return value
+  }
+  return null
+}
+
+/**
+ * Read Match 13's simulation answer. Its docs give the fields' names but not
+ * their exact shape, so this accepts a stats object (mean, p5, p50, p95)
+ * under rank or rp, or flat fields like meanRank, and leaves out anything it
+ * can't read, rather than guess. Check it against a real answer.
+ */
+export function readSim(answer: unknown): SimTeam[] {
+  const body = answer as { teams?: unknown } | unknown[] | null
+  const list = Array.isArray(body) ? body : Array.isArray((body as { teams?: unknown })?.teams) ? ((body as { teams: unknown[] }).teams) : []
+  return list.flatMap((item) => {
+    const t = (item ?? {}) as Record<string, unknown>
+    const team = num(t.teamNumber) ?? num(t.team)
+    if (team === null) return []
+    const rank = (t.rank ?? t.ranks) as Record<string, unknown> | undefined
+    const rp = (t.rp ?? t.rps ?? t.rankingPoints) as Record<string, unknown> | undefined
+    const sim: SimTeam = {
+      team,
+      rank: typeof rank === 'object' ? firstNumber(rank, ['mean', 'avg', 'p50']) : firstNumber(t, ['meanRank', 'rankMean', 'avgRank']),
+      rankLow: typeof rank === 'object' ? firstNumber(rank, ['p5']) : firstNumber(t, ['rankP5']),
+      rankHigh: typeof rank === 'object' ? firstNumber(rank, ['p95']) : firstNumber(t, ['rankP95']),
+      rp: typeof rp === 'object' ? firstNumber(rp, ['mean', 'avg', 'p50']) : firstNumber(t, ['meanRp', 'rpMean', 'avgRp']) ?? num(t.rp),
+    }
+    // A team with nothing readable isn't a simulation result.
+    return sim.rank === null && sim.rp === null ? [] : [sim]
+  })
+}
+
+/** Match 13's simulation of the event: each team's likely final rank. Empty until Match 13 has one. */
+export async function getEventSim(event = currentEvent()): Promise<Result<SimTeam[]>> {
+  const result = await callFunction<unknown>('match13', { kind: 'sim', event }, () => demoSim())
+  return result.ok ? ok(readSim(result.value)) : result
+}
+
+/** Put each team's simulation numbers on its rating. */
+export function withSim(ratings: Match13Rating[], sim: SimTeam[]): Match13Rating[] {
+  const byTeam = new Map(sim.map((s) => [s.team, s]))
+  return ratings.map((r) => {
+    const s = byTeam.get(r.teamNumber)
+    return s ? { ...r, simRank: s.rank, simRankLow: s.rankLow, simRankHigh: s.rankHigh, simRp: s.rp } : r
+  })
+}
+
+/** One event a team played in a season, with its Match 13 numbers there (#153). */
+export interface TeamEventRating {
+  event: string
+  /** The team's xP at the end of that event, or null if Match 13 didn't send it. */
+  xp: number | null
+  /** Their xP rank at that event. */
+  rank: number | null
+}
+
+/** Read Match 13's answer for a team's events in a season. Like readSim(), it reads what it can and leaves out the rest. */
+export function readTeamEvents(answer: unknown): TeamEventRating[] {
+  const body = answer as { events?: unknown } | unknown[] | null
+  const list = Array.isArray(body) ? body : Array.isArray((body as { events?: unknown })?.events) ? ((body as { events: unknown[] }).events) : []
+  return list.flatMap((item) => {
+    const e = (item ?? {}) as Record<string, unknown>
+    const event = [e.eventKey, e.event, e.key].find((v): v is string => typeof v === 'string')
+    if (!event) return []
+    return [{ event, xp: firstNumber(e, ['xpEnd', 'xp', 'xpMean']), rank: firstNumber(e, ['rank', 'xpRank']) }]
+  })
+}
+
+/** One team's Match 13 numbers at each event it played in a season, for prescouting (#153). */
+export async function getTeamSeasonRatings(team: number, year: number): Promise<Result<TeamEventRating[]>> {
+  const result = await callFunction<unknown>('match13', { kind: 'team-events', team, year }, () => demoTeamEvents(team, year))
+  return result.ok ? ok(readTeamEvents(result.value)) : result
 }
 
 /** Who Match 13 thinks will win a match, and by how much. */
@@ -2477,9 +2647,10 @@ export function loadRatings(now: Date = new Date()): Promise<void> {
 
 async function load(now: Date): Promise<void> {
   const event = currentEvent()
-  const [ratings, rankings] = await Promise.all([getRatings(event), getRankings(event)])
+  const [ratings, rankings, sim] = await Promise.all([getRatings(event), getRankings(event), getEventSim(event)])
   const notRatedYet = !ratings.ok && NOT_RATED_YET.test(ratings.error)
-  const rated: Result<Match13Rating[]> = notRatedYet ? ok([]) : ratings
+  // The simulation is extra: if Match 13 has none yet, the ratings show without it.
+  const rated: Result<Match13Rating[]> = notRatedYet ? ok([]) : ratings.ok ? ok(withSim(ratings.value, sim.ok ? sim.value : [])) : ratings
   // Start from this event's copy, so another event's numbers never mix in.
   const prev = savedRatings()
   ratingsStore.set({
@@ -2588,6 +2759,24 @@ function demoRatings(): Match13Rating[] {
     // Made-up part names: Match 13 names them for each season's game.
     components: { fuel: round(xpEnd * 0.7), tower: round(xpEnd * 0.3) },
   }))
+}
+
+/** A made-up simulation: teams ranked by their example xP, give or take a few places. */
+function demoSim(): { teams: unknown[] } {
+  const ranked = [...demoRatings()].sort((a, b) => b.xpEnd - a.xpEnd)
+  return {
+    teams: ranked.map((r, i) => ({
+      teamNumber: r.teamNumber,
+      rank: { mean: i + 1.4, p5: Math.max(1, i - 1), p50: i + 1, p95: Math.min(ranked.length, i + 3) },
+      rp: { mean: Math.round((30 - i * 3.5) * 10) / 10 },
+    })),
+  }
+}
+
+/** Made-up Match 13 numbers for a team at each of the example events in a season. */
+function demoTeamEvents(team: number, year: number): { events: unknown[] } {
+  const xp = DEMO_RATINGS.find(([t]) => t === team)?.[2] ?? 30
+  return { events: demoEvents(year).slice(0, 3).map((e, i) => ({ eventKey: e.key, xpEnd: Math.round((xp - i * 2.5) * 10) / 10, rank: 3 + i })) }
 }
 
 /** Made-up predictions for the example schedule: each alliance's ratings added up. */
@@ -2967,4 +3156,129 @@ export function useTeamPicklist(): TeamPicklistLine[] {
   const event = useCurrentEvent().key
   const rows = myPicklistTable.useRows()
   return useMemo(() => teamPicklist(rows.filter((row) => row.event_key === event)), [rows, event])
+}
+
+// ---------------------------------------------------------------------------
+// Nexus live status (#165, step 2): what's on the field right now, what's
+// queuing, and when our next match should queue. It comes through the
+// `nexus` server function (supabase/functions/nexus/), which holds the
+// team's key, with made-up example data in demo mode. The last answer is
+// kept on the phone, so with no Wi-Fi it still shows, with when it's from.
+// Not every event uses Nexus: then this says so and the link is still there.
+
+/** One event's live status from Nexus, the parts the app shows. */
+export interface NexusStatus {
+  /** Like "Qualification 18", or null. */
+  onField: string | null
+  nowQueuing: string | null
+  /** Our next match that hasn't been played, or null. */
+  ourNext: { label: string; status: string | null; alliance: 'red' | 'blue'; queueAt: number | null } | null
+  /** The event's announcements, newest first. */
+  announcements: string[]
+  /** When Nexus's numbers are from, in milliseconds since 1970, or null. */
+  asOf: number | null
+}
+
+/**
+ * Read Nexus's answer for an event. Each match has a label like
+ * "Qualification 18", a status ("Queuing soon", "Now queuing", "On deck",
+ * "On field"), the teams on each side and estimated times. Anything it
+ * can't read is left out. Check it against a real answer.
+ */
+export function readNexus(answer: unknown, team = OUR_TEAM): NexusStatus {
+  const a = (answer ?? {}) as Record<string, unknown>
+  const matches = (Array.isArray(a.matches) ? a.matches : []) as Record<string, unknown>[]
+  const label = (m: Record<string, unknown>) => (typeof m.label === 'string' ? m.label : null)
+  const status = (m: Record<string, unknown>) => (typeof m.status === 'string' ? m.status : null)
+  const teams = (value: unknown) => (Array.isArray(value) ? value.map((t) => Number(String(t).replace(/^frc/, ''))) : [])
+  const onField = matches.find((m) => status(m) === 'On field')
+  const next = matches.find((m) => status(m) !== 'Completed' && (teams(m.redTeams).includes(team) || teams(m.blueTeams).includes(team)))
+  const times = (next?.times ?? {}) as Record<string, unknown>
+  const announcements = (Array.isArray(a.announcements) ? a.announcements : []) as Record<string, unknown>[]
+  return {
+    onField: onField ? label(onField) : null,
+    nowQueuing: typeof a.nowQueuing === 'string' ? a.nowQueuing : null,
+    ourNext: next && label(next)
+      ? { label: label(next)!, status: status(next), alliance: teams(next.redTeams).includes(team) ? 'red' : 'blue', queueAt: num(times.estimatedQueueTime) }
+      : null,
+    announcements: [...announcements]
+      .sort((x, y) => (num(y.postedTime) ?? 0) - (num(x.postedTime) ?? 0))
+      .flatMap((n) => (typeof n.announcement === 'string' ? [n.announcement] : [])),
+    asOf: num(a.dataAsOfTime),
+  }
+}
+
+/** One event's live status from Nexus. */
+export async function getNexusStatus(event = currentEvent()): Promise<Result<NexusStatus>> {
+  const result = await callFunction<unknown>('nexus', { kind: 'status', event }, () => demoNexus(event))
+  return result.ok ? ok(readNexus(result.value)) : result
+}
+
+/** The last Nexus status this phone got, and for which event. */
+export interface SavedNexus {
+  event: string
+  status: NexusStatus
+  /** ISO date and time it came. */
+  savedAt: string
+}
+
+// Kept on the phone so it shows with no Wi-Fi. Not keepOnReset: it's only a copy.
+export const nexusStore = createStore<SavedNexus | null>('scouting-nexus', 1, () => null)
+
+/** How often to ask Nexus while the overview is open. The nexus function reuses its answer for 30 seconds. */
+export const NEXUS_EVERY_MS = 60 * 1000
+
+/** Ask Nexus now and keep the answer. Gives back why it couldn't, if it couldn't. */
+export async function refreshNexus(event = currentEvent()): Promise<Result<SavedNexus>> {
+  if (globalThis.navigator?.onLine === false) return fail('No connection.')
+  const result = await getNexusStatus(event)
+  if (!result.ok) return result
+  const saved = { event, status: result.value, savedAt: new Date().toISOString() }
+  nexusStore.set(saved)
+  return ok(saved)
+}
+
+/** "Queue at 2:15 PM", in the phone's own time zone, which is the event's when you're there. */
+export function queueTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+}
+
+/**
+ * The event's Nexus status for a page: the saved copy, asked for again now
+ * and every minute while the page is open. `problem` says why the last ask
+ * didn't work, like an event that doesn't use Nexus.
+ */
+export function useNexusStatus(): { saved: SavedNexus | null; problem: string | null } {
+  const event = useCurrentEvent().key
+  const saved = useStore(nexusStore)
+  const [problem, setProblem] = useState<string | null>(null)
+  useEffect(() => {
+    let current = true
+    const ask = () => void refreshNexus(event).then((result) => current && setProblem(result.ok ? null : result.error))
+    ask()
+    const timer = setInterval(ask, NEXUS_EVERY_MS)
+    return () => {
+      current = false
+      clearInterval(timer)
+    }
+  }, [event])
+  return { saved: saved?.event === event ? saved : null, problem }
+}
+
+/** Made-up Nexus status for demo mode, from the example schedule: match 3 on the field, match 4 queuing. */
+function demoNexus(event: string) {
+  const now = Date.now()
+  return {
+    eventKey: event,
+    dataAsOfTime: now,
+    nowQueuing: 'Qualification 4',
+    matches: DEMO_SCHEDULE.map(([red, blue], i) => ({
+      label: `Qualification ${i + 1}`,
+      status: ['Completed', 'Completed', 'On field', 'Now queuing'][i] ?? 'Queuing soon',
+      redTeams: red.map(String),
+      blueTeams: blue.map(String),
+      times: { estimatedQueueTime: now + (i - 3) * 8 * 60 * 1000 },
+    })),
+    announcements: [{ id: '1', announcement: 'Example: lunch break after match 30.', postedTime: now - 10 * 60 * 1000 }],
+  }
 }

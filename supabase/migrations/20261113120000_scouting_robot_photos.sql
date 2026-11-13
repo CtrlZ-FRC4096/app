@@ -8,8 +8,9 @@
 -- the app sends it with "on conflict do nothing", so sending a photo twice
 -- never makes two rows.
 --
--- Signed-in members see every photo and add their own. Only mentors and
--- admins delete them. Nobody changes one after it's added.
+-- The strategy team (and mentors) see every photo (#167); anyone else sees
+-- the ones they took or sent. Signed-in members add their own. Only mentors
+-- and admins delete them. Nobody changes one after it's added.
 --
 -- The phone shrinks each photo to a JPEG before saving it, so the bucket
 -- only takes JPEGs (not image/*: that would let in SVG images, which can
@@ -56,9 +57,12 @@ grant select, insert, delete on table public.scouting_robot_photos to authentica
 -- Changes from other people show up in the app straight away.
 alter publication supabase_realtime add table public.scouting_robot_photos;
 
-create policy "Members can see robot photos"
+create policy "Strategy sees every robot photo, scouts their own"
   on public.scouting_robot_photos for select to authenticated
-  using ((select private.is_member()));
+  using (
+    (select private.is_strategy())
+    or ((select private.is_member()) and (created_by = (select auth.uid()) or taken_by = (select auth.uid())))
+  );
 
 create policy "Members can send robot photos as themselves"
   on public.scouting_robot_photos for insert to authenticated
@@ -72,9 +76,11 @@ create policy "Mentors can delete robot photos"
 -- files, so each rule starts by naming this bucket. There's no update rule,
 -- so a photo can't be swapped for another file.
 
-create policy "Members can open robot photos"
+-- Only the strategy team opens the files: a scout sees their own photos from
+-- their phone until they're sent.
+create policy "Strategy can open robot photos"
   on storage.objects for select to authenticated
-  using (bucket_id = 'robot-photos' and (select private.is_member()));
+  using (bucket_id = 'robot-photos' and (select private.is_strategy()));
 
 -- Files go in an event/team folder, named with an id and .jpg, like the
 -- rows' paths.

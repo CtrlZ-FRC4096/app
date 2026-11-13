@@ -137,6 +137,33 @@ picklists are for it, and new entries are saved under it.
 - **Until a mentor picks one,** it's `EVENT_KEY` in `season.ts`, and the
   top of the page says so.
 
+## The strategy team (#167)
+
+From the scouting requirements: only strategy people and mentors see the
+analysis. **Strategy and mentors only:** the overview, team pages, all four
+picklists, the simulator, stats, and the whole Prescouting module.
+**Everyone:** the match and pit forms, the schedule and the rankings, so any
+scout can do their job.
+
+- **Who:** mentors tick people on the Members page (Strategy team column).
+  Mentors and admins always count. It's the `scouting_strategy_team` table
+  (`supabase/migrations/..._scouting_strategy_team.sql`, rules tested in
+  `supabase/tests/scouting-strategy-team.test.ts`), with `keepOffline`, so a
+  phone with no Wi-Fi still knows which pages to show.
+- **In code:** `isStrategy(user, members)` and `useIsStrategy()` in
+  `data.ts`. `STRATEGY_PATHS` lists the strategy-only pages, and
+  `useHiddenScoutingPages()` hides them from the Competition menu (through
+  `useHiddenPages` in `index.ts`). Off the team, the switch only shows
+  Match, Pit, Schedule and Rankings, `#/scouting` opens the match form, a
+  strategy page's address says "Only the strategy team and mentors can see
+  this.", and team numbers aren't links.
+- **The database too:** the same migration's `private.is_strategy()` limits
+  reading match and pit entries to the strategy team, except that everyone
+  still reads the entries they scouted or sent, so scouts can send entries
+  and see them synced. The final picklist, personal picklists (other
+  people's), robot photos (other people's), and everything in Prescouting
+  are strategy only too.
+
 ## Robot photos (#164)
 
 The pit form has an **Add a photo** button that opens the phone's camera.
@@ -168,9 +195,20 @@ Tap one to open it full size.
 [Nexus](https://frc.nexus) shows what's happening at an event right now:
 what's on the field, who should be queuing, and announcements. The overview
 and the Schedule page have an **Open in Nexus ↗** link to the current
-event's page (`nexusEventUrl()` in `data.ts`, #165). Showing Nexus's live
-status in the app would need a server function holding a Nexus key, like
-`tba` and `match13`: that needs a mentor.
+event's page (`nexusEventUrl()` in `data.ts`, #165).
+
+The overview also shows Nexus's live status (#165 step 2): what's on the
+field, what's queuing, our next match with when to queue, and the newest
+announcement. It comes through the `nexus` server function, which holds the
+`NEXUS_KEY` secret and only allows one event's status. `getNexusStatus()`
+asks, `readNexus()` reads the answer, and `useNexusStatus()` asks again
+every minute while the overview is open and keeps the last answer on the
+phone (`nexusStore`), so it shows with no Wi-Fi. An event that doesn't use
+Nexus says so. **Check `readNexus()` against a real answer at the first
+event**: it reads the fields Nexus is known to send (`label`, `status`,
+`redTeams`, `blueTeams`, `times.estimatedQueueTime`, `nowQueuing`,
+`announcements`) and leaves out anything else. The pit display (#161) can
+use the same queue time when it's built.
 
 ## The Blue Alliance
 
@@ -244,8 +282,18 @@ have them; a missing one shows "not given".
 The team page's Match 13 panel shows OPR, DPR and all of these. The stats
 page shows them for every team: tap a heading to sort, tap a team to open
 its page. Only the table scrolls sideways on a phone. Anything from Match
-13 endpoints we don't ask for yet (like its event simulation) needs a
-mentor to allow it in the `match13` server function first.
+13 endpoints we don't ask for yet need a mentor to allow them in the
+`match13` server function first.
+
+**Match 13's simulation** (`kind: 'sim'`): `getEventSim()` asks for it with
+the ratings, and `withSim()` puts each team's likely final rank, its range
+(5th to 95th percentile) and its ranking points on the team's rating, so
+the team page and the stats table (Sim rank, Sim RP) show them. If Match 13
+has no simulation yet, the ratings show without it. **A team's season**
+(`kind: 'team-events'`): `getTeamSeasonRatings(team, year)` gives a team's
+xP and rank at each event, for Prescouting. Match 13's docs don't give these
+answers' exact shape, so `readSim()` and `readTeamEvents()` read the likely
+fields and leave out anything else: check them against a real answer.
 
 If a load doesn't work, the last copy stays and `error` says why. Match 13
 having nothing for the event yet isn't an error: nobody's rated yet. A copy

@@ -7,7 +7,7 @@ import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../scouting/data'
 import {
   NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, firstLine, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout,
   setPrescoutEvent, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams,
-  MAX_STAR_REASON, removeTeamStar, starTeam, unstarTeam, useStars,
+  MAX_STAR_REASON, STRATEGY_ONLY, removeTeamStar, starTeam, unstarTeam, useIsStrategy, useStars,
   type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutStar, type PrescoutTeam,
 } from './data'
 import { useMemberNames } from '../../core/members'
@@ -27,6 +27,14 @@ const teamHref = prescoutHref
 // link to it always opens the same team at the same event.
 export default function PrescoutPage() {
   const [event, team] = useRoute().rest
+  // Strategy team and mentors only (#167). The database refuses anyone else too.
+  if (!useIsStrategy()) {
+    return (
+      <Panel>
+        <p className="panel-body" style={{ margin: 0 }}>{`${STRATEGY_ONLY} Ask a mentor if you need it.`}</p>
+      </Panel>
+    )
+  }
   if (event === undefined) return <Overview />
   const number = Number(team)
   if (!isEventKey(event) || !Number.isInteger(number) || number < 1 || number > MAX_TEAM) {

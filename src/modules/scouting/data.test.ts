@@ -21,6 +21,8 @@ import { addMissingTeams, byPosition, moveTeam, picklist, picklistTable, positio
 import { COUNTERS, DRIVETRAINS, EVENT_KEY } from './season'
 import { loadSchedule, positionStore, setPosition, teamFor, type SavedSchedule } from './data'
 import { rankOf } from './data'
+import { getEventSim, getNexusStatus, getTeamSeasonRatings, nexusStore, readNexus, readSim, readTeamEvents, refreshNexus, withSim } from './data'
+import { STRATEGY_PATHS, addStrategyMember, isStrategy, removeStrategyMember, strategyTable } from './data'
 import { MAX_PICKLIST_NOTE, addToMyPicklist, moveOnMyPicklist, myPicklist, myPicklistTable, setPicklistNote, startMyPicklist, teamPicklist, type MyPicklistRow } from './data'
 import { addPhoto, photoPath, photoStore, photoToRow, photosTable, shrunkSize, MAX_PHOTO_BYTES } from './data'
 import { readFile } from './photoFiles'
@@ -2042,5 +2044,121 @@ describe('the team picklist', () => {
     myPicklistTable.reset()
     const lines = teamPicklist(myPicklistTable.rows())
     expect(lines[0]).toMatchObject({ team: 9994, lists: 3, onLists: 3 })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The strategy team (#167). In demo mode Alex (student) and Jordan are on it;
+// Casey (student leader) isn't.
+
+describe('the strategy team', () => {
+  beforeEach(() => {
+    strategyTable.reset()
+  })
+
+  it('counts strategy members, mentors and admins, but not other students or leaders, or nobody signed in', () => {
+    const members = strategyTable.rows()
+    expect(isStrategy({ id: DEMO_PEOPLE.alex, role: 'student' }, members)).toBe(true)
+    expect(isStrategy({ id: DEMO_PEOPLE.casey, role: 'leader' }, members)).toBe(false)
+    expect(isStrategy({ id: DEMO_PEOPLE.sam, role: 'student' }, members)).toBe(false)
+    expect(isStrategy({ id: DEMO_PEOPLE.sam, role: 'mentor' }, members)).toBe(true)
+    expect(isStrategy({ id: DEMO_PEOPLE.sam, role: 'admin' }, [])).toBe(true)
+    expect(isStrategy(null, members)).toBe(false)
+  })
+
+  it('keeps the forms, schedule and rankings open to everyone', () => {
+    for (const path of ['match', 'pit', 'schedule', 'rankings']) expect(STRATEGY_PATHS).not.toContain(path)
+    for (const path of ['', 'team', 'picklist', 'shared-picklist', 'simulate', 'stats']) expect(STRATEGY_PATHS).toContain(path)
+  })
+
+  it('lets a mentor add and remove people, once each, but not a student', async () => {
+    setDemoRole('student')
+    expect(await addStrategyMember(DEMO_PEOPLE.casey)).toEqual({ ok: false, error: 'Only mentors choose the strategy team.' })
+    setDemoRole('mentor')
+    expect(await addStrategyMember(DEMO_PEOPLE.casey)).toMatchObject({ ok: true, value: { member_id: DEMO_PEOPLE.casey } })
+    expect(await addStrategyMember(DEMO_PEOPLE.casey)).toMatchObject({ ok: false, error: expect.stringMatching(/already/) })
+    expect(await removeStrategyMember(DEMO_PEOPLE.casey)).toMatchObject({ ok: true })
+    expect(await removeStrategyMember(DEMO_PEOPLE.casey)).toMatchObject({ ok: false })
+    setDemoRole('student')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Match 13's simulation and a team's events (#152, #153), and Nexus's live
+// status (#165). The readers take what they can from each answer and leave
+// out the rest.
+
+describe("Match 13's simulation and a team's events", () => {
+  it("reads each team's likely final rank and ranking points, from stats objects or flat fields", () => {
+    expect(readSim({ teams: [{ teamNumber: 9991, rank: { mean: 3.2, p5: 1, p50: 3, p95: 7 }, rp: { mean: 24.5 } }] })).toEqual([
+      { team: 9991, rank: 3.2, rankLow: 1, rankHigh: 7, rp: 24.5 },
+    ])
+    expect(readSim([{ team: 9992, meanRank: 8, rankP5: 4, rankP95: 12, meanRp: 15 }])).toEqual([{ team: 9992, rank: 8, rankLow: 4, rankHigh: 12, rp: 15 }])
+  })
+
+  it('leaves out teams with nothing readable, and answers that are not a list', () => {
+    expect(readSim({ teams: [{ teamNumber: 9991, xpEnd: 40 }, { rank: { mean: 1 } }] })).toEqual([])
+    expect(readSim(null)).toEqual([])
+    expect(readSim({ teams: 'none' })).toEqual([])
+  })
+
+  it("puts each team's simulation on its rating, leaving teams without one alone", () => {
+    const ratings: Match13Rating[] = [9991, 9992].map((teamNumber) => ({ teamNumber, xpStart: 30, xpEnd: 40, xAuto: null, xTele: null, xEnd: null, epa: null, opr: null, dpr: null }))
+    const merged = withSim(ratings, [{ team: 9991, rank: 2.5, rankLow: 1, rankHigh: 5, rp: 20 }])
+    expect(merged[0]).toMatchObject({ simRank: 2.5, simRankLow: 1, simRankHigh: 5, simRp: 20 })
+    expect(merged[1]).toBe(ratings[1])
+  })
+
+  it("reads a team's xP and rank at each event, and has example ones in demo mode", async () => {
+    expect(readTeamEvents({ events: [{ eventKey: '2026ilch', xpEnd: 41.7, rank: 3 }, { key: '2026mndu', xp: 38 }, { xpEnd: 1 }] })).toEqual([
+      { event: '2026ilch', xp: 41.7, rank: 3 },
+      { event: '2026mndu', xp: 38, rank: null },
+    ])
+    const demo = await getTeamSeasonRatings(9991, 2026)
+    expect(demo.ok && demo.value.length).toBeGreaterThan(0)
+    const sim = await getEventSim()
+    expect(sim.ok && sim.value.every((s) => s.rank !== null)).toBe(true)
+  })
+})
+
+describe('Nexus live status', () => {
+  const now = 1_700_000_000_000
+  const answer = {
+    dataAsOfTime: now,
+    nowQueuing: 'Qualification 20',
+    matches: [
+      { label: 'Qualification 17', status: 'Completed', redTeams: ['4096', '9991', '9992'], blueTeams: ['9993', '9994', '9995'] },
+      { label: 'Qualification 18', status: 'On field', redTeams: ['9991', '9992', '9993'], blueTeams: ['9994', '9995', '9996'] },
+      { label: 'Qualification 22', status: 'Queuing soon', redTeams: ['9991', '9992', '9993'], blueTeams: ['9994', '4096', '9996'], times: { estimatedQueueTime: now + 600_000 } },
+    ],
+    announcements: [{ announcement: 'Older', postedTime: now - 1000 }, { announcement: 'Newer', postedTime: now }],
+  }
+
+  it("reads what's on the field, what's queuing, our next match with its queue time, and announcements newest first", () => {
+    expect(readNexus(answer, 4096)).toEqual({
+      onField: 'Qualification 18',
+      nowQueuing: 'Qualification 20',
+      ourNext: { label: 'Qualification 22', status: 'Queuing soon', alliance: 'blue', queueAt: now + 600_000 },
+      announcements: ['Newer', 'Older'],
+      asOf: now,
+    })
+  })
+
+  it('reads an empty or odd answer as nothing, rather than guessing', () => {
+    expect(readNexus(null)).toEqual({ onField: null, nowQueuing: null, ourNext: null, announcements: [], asOf: null })
+    expect(readNexus({ matches: 'soon', nowQueuing: 5 })).toMatchObject({ onField: null, nowQueuing: null, ourNext: null })
+  })
+
+  it('keeps the last status on the phone, for this event, and says why with no connection', async () => {
+    nexusStore.reset()
+    const result = await refreshNexus(EVENT_KEY)
+    expect(result.ok && result.value.status.onField).toBe('Qualification 3')
+    expect(nexusStore.get()?.event).toBe(EVENT_KEY)
+    vi.stubGlobal('navigator', { onLine: false })
+    expect(await refreshNexus(EVENT_KEY)).toEqual({ ok: false, error: 'No connection.' })
+    expect(nexusStore.get()?.status.onField).toBe('Qualification 3')
+    vi.unstubAllGlobals()
+    const demo = await getNexusStatus(EVENT_KEY)
+    expect(demo.ok && demo.value.ourNext?.label).toBe('Qualification 3')
   })
 })

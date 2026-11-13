@@ -9,6 +9,11 @@ open it; only admins can change anything.
 - **Admins change roles** (student, student leader, mentor, admin) and
   **switch off access** for people who have left the team. Switched-off people can't see anything,
   straight away.
+- **Mentors choose the scouting strategy team** (#167) with the Strategy
+  team tick box. Strategy members, mentors and admins see Scouting's
+  overview, team pages, picklists, simulator and stats, and Prescouting.
+  Mentors and admins always count. The team is the Scouting module's
+  `scouting_strategy_team` table; see its README.
 - Nobody can change their own role or access here, and the database never
   lets the team end up without an admin.
 

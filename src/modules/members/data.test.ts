@@ -82,13 +82,19 @@ describe('checkServerFunctions', () => {
   it('says which keys are missing, without calling those functions', async () => {
     const checks = await withAnswers({ hello: { ok: true, value: { message: 'Hi Pat', role: 'admin', secrets: { TBA_KEY: false, ONSHAPE_ACCESS_KEY: true } } } })
     expect(checks.map((c) => [c.name, c.ok])).toEqual([
-      ['Server functions', true], ['The Blue Alliance', false], ['Onshape', false], ['Slack', false], ['Google Calendar', false], ['Phone notifications', false],
+      ['Server functions', true], ['The Blue Alliance', false], ['Onshape', false], ['Slack', false], ['Google Calendar', false], ['Phone notifications', false], ['Nexus', false],
     ])
     expect(checks[1].text).toMatch(/TBA_KEY/)
     expect(checks[2].text).toBe('No ONSHAPE_SECRET_KEY secret yet. Add it in Supabase: see "Server functions" in supabase/README.md.')
     expect(checks[3].text).toBe('No SLACK_BOT_TOKEN secret yet. Add it in Supabase: see "Server functions" in supabase/README.md.')
     expect(checks[4].text).toBe('No GOOGLE_SERVICE_ACCOUNT_KEY and GOOGLE_CALENDAR_ID secrets yet. Add them in Supabase: see "Server functions" in supabase/README.md.')
     expect(checks[5].text).toBe('No VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY secrets yet. Add them in Supabase: see "Server functions" in supabase/README.md.')
+    expect(checks[6].text).toBe('No NEXUS_KEY secret yet. Add it in Supabase: see "Server functions" in supabase/README.md.')
+  })
+
+  it("says the Nexus key is set, since there's nothing harmless to ask Nexus", async () => {
+    const checks = await withAnswers({ hello: { ok: true, value: { message: 'Hi Pat', role: 'admin', secrets: { NEXUS_KEY: true } } } })
+    expect(checks.at(-1)).toEqual({ name: 'Nexus', ok: true, text: 'The key is set. The Scouting overview shows live status at events that use Nexus.' })
   })
 
   it('has Slack send you a test message, and asks Google which calendar it is', async () => {

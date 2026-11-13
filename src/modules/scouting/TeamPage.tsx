@@ -4,15 +4,17 @@ import { useMemberNames } from '../../core/members'
 import { href, navigate } from '../../core/router'
 import { toast } from '../../core/toast'
 import { Bar, PageHead, Panel, Pill } from '../../core/ui'
-import { MIN_MATCHES, pointsRange, useCurrentEvent, useScoutedTeams, useTeamPoints, useTeamSummary, type Tally, type TeamSummary } from './data'
+import { MIN_MATCHES, pointsRange, useCurrentEvent, useIsStrategy, useScoutedTeams, useTeamPoints, useTeamSummary, type Tally, type TeamSummary } from './data'
 import { PRESCOUT_QUESTIONS, prescoutHref, usePrescoutFor } from '../prescouting/data'
 import TeamPhotos from './TeamPhotos'
 import TeamRank from './TeamRank'
 import TeamVideos from './TeamVideos'
 import TeamRatings from './TeamRatings'
 
-/** "Team 9991", as a link to its team page. */
+/** "Team 9991", as a link to its team page, or just the words for someone off the strategy team (#167), who can't open it. */
 export function TeamLink(props: { team: number }) {
+  const strategy = useIsStrategy()
+  if (!strategy) return <>Team {props.team}</>
   return <a href={href('scouting', 'team', String(props.team))}>Team {props.team}</a>
 }
 

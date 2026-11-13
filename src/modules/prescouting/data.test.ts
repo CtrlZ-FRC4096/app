@@ -95,7 +95,7 @@ describe('prescouting notes', () => {
   it("adds a team's row the first time, trimmed, and signed by whoever saved it", async () => {
     expect(notesFor(9992)).toBeUndefined()
     const result = await savePrescout(EVENT_KEY, 9992, ANSWERS)
-    expect(result).toMatchObject({ ok: true, value: { event_key: EVENT_KEY, team_number: 9992, strengths: 'Quick climber', key_task: 'Scoring fuel', marked: false } })
+    expect(result).toMatchObject({ ok: true, value: { event_key: EVENT_KEY, team_number: 9992, strengths: 'Quick climber', key_task: 'Scoring fuel' } })
     expect(notesFor(9992)?.created_by).toBeTruthy()
   })
 
@@ -133,7 +133,7 @@ describe('prescouting notes', () => {
 describe('the prescouting overview', () => {
   const team = (n: number, epa: number | null) => ({ team: n, name: `Team ${n}`, epa, tbaUrl: tbaTeamUrl(n, EVENT_KEY) })
   const note = (n: number, strengths = '') => ({
-    id: `id-${n}`, event_key: EVENT_KEY, team_number: n, ...NO_ANSWERS, strengths, marked: false, created_at: '2026-11-05T19:00:00Z', created_by: null,
+    id: `id-${n}`, event_key: EVENT_KEY, team_number: n, ...NO_ANSWERS, strengths, created_at: '2026-11-05T19:00:00Z', created_by: null,
   })
   const star = (n: number, forTeam: boolean, by = 'me'): PrescoutStar => ({
     id: `star-${n}-${by}-${forTeam}`, event_key: EVENT_KEY, team_number: n, for_team: forTeam, reason: forTeam ? 'Why' : null, created_at: '2026-11-05T19:00:00Z', created_by: by,
@@ -168,7 +168,7 @@ describe('the prescouting overview', () => {
 
 describe('one team’s prescouting, for the Scouting team page (#119)', () => {
   const row = (fields: Partial<PrescoutNotes>): PrescoutNotes => ({
-    id: 'p1', event_key: '2026ilch', team_number: 9991, ...NO_ANSWERS, marked: false, created_at: '2026-11-05T19:00:00Z', created_by: null, ...fields,
+    id: 'p1', event_key: '2026ilch', team_number: 9991, ...NO_ANSWERS, created_at: '2026-11-05T19:00:00Z', created_by: null, ...fields,
   })
 
   it("finds the team's notes at the event", () => {
@@ -176,10 +176,10 @@ describe('one team’s prescouting, for the Scouting team page (#119)', () => {
     expect(prescoutFor([notes, row({ id: 'p2', team_number: 9992, key_task: 'Scoring' })], '2026ilch', 9991)).toBe(notes)
   })
 
-  it('gives nothing for a team nobody prescouted, one at another event, or one with only a mark', () => {
+  it('gives nothing for a team nobody prescouted, one at another event, or one with no answers yet', () => {
     expect(prescoutFor([], '2026ilch', 9991)).toBeNull()
     expect(prescoutFor([row({ event_key: '2026mndu', key_task: 'Defense' })], '2026ilch', 9991)).toBeNull()
-    expect(prescoutFor([row({ marked: true })], '2026ilch', 9991)).toBeNull()
+    expect(prescoutFor([row({})], '2026ilch', 9991)).toBeNull()
   })
 
   it("links to the team's prescouting page", () => {

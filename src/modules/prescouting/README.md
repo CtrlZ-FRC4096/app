@@ -21,7 +21,8 @@
   - In `data.ts`: `seasonMatches()` puts a team's matches in order with their video links; `savePrescoutMatch()` saves a look; `usePrescoutMatches(team)` gives everyone's; `prescoutAverages()` averages them, counting two scouts on the same match as one match.
   - The events come from `getTeamEvents(team, year)` in Scouting's `data.ts`, and the matches from `getTeamMatches()`.
   - The looks are in `prescouting_matches` (`supabase/migrations/..._prescouting_matches.sql`, rules tested in `supabase/tests/prescouting-matches.test.ts`): every member reads every row, adds their own and changes or removes their own; mentors can remove anyone's. Like the notes, it saves straight to the table, since prescouting happens with Wi-Fi.
-  - Later, optional: Match 13's xP at each of the team's events, which needs a mentor to allow that address in the `match13` server function first (see #152).
+  - Each event also shows the team's Match 13 xP and rank there, from `getTeamSeasonRatings()` in Scouting's `data.ts` (the `match13` function's `team-events`). If Match 13 can't be reached, the events show without it.
+- **Strategy team only** (#167): Prescouting is hidden from the menu and home page for anyone off the strategy team, and its page says "Only the strategy team and mentors can see this." The database's rules on all three of its tables only let the strategy team (and mentors) read and write them.
 
 ## What it needs next
 

@@ -65,6 +65,14 @@ export default function TeamRatings(props: { team: number }) {
           {STAT_COLUMNS.filter((c) => c.percent).map((c) => (
             <Line key={c.key} label={c.label} value={statText(statValue(rating, c.key), c)} />
           ))}
+          {/* #152: Match 13's simulation of the event, when it has one. */}
+          {rating.simRank != null && (
+            <Line
+              label="Likely final rank (Match 13 sim)"
+              value={`${rating.simRank.toFixed(1)}${rating.simRankLow != null && rating.simRankHigh != null ? ` (${rating.simRankLow}–${rating.simRankHigh})` : ''}`}
+            />
+          )}
+          {rating.simRp != null && <Line label="Ranking points (Match 13 sim)" value={rating.simRp.toFixed(1)} />}
           {ratingComponents(rating).map((c) => (
             <Line key={c.name} label={`Game part: ${c.name}`} value={statText(c.value)} />
           ))}

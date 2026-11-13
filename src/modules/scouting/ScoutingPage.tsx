@@ -2,7 +2,7 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { navigate, useRoute } from '../../core/router'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
-import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
+import { DRIVER_SKILLS, STOPS, STRATEGY_ONLY, STRATEGY_PATHS, saveEntry, useEntries, useIsStrategy, type Stop } from './data'
 import EventPicker from './EventPicker'
 import FormSection from './FormSection'
 import MatchTeamFields from './MatchTeamFields'
@@ -72,30 +72,45 @@ const PICKLISTS: Record<string, string> = { Ranked: 'Picklist', Mine: 'My pickli
 // #/scouting/team/9991 is the team page for team 9991 (TeamPage.tsx), with
 // both forms hidden. It's only drawn while open: it waits for the team
 // database, and the forms must work with no connection.
+//
+// Some pages are for the strategy team and mentors only (#167): the
+// overview, team pages, picklists, simulator and stats. Anyone else gets a
+// shorter switch, #/scouting opens the match form for them, and going to a
+// strategy page by its address says it's strategy only.
 export default function ScoutingPage() {
   const [rest = '', teamText] = useRoute().rest
-  const view = rest === 'team' ? 'Team' : Object.keys(PATHS).find((v) => PATHS[v] === rest) ?? 'Overview'
+  const strategy = useIsStrategy()
+  const found = rest === 'team' ? 'Team' : Object.keys(PATHS).find((v) => PATHS[v] === rest) ?? 'Overview'
+  // Off the strategy team, the overview's address is the match form.
+  const view = !strategy && found === 'Overview' ? 'Match' : found
+  const blocked = !strategy && STRATEGY_PATHS.includes(rest === 'team' ? 'team' : PATHS[view])
   const picklist = Object.keys(PICKLISTS).find((choice) => PICKLISTS[choice] === view)
   const team = Number(teamText)
+  const choices = strategy ? SWITCH : SWITCH.filter((v) => v !== 'Picklists' && !STRATEGY_PATHS.includes(PATHS[v]))
   return (
     <>
       <EventPicker />
       <div style={{ marginBottom: 12, display: 'grid', gap: 8 }}>
-        <Pick label="Which page" options={SWITCH} value={picklist ? 'Picklists' : view} onChange={(v) => navigate('scouting', PATHS[v === 'Picklists' ? 'Picklist' : v])} />
-        {picklist && <Pick label="Which picklist" options={Object.keys(PICKLISTS)} value={picklist} onChange={(choice) => navigate('scouting', PATHS[PICKLISTS[choice]])} />}
+        <Pick label="Which page" options={choices} value={picklist ? 'Picklists' : view} onChange={(v) => navigate('scouting', PATHS[v === 'Picklists' ? 'Picklist' : v])} />
+        {picklist && !blocked && <Pick label="Which picklist" options={Object.keys(PICKLISTS)} value={picklist} onChange={(choice) => navigate('scouting', PATHS[PICKLISTS[choice]])} />}
       </div>
-      {view === 'Overview' && <Overview paths={{ ...PATHS, Teams: 'team' }} />}
+      {blocked && (
+        <Panel>
+          <p className="panel-body" style={{ margin: 0 }}>{`${STRATEGY_ONLY} Ask a mentor if you need it.`}</p>
+        </Panel>
+      )}
+      {!blocked && view === 'Overview' && <Overview paths={{ ...PATHS, Teams: 'team' }} />}
       <div hidden={view !== 'Match'}><MatchForm /></div>
       <div hidden={view !== 'Pit'}><PitForm /></div>
       {view === 'Schedule' && <Schedule />}
       {view === 'Rankings' && <RankingsPage />}
-      {view === 'Picklist' && <Picklist />}
-      {view === 'My picklist' && <MyPicklist />}
-      {view === 'Team picklist' && <TeamPicklist />}
-      {view === 'Final picklist' && <SharedPicklist />}
-      {view === 'Simulator' && <Simulator />}
-      {view === 'Stats' && <StatsTable />}
-      {view === 'Team' && <TeamPage team={Number.isInteger(team) && team > 0 ? team : null} />}
+      {!blocked && view === 'Picklist' && <Picklist />}
+      {!blocked && view === 'My picklist' && <MyPicklist />}
+      {!blocked && view === 'Team picklist' && <TeamPicklist />}
+      {!blocked && view === 'Final picklist' && <SharedPicklist />}
+      {!blocked && view === 'Simulator' && <Simulator />}
+      {!blocked && view === 'Stats' && <StatsTable />}
+      {!blocked && view === 'Team' && <TeamPage team={Number.isInteger(team) && team > 0 ? team : null} />}
     </>
   )
 }

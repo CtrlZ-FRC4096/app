@@ -11,7 +11,7 @@ import RankingsPage from './RankingsPage'
 import { rankingsStore, refreshRankings } from './data'
 import Schedule from './Schedule'
 import SharedPicklist from './SharedPicklist'
-import TeamPage from './TeamPage'
+import TeamPage, { TeamLink } from './TeamPage'
 import { AUTO_SIDES, COUNTERS, DRIVETRAINS, EVENT_KEY, ROLES } from './season'
 
 describe('the team page', () => {
@@ -54,6 +54,27 @@ describe('the Match / Pit switch', () => {
     for (const path of ['match', 'pit', 'schedule', 'rankings', 'team', 'picklist', 'my-picklist', 'team-picklist', 'shared-picklist', 'simulate', 'stats']) {
       expect(html).toContain(`href="#/scouting/${path}"`)
     }
+  })
+})
+
+describe('strategy-only pages (#167)', () => {
+  afterEach(() => setDemoRole('student'))
+
+  it('opens the match form at #/scouting for someone off the strategy team, with only the pages they can use', () => {
+    // Casey, the demo student leader, isn't on the strategy team.
+    setDemoRole('leader')
+    const html = renderToString(<ScoutingPage />)
+    expect(html).toContain('aria-pressed="true">Match</button>')
+    expect(html).not.toContain('Scouting overview')
+    for (const hidden of ['Overview', 'Picklists', 'Simulator', 'Stats']) expect(html).not.toContain(`>${hidden}</button>`)
+    for (const shown of ['Pit', 'Schedule', 'Rankings']) expect(html).toContain(`>${shown}</button>`)
+  })
+
+  it("shows team numbers as words, not links to team pages they can't open", () => {
+    setDemoRole('leader')
+    expect(renderToString(<TeamLink team={9991} />)).toBe('Team <!-- -->9991')
+    setDemoRole('student')
+    expect(renderToString(<TeamLink team={9991} />)).toContain('href="#/scouting/team/9991"')
   })
 })
 

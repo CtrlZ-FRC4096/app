@@ -199,7 +199,8 @@ the functions can read.
 |:--|:--|
 | `hello` | The example to copy. Answers members with their name and which secrets are set |
 | `tba` | The Blue Alliance for scouting: an event's schedule, rankings and teams, a team's matches and name, and the season's events (ours, or all of them) for picking the event |
-| `match13` | Match 13 for scouting: each team's rating (xP) at an event, and who's predicted to win each match |
+| `match13` | Match 13 for scouting: each team's rating (xP) at an event, who's predicted to win each match, its simulation of the event's final rankings, and a team's numbers at each event in a season (for prescouting) |
+| `nexus` | Nexus (frc.nexus) for scouting: an event's live status, like what's on the field, what's queuing and announcements. Only that one address, and it reuses each answer for 30 seconds |
 | `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio. For the CNC module: parts' sizes and outlines, and where parts sit in a sheet's layout assembly |
 | `slack` | Slack messages from the team's bot: to yourself (anyone), or to people and a channel (mentors). Used through `src/core/slack.ts` |
 | `calendar` | The team's Google Calendar: everyone sees its events; student leaders, mentors and admins add events, and change or remove the ones the app added. Used through `src/core/calendar.ts` |
@@ -233,6 +234,7 @@ paste a key anywhere else, including chat.
 | Supabase access token | `SUPABASE_ACCESS_TOKEN` | GitHub |
 | The Blue Alliance read key | `TBA_KEY` | Supabase |
 | Match 13 API key (`m13_live_...`) | `MATCH13_KEY` | Supabase |
+| Nexus API key | `NEXUS_KEY` | Supabase |
 | Onshape access key and secret key | `ONSHAPE_ACCESS_KEY`, `ONSHAPE_SECRET_KEY` | Supabase |
 | Slack bot token (`xoxb-...`) | `SLACK_BOT_TOKEN` | Supabase **and** GitHub (the attendance pull and reminders use GitHub's) |
 | Google service account key (a JSON file) | `GOOGLE_SERVICE_ACCOUNT_KEY` | Supabase |
@@ -336,8 +338,13 @@ paste a key anywhere else, including chat.
    so a full stand of phones costs about one request every two minutes.
    If a key is ever pasted somewhere it shouldn't be, delete it on the
    account page and make a new one.
-8. **Deploy:** **Actions > Deploy > Run workflow** on `main`.
-9. **Check:** in the app, **Members > Server functions > Check them**. Every
+8. **Add Nexus's key.** Sign in at [frc.nexus](https://frc.nexus), open
+   the API page from your account, and make a key for `Ctrl-Z team app`.
+   Copy it straight into Supabase's **Edge Functions > Secrets** as
+   `NEXUS_KEY`, and keep a copy in Bitwarden. Without it, the Scouting
+   overview still links to Nexus but can't show its live status.
+9. **Deploy:** **Actions > Deploy > Run workflow** on `main`.
+10. **Check:** in the app, **Members > Server functions > Check them**. Every
    line should say OK, and the Slack bot sends you a test message. Then
    open **Notifications** from the menu at the top right, turn them on and
    **Send me a test**.

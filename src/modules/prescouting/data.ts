@@ -17,9 +17,17 @@ import { isMentor } from '../../core/roles'
 import { currentUser } from '../../core/session'
 import { createTable, fail, ok, type Result, type Row } from '../../core/table'
 import {
-  COUNTERS, ENDGAME, EVENT_KEY, MAX_TEAM, getEventTeams, getRatings, matchLabel, tbaTeamUrl, videoLink,
+  COUNTERS, ENDGAME, EVENT_KEY, MAX_TEAM, STRATEGY_ONLY, useIsStrategy, getEventTeams, getRatings, matchLabel, tbaTeamUrl, videoLink,
   type Counter, type Match13Rating, type TbaMatchWithVideos, type TbaTeam,
 } from '../scouting/data'
+
+/** Prescouting is for the strategy team and mentors only (#167). What a page off limits says. */
+export { STRATEGY_ONLY, useIsStrategy }
+
+/** For the menu and home page: Prescouting is hidden from anyone off the strategy team. */
+export function useHiddenPrescouting(): string[] | 'all' {
+  return useIsStrategy() ? [] : 'all'
+}
 
 // ---------------------------------------------------------------------------
 // The teams at an event (#116).
@@ -132,11 +140,6 @@ export interface PrescoutNotes extends Row {
   /** How they've done this season, like their results at earlier events. */
   performance: string
   other_notes: string
-  /**
-   * The old shared Mark. No longer used: stars replaced it (#118), and the
-   * stars migration turned every mark into a team star.
-   */
-  marked: boolean
   /** Who started the notes for this team. */
   created_by: string | null
 }
@@ -161,12 +164,13 @@ export const NO_ANSWERS: PrescoutAnswers = { overall: '', strengths: '', weaknes
 
 // Made up, for demo mode. Team numbers in the 9990s, so nobody mistakes them for real scouting.
 const EXAMPLE_PRESCOUT: PrescoutNotes[] = [
-  { id: '00000000-0000-4000-8000-0000000e0101', event_key: EVENT_KEY, team_number: 9991, overall: 'Strong scorer, slow climb. Good first pick.', strengths: 'Fast cycles from the hub. Very consistent driver.\nNever broke down at their last event.', weaknesses: 'Slow to climb', key_task: 'Scoring fuel in teleop', auto_paths: 'Starts center, scores preload, picks up 2 from the middle', performance: 'Won their first event, semifinalist at the second', other_notes: '', marked: false, created_at: '2026-11-05T19:00:00Z', created_by: DEMO_PEOPLE.jordan },
-  { id: '00000000-0000-4000-8000-0000000e0102', event_key: EVENT_KEY, team_number: 9993, overall: '', strengths: 'Strong defense', weaknesses: '', key_task: 'Playing defense', auto_paths: '', performance: '', other_notes: 'Ask them about their intake in the pits', marked: false, created_at: '2026-11-05T19:20:00Z', created_by: DEMO_PEOPLE.alex },
+  { id: '00000000-0000-4000-8000-0000000e0101', event_key: EVENT_KEY, team_number: 9991, overall: 'Strong scorer, slow climb. Good first pick.', strengths: 'Fast cycles from the hub. Very consistent driver.\nNever broke down at their last event.', weaknesses: 'Slow to climb', key_task: 'Scoring fuel in teleop', auto_paths: 'Starts center, scores preload, picks up 2 from the middle', performance: 'Won their first event, semifinalist at the second', other_notes: '', created_at: '2026-11-05T19:00:00Z', created_by: DEMO_PEOPLE.jordan },
+  { id: '00000000-0000-4000-8000-0000000e0102', event_key: EVENT_KEY, team_number: 9993, overall: '', strengths: 'Strong defense', weaknesses: '', key_task: 'Playing defense', auto_paths: '', performance: '', other_notes: 'Ask them about their intake in the pits', created_at: '2026-11-05T19:20:00Z', created_by: DEMO_PEOPLE.alex },
 ]
 
-// Version 2: the overall summary was added to the rows (#153).
-export const prescoutTable = createTable<PrescoutNotes>('prescouting_notes', { demo: EXAMPLE_PRESCOUT, version: 2 })
+// Version 3: the overall summary was added to the rows (#153), and the old
+// shared Mark taken out (#118).
+export const prescoutTable = createTable<PrescoutNotes>('prescouting_notes', { demo: EXAMPLE_PRESCOUT, version: 3 })
 
 /** Every team's notes for an event. */
 export function usePrescoutNotes(event: string): PrescoutNotes[] {
@@ -180,8 +184,7 @@ function findNotes(event: string, team: number): PrescoutNotes | undefined {
 /**
  * One team's prescouting at an event (#119), or null if nobody has
  * prescouted them, so other pages (like Scouting's team page) never read
- * the table themselves. A row with only a mark and no answers counts as not
- * prescouted.
+ * the table themselves. A row with no answers yet counts as not prescouted.
  */
 export function prescoutFor(rows: PrescoutNotes[], event: string, team: number): PrescoutNotes | null {
   const found = rows.find((row) => row.event_key === event && row.team_number === team) ?? null
@@ -217,7 +220,7 @@ export async function savePrescout(event: string, team: number, answers: Prescou
   const existing = findNotes(event, team)
   if (existing) return prescoutTable.update(existing.id, tidy)
   if (PRESCOUT_QUESTIONS.every((q) => tidy[q.key] === '')) return fail('Write at least one answer before saving.')
-  return prescoutTable.insert({ event_key: event, team_number: team, ...tidy, marked: false })
+  return prescoutTable.insert({ event_key: event, team_number: team, ...tidy })
 }
 
 // ---------------------------------------------------------------------------

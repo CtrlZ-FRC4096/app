@@ -14,6 +14,9 @@ beforeEach(async () => {
   scout = await db.member('Riley Park')
   other = await db.member('Casey Lee')
   mentor = await db.member('Pat Mentor', 'mentor')
+  // Prescouting is strategy only (#167).
+  await db.strategy(scout)
+  await db.strategy(other)
 })
 
 interface Star {
@@ -41,6 +44,13 @@ describe('prescouting stars', () => {
     await star(other, false)
     expect(await seenBy(scout)).toEqual([['scout', false], ['scout', true]])
     expect(await seenBy(other)).toEqual([['scout', true], ['other', false]])
+  })
+
+  it("doesn't let someone off the strategy team see or add stars (#167)", async () => {
+    const outsider = await db.member('Jamie Scout')
+    await star(scout, true)
+    expect(await db.as(outsider, 'select * from public.scouting_prescout_stars')).toEqual([])
+    await expect(star(outsider, false)).rejects.toThrow(PERMISSION_DENIED)
   })
 
   it("hides someone's own stars even from a mentor", async () => {

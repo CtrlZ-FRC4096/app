@@ -14,6 +14,9 @@ beforeEach(async () => {
   scout = await db.member('Riley Park')
   other = await db.member('Casey Lee')
   mentor = await db.member('Pat Mentor', 'mentor')
+  // Prescouting is strategy only (#167).
+  await db.strategy(scout)
+  await db.strategy(other)
 })
 
 interface Row {
@@ -45,7 +48,14 @@ describe('prescouted matches', () => {
     expect(await add(scout, { match: '2026test_qm2' })).toHaveLength(1)
   })
 
-  it('lets every member read every row', async () => {
+  it("doesn't let someone off the strategy team read or add rows (#167)", async () => {
+    const outsider = await db.member('Jamie Scout')
+    await add(scout)
+    expect(await db.as(outsider, 'select * from public.prescouting_matches')).toEqual([])
+    await expect(add(outsider, { match: '2026test_qm5' })).rejects.toThrow(PERMISSION_DENIED)
+  })
+
+  it('lets every strategy member read every row', async () => {
     await add(scout)
     await add(other, { match: '2026test_qm2' })
     expect(await db.as(scout, 'select match_key from public.prescouting_matches order by match_key')).toEqual([{ match_key: '2026test_qm1' }, { match_key: '2026test_qm2' }])
@@ -97,7 +107,7 @@ describe('prescouted matches', () => {
 })
 
 describe("prescouting notes' overall summary", () => {
-  it('starts empty, can be changed by any member, and refuses over 2,000 characters', async () => {
+  it('starts empty, can be changed by any strategy member, and refuses over 2,000 characters', async () => {
     const [row] = await db.as<{ id: string; overall: string }>(scout, "insert into public.prescouting_notes (event_key, team_number) values ('2026test', 9991) returning id, overall")
     expect(row.overall).toBe('')
     expect(await db.as(other, "update public.prescouting_notes set overall = 'Good second pick' where id = $1 returning overall", [row.id])).toEqual([{ overall: 'Good second pick' }])

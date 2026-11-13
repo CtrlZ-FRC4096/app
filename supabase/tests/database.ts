@@ -152,6 +152,11 @@ export class TestDatabase {
     return id
   }
 
+  /** Put someone on the scouting strategy team (#167), the way a mentor would. */
+  async strategy(id: string) {
+    await this.sql('insert into public.scouting_strategy_team (member_id) values ($1)', [id])
+  }
+
   /** Switch off someone's access, the way an admin would. */
   async switchOff(id: string) {
     await this.sql('update public.members set active = false where id = $1', [id])

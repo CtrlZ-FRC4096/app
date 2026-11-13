@@ -53,8 +53,10 @@ describe('the robot photos bucket', () => {
     expect(bucket.allowed_mime_types).toEqual(['image/jpeg'])
   })
 
-  it('lets a member add a photo in an event/team folder, and every member open it', async () => {
+  it('lets a member add a photo in an event/team folder, and the strategy team open it, but not other members (#167)', async () => {
     await upload(scout)
+    expect(await openFile(other)).toEqual([])
+    await db.strategy(other)
     expect(await openFile(other)).toEqual([{ name: filePath() }])
   })
 
@@ -74,6 +76,7 @@ describe('the robot photos bucket', () => {
     await upload(scout)
     await expect(upload(null, filePath('33333333-3333-4333-8333-333333333333'))).rejects.toThrow(PERMISSION_DENIED)
     expect(await openFile(null).catch(() => [])).toEqual([])
+    await db.strategy(other)
     await db.switchOff(other)
     expect(await openFile(other)).toEqual([])
     await expect(upload(other, filePath('44444444-4444-4444-8444-444444444444'))).rejects.toThrow(PERMISSION_DENIED)
@@ -81,9 +84,11 @@ describe('the robot photos bucket', () => {
 })
 
 describe('the scouting_robot_photos table', () => {
-  it('lets a member add a photo, signed with their own id, and every member see it', async () => {
+  it('lets a member add a photo, signed with their own id, and the strategy team see it, but not other members (#167)', async () => {
     const [row] = await addRow(scout)
     expect(row).toMatchObject({ id: PHOTO_ID, created_by: scout, taken_by: scout })
+    expect(await db.as(other, 'select id from public.scouting_robot_photos')).toEqual([])
+    await db.strategy(other)
     expect(await db.as(other, 'select id from public.scouting_robot_photos')).toEqual([{ id: PHOTO_ID }])
   })
 

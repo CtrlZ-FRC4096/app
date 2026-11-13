@@ -35,9 +35,11 @@ describe('personal picklists', () => {
     expect(row).toMatchObject({ team_number: 9991, rank: 1, note: 'Great defender', created_by: scout })
   })
 
-  it("lets every member read every list and note, for the team picklist", async () => {
+  it('lets the strategy team read every list and note, for the team picklist, and anyone else only their own (#167)', async () => {
     await add(scout, 9991)
     await add(other, 9992)
+    expect(await db.as(scout, 'select team_number from public.scouting_my_picklist')).toEqual([{ team_number: 9991 }])
+    await db.strategy(scout)
     expect(await db.as(scout, 'select team_number from public.scouting_my_picklist order by team_number')).toEqual([{ team_number: 9991 }, { team_number: 9992 }])
   })
 

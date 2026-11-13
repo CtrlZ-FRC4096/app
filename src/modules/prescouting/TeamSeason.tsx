@@ -4,7 +4,7 @@ import { currentUser } from '../../core/session'
 import type { Result } from '../../core/table'
 import { toast } from '../../core/toast'
 import { Panel, Pick, Stepper } from '../../core/ui'
-import { COUNTERS, ENDGAME, ROLES, eventWhenWhere, getTeamEvents, getTeamMatches, tbaEventUrl, type TbaEvent } from '../scouting/data'
+import { COUNTERS, ENDGAME, ROLES, eventWhenWhere, getTeamEvents, getTeamMatches, getTeamSeasonRatings, tbaEventUrl, type TbaEvent, type TeamEventRating } from '../scouting/data'
 import { prescoutAverages, savePrescoutMatch, seasonMatches, usePrescoutMatches, type PrescoutMatch, type PrescoutMatchFields, type SeasonMatch } from './data'
 
 /** Big enough to tap. */
@@ -43,6 +43,8 @@ function useLoaded<T>(load: () => Promise<Result<T>>): [Result<T> | null, () => 
 export default function TeamSeason(props: { event: string; team: number }) {
   const year = Number(props.event.slice(0, 4))
   const [events, retry] = useLoaded(useCallback(() => getTeamEvents(props.team, year), [props.team, year]))
+  // Match 13's numbers at each event. Extra: the events still show without them.
+  const [xp] = useLoaded(useCallback(() => getTeamSeasonRatings(props.team, year), [props.team, year]))
   const looks = usePrescoutMatches(props.team)
   const season = prescoutAverages(looks)
 
@@ -62,7 +64,9 @@ export default function TeamSeason(props: { event: string; team: number }) {
         <p className="panel-body muted" style={{ margin: 0 }}>{`The Blue Alliance doesn't list any events for team ${props.team} in ${year}.`}</p>
       ) : (
         <div>
-          {events.value.map((e) => <EventRow key={e.key} team={props.team} event={e} looks={looks.filter((l) => l.event_key === e.key)} />)}
+          {events.value.map((e) => (
+            <EventRow key={e.key} team={props.team} event={e} looks={looks.filter((l) => l.event_key === e.key)} rating={xp?.ok ? xp.value.find((x) => x.event === e.key) : undefined} />
+          ))}
         </div>
       )}
     </Panel>
@@ -84,7 +88,7 @@ function Averages(props: { title: string; averages: ReturnType<typeof prescoutAv
 }
 
 /** One event: its name, dates and TBA link. Tap to see the team's matches there. */
-function EventRow(props: { team: number; event: TbaEvent; looks: PrescoutMatch[] }) {
+function EventRow(props: { team: number; event: TbaEvent; looks: PrescoutMatch[]; rating?: TeamEventRating }) {
   const [open, setOpen] = useState(false)
   const { event } = props
   return (
@@ -94,6 +98,9 @@ function EventRow(props: { team: number; event: TbaEvent; looks: PrescoutMatch[]
           <strong>{event.name}</strong>
           <br />
           <span className="note">{eventWhenWhere(event)}</span>
+          {props.rating?.xp != null && (
+            <><br /><span className="note">{`Match 13: ${props.rating.xp.toFixed(1)} xP${props.rating.rank != null ? `, rank ${props.rating.rank}` : ''}`}</span></>
+          )}
         </span>
         <span className="toolbar" style={{ marginLeft: 'auto' }}>
           <a className="btn" style={TAP} href={tbaEventUrl(event.key)} target="_blank" rel="noreferrer">TBA ↗</a>

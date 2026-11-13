@@ -70,10 +70,16 @@ describe('scouting entries', () => {
     ).rejects.toThrow(PERMISSION_DENIED)
   })
 
-  it('lets every member read every entry', async () => {
+  it('lets the strategy team and mentors read every entry, and anyone else only the ones they scouted or sent (#167)', async () => {
     await send(scout, [{ id: crypto.randomUUID() }])
     await send(other, [{ id: crypto.randomUUID() }])
+    // A phone shared between scouts: sent by other, scouted by scout.
+    await send(other, [{ id: crypto.randomUUID(), scoutedBy: scout }])
     expect(await db.as(scout, 'select id from public.scouting_entries')).toHaveLength(2)
+    expect(await db.as(other, 'select id from public.scouting_entries')).toHaveLength(2)
+    expect(await db.as(mentor, 'select id from public.scouting_entries')).toHaveLength(3)
+    await db.strategy(scout)
+    expect(await db.as(scout, 'select id from public.scouting_entries')).toHaveLength(3)
   })
 
   it('can be changed and deleted by a mentor but not by a student', async () => {

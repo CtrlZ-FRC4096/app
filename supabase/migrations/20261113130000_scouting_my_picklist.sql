@@ -1,7 +1,8 @@
 -- The Scouting module's personal picklists (#151): each person's own order
 -- for picking teams at an event, with a note on any team. The team
 -- picklist averages everyone's (teamPicklist() in
--- src/modules/scouting/data.ts), so everyone signed in can read every list.
+-- src/modules/scouting/data.ts), so the strategy team (and mentors) can
+-- read every list (#167). Anyone else reads only their own.
 --
 -- Each row is one team on one person's list for one event. rank is the
 -- team's place on that list: 1 is best.
@@ -56,9 +57,12 @@ alter publication supabase_realtime add table public.scouting_my_picklist;
 -- The rules. Wrapping the helpers in (select ...) lets the database work out
 -- the answer once per query instead of once per row.
 
-create policy "Members can read every picklist"
+create policy "Strategy reads every picklist, everyone their own"
   on public.scouting_my_picklist for select to authenticated
-  using ((select private.is_member()));
+  using (
+    (select private.is_strategy())
+    or ((select private.is_member()) and created_by = (select auth.uid()))
+  );
 
 create policy "Members can add to their own picklist"
   on public.scouting_my_picklist for insert to authenticated
