@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { PageHead, Panel, Pill } from '../../core/ui'
 import {
-  OUR_TEAM, keepScheduleFresh, likelyWinner, matchesWithPredictions, updatedAgo, useCurrentEvent, useSavedSchedule, useScheduleStatus, type ScheduleRow,
+  OUR_TEAM, keepScheduleFresh, likelyWinner, matchesWithPredictions, nexusEventUrl, updatedAgo, useCurrentEvent, useSavedSchedule, useScheduleStatus, type ScheduleRow,
 } from './data'
 
 /** "10:24 AM", in the phone's own time zone, which is the event's when you're there. */
@@ -89,6 +89,7 @@ export default function Schedule() {
           <input type="checkbox" checked={justOurs} onChange={(e) => setJustOurs(e.target.checked)} /> Just ours ({OUR_TEAM})
         </label>
         <span className="note" role="status">{message}</span>
+        <a className="btn" style={{ minHeight: 44, marginLeft: 'auto' }} href={nexusEventUrl(event)} target="_blank" rel="noreferrer">Open in Nexus ↗</a>
       </div>
       <Panel title="Matches" aside={<span className="note">{shown.length} {shown.length === 1 ? 'match' : 'matches'}</span>}>
         {saved && rows.length === 0 ? (

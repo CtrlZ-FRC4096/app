@@ -9,4 +9,8 @@ export const purchasing: ModuleDefinition = {
   group: 'build',
   load: () => import('./PurchasingPage'),
   useSummary: usePurchasingSummary,
+  // Sent by supabase/migrations/..._notification_settings.sql.
+  notifications: [
+    { key: 'purchasing.request_updates', name: 'My requests', description: 'When something you asked for is ordered or arrives.', on: true },
+  ],
 }

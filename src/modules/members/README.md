@@ -20,6 +20,12 @@ mentors and admins choose the purchasers.
   database rules are in `supabase/migrations/..._purchasing_orders.sql`.
 - **Find someone** narrows the list by name. If nobody matches, it says so,
   with a button to clear the search.
+- **Mentors choose the scouting strategy team** (#167) with the **Strategy
+  team** tick under each student's role. Strategy members, student leaders,
+  mentors and admins see Scouting's overview, team pages, picklists,
+  simulator and stats, and Prescouting. Student leaders, mentors and admins
+  always count, so they don't get the tick. The team is the Scouting module's
+  `scouting_strategy_team` table; see its README.
 - Nobody can change their own role or access here, and the database never
   lets the team end up without an admin.
 

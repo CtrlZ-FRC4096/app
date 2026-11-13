@@ -50,6 +50,14 @@ export interface ModuleDefinition {
   pages?: ModulePage[]
   /** Who can open it. Leave it out to let everyone in. */
   roles?: Role[]
+  /**
+   * For a module where who can open a page depends on more than roles, like
+   * Scouting's strategy team (#167): a hook giving the paths of the pages to
+   * hide from the signed-in person, or 'all' to hide the whole module from
+   * the menu and the home page. Hiding is only tidiness: the page itself must
+   * still say no, and the database's rules keep the data safe.
+   */
+  useHiddenPages?: () => string[] | 'all'
   /** Loads the page only when someone opens it, so one module can't slow the others down. */
   load: () => Promise<{ default: ComponentType }>
   /**
@@ -60,6 +68,30 @@ export interface ModuleDefinition {
   useSummary?: (role: Role) => Notice
   /** Anything that needs someone's attention, shown under "Needs attention" on the home page. A hook, like useSummary. */
   useAttention?: (role: Role) => Notice[]
+  /**
+   * The kinds of notification this module sends. Each gets its own switch
+   * under "What to notify me about" on the Notifications page, for people
+   * who can open the module. The trigger that adds them checks the switch
+   * with private.wants_notification(): see
+   * supabase/migrations/..._notification_settings.sql.
+   */
+  notifications?: NotificationKind[]
+}
+
+/** One kind of notification a module sends, like Purchasing's "My requests". */
+export interface NotificationKind {
+  /**
+   * The module's id, a dot, then the kind in lowercase with underscores,
+   * like 'purchasing.request_updates'. The trigger that sends them uses the
+   * same key. Never change it: people's choices are saved under it.
+   */
+  key: string
+  /** The switch's name, like "My requests". */
+  name: string
+  /** Under the switch: when it's sent, like "When something you asked for is ordered or arrives". */
+  description: string
+  /** Whether it's on for people who haven't chosen. The trigger must pass the same to wants_notification(). */
+  on: boolean
 }
 
 /** A page inside a module, shown under the module's name in the menu. */
@@ -71,6 +103,11 @@ export interface ModulePage {
    * or '' for the module's own address, #/scouting. Lowercase letters and dashes.
    */
   path: string
+}
+
+/** For a module with no useHiddenPages: nothing is hidden. */
+export function useNothingHidden(): string[] {
+  return []
 }
 
 /** A menu in the top bar, with the modules in it. */
