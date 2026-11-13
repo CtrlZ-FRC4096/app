@@ -171,6 +171,17 @@ export function reorderPitItem(id: string, targetId: string): Result {
   return ok(null)
 }
 
+/** Move an item to a place typed into Move to…, like "3" (1 is the top). */
+export function movePitItemTo(id: string, placeText: string): Result {
+  const items = checklistStore.get()
+  if (!items.some((item) => item.id === id)) return fail('That item is no longer on the checklist.')
+  const place = Number(placeText.trim())
+  if (!placeText.trim() || !Number.isInteger(place) || place < 1 || place > items.length) {
+    return fail(`Type a position from 1 to ${items.length}.`)
+  }
+  return reorderPitItem(id, items[place - 1].id)
+}
+
 export function movePitItem(id: string, direction: -1 | 1): Result {
   const items = [...checklistStore.get()]
   const from = items.findIndex((item) => item.id === id)
