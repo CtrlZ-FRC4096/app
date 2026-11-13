@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { isMentor, useSession } from '../../core/session'
+import { isLeader, useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick, Pill } from '../../core/ui'
 import {
@@ -16,13 +16,13 @@ const SCREEN_READER_ONLY = { position: 'absolute', width: 1, height: 1, padding:
 
 // The final picklist for alliance selection, at #/scouting/shared-picklist.
 // It's the scouting_picklist table, so every phone shows the same order and
-// changes show up by themselves. Everyone signed in sees it; only mentors
-// and admins see the buttons to change it (the database's rules are what
-// stop anyone else). The changes go through moveTeam(), setPickStatus(),
+// changes show up by themselves. Everyone signed in sees it; student leaders,
+// mentors and admins see the buttons to change it (the database's rules are
+// what stop anyone else). The changes go through moveTeam(), setPickStatus(),
 // startPicklist() and addMissingTeams() in data.ts.
 export default function SharedPicklist() {
   const { role } = useSession()
-  const mentor = isMentor(role)
+  const canChange = isLeader(role)
   const list = usePicklist()
   const [hidePicked, setHidePicked] = useState(false)
   // True while a move is saving, so a second tap can't move from the old order.
@@ -54,9 +54,9 @@ export default function SharedPicklist() {
     <div className="stack">
       <PageHead title="Final picklist">
         The order the strategy team wants to pick teams in, the same on every phone. It updates by itself.
-        {mentor ? " Move teams with the up and down buttons, and mark teams that are picked or that we shouldn't pick." : ' Only mentors can change it.'}
+        {canChange ? " Move teams with the up and down buttons, and mark teams that are picked or that we shouldn't pick." : ' Only student leaders, mentors and admins can change it.'}
       </PageHead>
-      {mentor && <StartOrAdd list={list} />}
+      {canChange && <StartOrAdd list={list} />}
       {list.length > 0 && (
         <div className="toolbar">
           <label className="check" style={{ minHeight: 44 }}>
@@ -68,7 +68,7 @@ export default function SharedPicklist() {
         <p style={SCREEN_READER_ONLY} role="status">{announcement}</p>
         {list.length === 0 ? (
           <p className="panel-body muted">
-            {mentor ? 'No teams yet. Start it from the ranked list above.' : "The strategy team hasn't made the picklist yet."}
+            {canChange ? 'No teams yet. Start it from the ranked list above.' : "The strategy team hasn't made the picklist yet."}
           </p>
         ) : shown.length === 0 ? (
           <p className="panel-body muted">Every team on the list is picked.</p>
@@ -84,7 +84,7 @@ export default function SharedPicklist() {
                     <strong style={{ fontSize: 18 }}><TeamLink team={row.team_number} /></strong>
                     {row.status !== 'Open' && <Pill tone={row.status === 'Picked' ? 'plain' : 'crit'}>{row.status}</Pill>}
                   </span>
-                  {mentor && (
+                  {canChange && (
                     <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
                       <button type="button" className="btn" style={{ minWidth: TAP_SIZE, minHeight: TAP_SIZE, fontSize: 20 }}
                         aria-label={`Move team ${row.team_number} up`} disabled={moving || place === 1} onClick={() => void move(row, -1)}>
@@ -107,9 +107,10 @@ export default function SharedPicklist() {
   )
 }
 
-// For mentors: start an empty list from the ranked list on the Picklist
-// page (with this phone's weights), or add the teams it doesn't have yet.
-// Its own component so only mentors' phones load the ranked list.
+// For people who can change the shared list: start an empty list from the
+// ranked list on the Picklist page (with this phone's weights), or add the
+// teams it doesn't have yet. Its own component so only their phones load
+// the ranked list.
 function StartOrAdd(props: { list: PicklistRow[] }) {
   const { ranked, weights } = useRankedPicklist()
   const [busy, setBusy] = useState(false)

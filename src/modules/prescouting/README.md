@@ -10,7 +10,7 @@
 
 ## The table
 
-`prescouting_notes`, one row per team per event (`supabase/migrations/..._prescouting_notes.sql`, rules tested in `supabase/tests/prescouting-notes.test.ts`). Signed-in members read every row, add one, and change the answers and mark of any; only mentors delete them. Prescouting happens before the event, with Wi-Fi, so it saves straight to the table, not on the phone first like match entries.
+`prescouting_notes`, one row per team per event (`supabase/migrations/..._prescouting_notes.sql`, rules tested in `supabase/tests/prescouting-notes.test.ts`). Signed-in members read every row, add one, and change the answers and mark of any; student leaders, mentors and admins can delete them. Prescouting happens before the event, with Wi-Fi, so it saves straight to the table, not on the phone first like match entries.
 
 ## What it needs next
 

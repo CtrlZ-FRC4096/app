@@ -32,7 +32,7 @@ import { TEAM_TIME_ZONE } from '../../core/calendar'
 import { callFunction } from '../../core/functions'
 import { plural } from '../../core/format'
 import type { Notice } from '../../core/registry'
-import { isMentor } from '../../core/roles'
+import { isLeader } from '../../core/roles'
 import { currentUser, onSignedIn } from '../../core/session'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { createStore, useStore, type Store } from '../../core/store'
@@ -40,23 +40,24 @@ import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row,
 import { toCsv } from '../attendance/data'
 import { COUNTERS, DRIVETRAINS, ENDGAME, EVENT_KEY, ROLES, type Counter } from './season'
 
-/** The event we're at until a mentor picks one in the app, from season.ts, for other modules. */
+/** The event we're at until someone picks one in the app, from season.ts, for other modules. */
 export { EVENT_KEY }
 
 // ---------------------------------------------------------------------------
 // The event the team is scouting.
 //
-// A mentor picks it in the app (EventPicker.tsx), and every phone uses it:
-// the schedule, rankings and Match 13 numbers are for it, and entries are
-// saved under it. Each pick is a row in scouting_events
-// (supabase/migrations/..._scouting_events.sql), and the newest one is the
-// current event. Until a mentor picks one, it's EVENT_KEY from season.ts.
+// A student leader, mentor or admin picks it in the app (EventPicker.tsx),
+// and every phone uses it: the schedule, rankings and Match 13 numbers are
+// for it, and entries are saved under it. Each pick is a row in
+// scouting_events (supabase/migrations/..._scouting_events.sql), and the
+// newest one is the current event. Until someone picks one, it's EVENT_KEY
+// from season.ts.
 //
 // The match form has to work with no Wi-Fi, so it never waits on the table:
 // the current event is kept on this phone too (eventStore), and EventSync
 // in EventPicker.tsx keeps that copy up to date while Scouting is open.
 
-/** One time a mentor picked the event. */
+/** One time a student leader, mentor or admin picked the event. */
 export interface ScoutingEvent {
   id: string
   /** Like 2026ilch. */
@@ -67,14 +68,14 @@ export interface ScoutingEvent {
   created_by: string | null
 }
 
-/** Every time a mentor picked the event, newest first. */
+/** Every time someone picked the event, newest first. */
 export const eventsTable = createTable<ScoutingEvent>('scouting_events', {
   demo: [{ id: '00000000-0000-4000-8000-0000000e0201', event_key: EVENT_KEY, name: 'Example Regional', created_at: '2026-11-01T18:00:00Z', created_by: DEMO_PEOPLE.pat }],
   sort: newestFirst,
   keepOffline: true,
 })
 
-/** The event the team is scouting: its key, and its name once a mentor has picked it in the app. */
+/** The event the team is scouting: its key, and its name once someone has picked it in the app. */
 export interface CurrentEvent {
   key: string
   name: string | null
@@ -83,7 +84,7 @@ export interface CurrentEvent {
 /** This phone's copy of the current event. Empty until Scouting has been open with a connection. */
 export const eventStore = createStore<CurrentEvent | null>('scouting-event', 1, () => null)
 
-/** The newest pick in the table, or nothing if a mentor hasn't picked one. */
+/** The newest pick in the table, or nothing if someone hasn't picked one. */
 export function latestEvent(rows: ScoutingEvent[]): CurrentEvent | null {
   const latest = rows[0]
   return latest ? { key: latest.event_key, name: latest.name } : null
@@ -94,15 +95,15 @@ export function currentEvent(): string {
   return eventStore.get()?.key ?? EVENT_KEY
 }
 
-/** The event the team is scouting, for a page. It redraws when a mentor picks another event. */
+/** The event the team is scouting, for a page. It redraws when someone picks another event. */
 export function useCurrentEvent(): CurrentEvent {
   return useStore(eventStore) ?? { key: EVENT_KEY, name: null }
 }
 
-/** Pick the event the whole team scouts. Only mentors and admins can; the database's rules check that too. */
+/** Pick the event the whole team scouts. Student leaders, mentors and admins can; the database's rules check that too. */
 export async function chooseEvent(event: Pick<TbaEvent, 'key' | 'name'>): Promise<Result<CurrentEvent>> {
   const role = currentUser()?.role
-  if (!role || !isMentor(role)) return fail('Only a mentor can change the event. Ask a mentor to pick it.')
+  if (!role || !isLeader(role)) return fail('Only student leaders, mentors, and admins can change the event. Ask one of them to pick it.')
   const result = await eventsTable.insert({ event_key: event.key, name: event.name })
   if (!result.ok) return result
   const chosen = { key: event.key, name: event.name }
@@ -783,7 +784,7 @@ function useScoutingRows(): { entries: MatchRow[]; pitEntries: PitRow[] } {
   const saved = useEntries()
   const syncedPit = pitTable.useRows()
   const savedPit = usePitEntries()
-  // Only the current event's, so the sums change when a mentor picks another event.
+  // Only the current event's, so the sums change when someone picks another event.
   const event = useCurrentEvent().key
   const entries = useMemo(() => [...synced, ...saved.filter((e) => !e.synced).map(toRow)].filter((e) => e.event_key === event), [synced, saved, event])
   const pitEntries = useMemo(() => [...syncedPit, ...savedPit.filter((e) => !e.synced).map(pitToRow)].filter((e) => e.event_key === event), [syncedPit, savedPit, event])
@@ -1857,7 +1858,7 @@ function demoRankings(): TbaRanking[] {
 // Shared picklist (#43): the order the strategy team wants to pick teams in
 // on alliance selection day. It's a table, so every phone shows the same
 // order and changes show up by themselves. Everyone signed in can read it;
-// only mentors and admins can change it (the rules in
+// student leaders, mentors and admins can change it (the rules in
 // supabase/migrations/..._scouting_picklist.sql).
 //
 // Each team has a position, and the list is in position order, smallest
