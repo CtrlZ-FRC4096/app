@@ -26,6 +26,8 @@ export interface Item extends Row {
   vendor_part_number: string
   /** A bin or shelf, like "Bin E2". */
   location: string
+  /** The product's page, where we buy it (#193). Always an https:// link, or null when there isn't one. */
+  link: string | null
   quantity: number
   /** The part counts as low at or below this many. */
   low_stock_level: number
@@ -44,7 +46,8 @@ const EXAMPLE_ITEMS: Item[] = [
   example('00000000-0000-4000-8000-00000001a002', 'Mini Power Module (MPM)', 'REV', 'REV-11-1956', 'Bin E3', 3, 2),
   example('00000000-0000-4000-8000-00000001a003', 'roboRIO 2.0', 'AndyMark', 'am-3000a', 'Shelf E1', 1, 1),
   example('00000000-0000-4000-8000-00000001a004', 'Robot radio (VH-109)', 'AndyMark', 'am-5583a', 'Shelf E1', 2, 1),
-  example('00000000-0000-4000-8000-00000001a005', 'Battery, 12V 18Ah', 'MK Battery', 'ES17-12', 'Battery cart', 8, 6),
+  // No product link, to show a part without one.
+  example('00000000-0000-4000-8000-00000001a005', 'Battery, 12V 18Ah', 'MK Battery', 'ES17-12', 'Battery cart', 8, 6, false),
   example('00000000-0000-4000-8000-00000001a006', 'CANivore', 'CTR Electronics', '21-678682', 'Bin E2', 1, 1),
   example('00000000-0000-4000-8000-00000001a007', 'Main breaker, 120A', 'AndyMark', 'am-0282a', 'Bin E4', 1, 2),
   example('00000000-0000-4000-8000-00000001a008', 'Voltage Regulator Module (VRM)', 'AndyMark', 'am-2857', 'Bin E3', 2, 1),
@@ -55,13 +58,17 @@ const EXAMPLE_ITEMS: Item[] = [
   example('00000000-0000-4000-8000-00000001a010', 'Flanged bearing, 1/2 in hex', 'WCP', 'EXAMPLE-BRG-12', 'Bin M1', 4, 2),
 ]
 
-function example(id: string, name: string, vendor: string, vendor_part_number: string, location: string, quantity: number, low_stock_level: number): Item {
+// The product links are made up, not real store pages.
+function example(
+  id: string, name: string, vendor: string, vendor_part_number: string, location: string, quantity: number, low_stock_level: number, hasLink = true,
+): Item {
   return {
     id,
     name,
     vendor,
     vendor_part_number,
     location,
+    link: hasLink ? `https://example.com/parts/${vendor_part_number}` : null,
     quantity,
     low_stock_level,
     created_at: '2026-10-20T18:00:00Z',
@@ -69,8 +76,10 @@ function example(id: string, name: string, vendor: string, vendor_part_number: s
   }
 }
 
+// Version 2: parts gained a product link (#193).
 export const itemsTable = createTable<Item>('inventory_items', {
   demo: EXAMPLE_ITEMS,
+  version: 2,
   sort: (a, b) => a.name.localeCompare(b.name),
 })
 
@@ -109,12 +118,24 @@ export interface NewItem {
   vendor: string
   vendor_part_number: string
   location: string
+  /** The product's page. Optional: leave it empty if there isn't one. */
+  link: string
   quantity: number
   low_stock_level: number
 }
 
-// The database has the same limits: see the checks in the inventory_items migration.
+// The database has the same limits: see the checks in the inventory_items migrations.
 const LIMITS = { name: 100, vendor: 60, vendor_part_number: 60, location: 60 }
+const MAX_LINK_LENGTH = 2000
+
+/** Why a product link can't be saved, or null if it can. Empty is fine. Purchasing's link has the same rule and message. */
+export function checkLink(link: string): string | null {
+  const trimmed = link.trim()
+  if (!trimmed) return null
+  if (!/^https:\/\/\S+$/.test(trimmed)) return "The link should be the product's page, starting with https://"
+  if (trimmed.length > MAX_LINK_LENGTH) return `Keep the link under ${MAX_LINK_LENGTH} characters. This one is ${trimmed.length}.`
+  return null
+}
 
 /** Why a part can't be added, or null if it can. `items` is every part, to check it isn't listed already. */
 export function checkItem(item: NewItem, items: Item[]): string | null {
@@ -129,6 +150,8 @@ export function checkItem(item: NewItem, items: Item[]): string | null {
     const length = item[field].trim().length
     if (length > limit) return `Keep the ${names[field]} under ${limit} characters. This one is ${length}.`
   }
+  const linkProblem = checkLink(item.link)
+  if (linkProblem) return linkProblem
   const vendor = item.vendor.trim()
   const partNumber = item.vendor_part_number.trim()
   const listed = items.find((i) => i.vendor === vendor && i.vendor_part_number === partNumber)
@@ -145,15 +168,17 @@ export async function addItem(item: NewItem): Promise<Result<Item>> {
     vendor: item.vendor.trim(),
     vendor_part_number: item.vendor_part_number.trim(),
     location: item.location.trim(),
+    link: item.link.trim() || null,
     quantity: item.quantity,
     low_stock_level: item.low_stock_level,
   })
 }
 
-/** What the Edit button changes: how many are on the shelf, and where they live. */
+/** What the Edit button changes: how many are on the shelf, where they live, and the product link. */
 export interface ItemChanges {
   quantity: number
   location: string
+  link: string
 }
 
 /** Why a part's changes can't be saved, or null if they can. */
@@ -162,19 +187,19 @@ export function checkChanges(changes: ItemChanges): string | null {
   if (!location) return 'Add where it lives, like "Bin E2".'
   if (location.length > LIMITS.location) return `Keep the location under ${LIMITS.location} characters. This one is ${location.length}.`
   if (!Number.isInteger(changes.quantity) || changes.quantity < 0) return 'The quantity needs to be a whole number, 0 or more.'
-  return null
+  return checkLink(changes.link)
 }
 
 const MENTORS_ONLY = 'Only mentors and admins change or delete parts. Ask one of them.'
 
-/** Change a part's quantity and location. Mentors and admins only: the database refuses anyone else. */
+/** Change a part's quantity, location and product link. Mentors and admins only: the database refuses anyone else. */
 export async function changeItem(item: Item, changes: ItemChanges): Promise<Result<Item>> {
   const me = currentUser()
   if (!me || !isMentor(me.role)) return fail(MENTORS_ONLY)
   const problem = checkChanges(changes)
   if (problem) return fail(problem)
   const before = latest(item).quantity
-  const updated = await itemsTable.update(item.id, { quantity: changes.quantity, location: changes.location.trim() })
+  const updated = await itemsTable.update(item.id, { quantity: changes.quantity, location: changes.location.trim(), link: changes.link.trim() || null })
   if (!updated.ok || changes.quantity === before) return updated
   // A new count goes in the history too, so the history always adds up.
   return record(updated.value, changes.quantity - before, CORRECTED)
