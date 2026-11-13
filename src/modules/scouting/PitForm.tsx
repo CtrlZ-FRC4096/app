@@ -1,11 +1,12 @@
-import { useState, type FormEvent } from 'react'
+import { useState, type ChangeEvent, type FormEvent } from 'react'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
-import { blankOrNumber, numberOnly, savePitEntry, usePitEntries } from './data'
+import { addPhoto, blankOrNumber, numberOnly, savePitEntry, usePhotoEntries, usePitEntries } from './data'
 import FormSection from './FormSection'
 import SavedOnDevice from './SavedOnDevice'
 import { TeamLink } from './TeamPage'
-import { AUTO_SIDES, DRIVETRAINS } from './season'
+import PickMany from './PickMany'
+import { AUTO_SIDES, DRIVETRAINS, VISION } from './season'
 
 // Big enough to tap, and 16px text so phones don't zoom in on the box.
 const BOX = { minHeight: 46, fontSize: 16 }
@@ -44,9 +45,14 @@ function TextBox(props: { id: string; label: string; value: string; onChange: (v
 // database whenever there's a connection, the same way as match entries.
 export default function PitForm() {
   const entries = usePitEntries()
+  const photos = usePhotoEntries()
+  const [addingPhoto, setAddingPhoto] = useState(false)
   const [team, setTeam] = useState('')
   // '' until the scout chooses, so no button is pressed.
   const [drivetrain, setDrivetrain] = useState('')
+  const [drivetrainOther, setDrivetrainOther] = useState('')
+  const [vision, setVision] = useState<string[]>([])
+  const [visionNotes, setVisionNotes] = useState('')
   const [weight, setWeight] = useState('')
   const [length, setLength] = useState('')
   const [width, setWidth] = useState('')
@@ -57,11 +63,27 @@ export default function PitForm() {
   const [partnersDo, setPartnersDo] = useState('')
   const [theyDo, setTheyDo] = useState('')
 
+  // A photo saves straight away, for the team typed above, separately from
+  // the rest of the form. A team can have several.
+  async function photo(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    // Clear the box, so the same photo can be chosen again after a problem.
+    event.target.value = ''
+    if (!file) return
+    setAddingPhoto(true)
+    const result = await addPhoto(Number(team), file)
+    setAddingPhoto(false)
+    toast(result.ok ? `Saved a photo of team ${result.value.team}'s robot.` : result.error)
+  }
+
   function save(event: FormEvent) {
     event.preventDefault()
     const result = savePitEntry({
       team: Number(team),
       drivetrain,
+      drivetrain_other: drivetrainOther,
+      vision,
+      vision_notes: visionNotes,
       weight: blankOrNumber(weight),
       length: blankOrNumber(length),
       width: blankOrNumber(width),
@@ -77,7 +99,8 @@ export default function PitForm() {
       return
     }
     // Ready for the next team.
-    for (const clear of [setTeam, setDrivetrain, setWeight, setLength, setWidth, setHeight, setMotors, setAutoSide, setAutoPath, setPartnersDo, setTheyDo]) clear('')
+    for (const clear of [setTeam, setDrivetrain, setDrivetrainOther, setVisionNotes, setWeight, setLength, setWidth, setHeight, setMotors, setAutoSide, setAutoPath, setPartnersDo, setTheyDo]) clear('')
+    setVision([])
     toast(`Saved pit entry for team ${result.value.team}.`)
   }
 
@@ -96,6 +119,12 @@ export default function PitForm() {
               Drivetrain
               <Pick label="Drivetrain" options={DRIVETRAINS} value={drivetrain} onChange={setDrivetrain} />
             </div>
+            {drivetrain === 'Other' && (
+              <label className="field" htmlFor="pit-drivetrain-other">
+                Which drivetrain?
+                <input id="pit-drivetrain-other" className="input" style={BOX} value={drivetrainOther} onChange={(e) => setDrivetrainOther(e.target.value)} placeholder="Like: West coast with butterfly modules" />
+              </label>
+            )}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
               <NumberBox id="pit-weight" label="Weight (pounds)" value={weight} onChange={setWeight} placeholder="115" />
               <NumberBox id="pit-length" label="Length (inches)" value={length} onChange={setLength} placeholder="28" />
@@ -103,6 +132,22 @@ export default function PitForm() {
               <NumberBox id="pit-height" label="Height (inches)" value={height} onChange={setHeight} placeholder="36" />
             </div>
             <TextBox id="pit-motors" label="Motors" value={motors} onChange={setMotors} placeholder="Like: 4 Kraken X60 on the drive, 2 NEO on the shooter" />
+            <div className="field">
+              What can their robot see? (choose all that fit)
+              <PickMany label="What can their robot see" options={VISION} value={vision} onChange={setVision} />
+            </div>
+            <label className="field" htmlFor="pit-vision-notes">
+              More about what it sees
+              <input id="pit-vision-notes" className="input" style={BOX} value={visionNotes} onChange={(e) => setVisionNotes(e.target.value)} placeholder="Like: two cameras on the shooter" />
+            </label>
+          </FormSection>
+          <FormSection title="Photos">
+            <p className="note" style={{ margin: 0 }}>Type the team number above first. Each photo saves straight away, and sends by itself once there's a connection.</p>
+            <label className="btn btn-lg" style={{ cursor: 'pointer', position: 'relative' }} aria-disabled={addingPhoto}>
+              {addingPhoto ? 'Saving the photo…' : 'Add a photo'}
+              {/* Opens the back camera on a phone. Hidden: the label is the button. */}
+              <input type="file" accept="image/*" capture="environment" style={{ position: 'absolute', opacity: 0, width: 1, height: 1 }} disabled={addingPhoto} onChange={(e) => void photo(e)} />
+            </label>
           </FormSection>
           <FormSection title="Preferred auto">
             <div className="field">
@@ -121,9 +166,16 @@ export default function PitForm() {
         </Panel>
       </form>
       <SavedOnDevice
-        rows={entries.map((e) => ({ id: e.id, label: <><TeamLink team={e.team} />{e.drivetrain ? ` · ${e.drivetrain}` : ''}</>, created_at: e.created_at, synced: e.synced }))}
+        rows={entries.map((e) => ({ id: e.id, label: <><TeamLink team={e.team} />{e.drivetrain ? ` · ${e.drivetrain === 'Other' && e.drivetrain_other ? e.drivetrain_other : e.drivetrain}` : ''}</>, created_at: e.created_at, synced: e.synced }))}
         emptyText="No pit entries yet. Fill in the form and press Save Entry."
       />
+      {photos.length > 0 && (
+        <SavedOnDevice
+          title="Photos on this device"
+          rows={photos.map((p) => ({ id: p.id, label: <>Photo · <TeamLink team={p.team} /></>, created_at: p.created_at, synced: p.synced }))}
+          emptyText=""
+        />
+      )}
     </>
   )
 }
