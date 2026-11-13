@@ -30,7 +30,7 @@ import { CamStockPicker } from '../cnc/CamStockPicker'
 import { DailyReminderSwitch, RemindNow } from './ReminderControls'
 import { PartDownloads, QueueDownloads } from './Downloads'
 import { canAddToCatalog, catalogEntryFor, useCatalog, type CatalogEntry } from './catalog'
-import { CatalogForm, CatalogList, CatalogName } from './Catalog'
+import { CatalogForm, CatalogList, CatalogName } from './CatalogPanel'
 
 // The form open at the top of the page, if any. A null robot, system or
 // part means adding a new one; otherwise it's the one being changed.
