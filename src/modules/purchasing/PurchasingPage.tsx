@@ -6,6 +6,8 @@ import { toast } from '../../core/toast'
 import { shortDate } from '../../core/format'
 import { InView, PageHead, Panel, Pick, Pill, Stepper } from '../../core/ui'
 import { partsTable, systemsTable } from '../bom/data'
+// Inventory's parts, for its Order more button. Purchasing has its own useItems, so this one is renamed.
+import { useItems as useInventoryItems } from '../inventory/data'
 import {
   EMPTY_ITEM,
   RECEIPT_ACCEPT,
@@ -35,6 +37,7 @@ import {
   removeItem,
   removeReceipt,
   requestFromBomPart,
+  requestFromInventoryItem,
   searchItems,
   statusOf,
   summaryText,
@@ -65,6 +68,8 @@ const EMPTY_TEXT: Record<View, string> = {
 interface Asking {
   start: NewItem
   bomPartId: string | null
+  /** Filled in from an Inventory part's Order more button (#194). */
+  fromInventory?: boolean
   /** Changes when a different item is duplicated, so the form starts over. */
   key: string
 }
@@ -73,8 +78,9 @@ interface Asking {
 // functions from data.ts. It never saves anything itself.
 //
 // Its address can say what to open, for the BOM page's links:
-//   #/purchasing/from-bom/<part id>   Add new item, filled in from a BOM part
-//   #/purchasing/item/<item id>       That item, open for changing
+//   #/purchasing/from-bom/<part id>         Add new item, filled in from a BOM part
+//   #/purchasing/from-inventory/<part id>   Add new item, filled in from an Inventory part (Order more)
+//   #/purchasing/item/<item id>             That item, open for changing
 export default function PurchasingPage() {
   const items = useItems()
   const route = useRoute()
@@ -85,19 +91,22 @@ export default function PurchasingPage() {
   const [openId, setOpenId] = useState<string | null>(null)
   const groups = groupItems(searchItems(items, search), view)
 
+  // Two hooks, each called every time (a hook can't be skipped).
   const fromBom = useBomRequest(route.rest)
+  const fromInventory = useInventoryRequest(route.rest)
+  const fromLink = fromBom ?? fromInventory
   const routeItem = route.rest[0] === 'item' ? items.find((i) => i.id === route.rest[1]) : undefined
-  // A link from the BOM opens its form until it's sent or cancelled.
-  const form = fromBom ?? asking
+  // A link from the BOM or Inventory opens its form until it's sent or cancelled.
+  const form = fromLink ?? asking
   const closeForm = () => {
     setAsking(null)
-    if (fromBom) navigate('purchasing')
+    if (fromLink) navigate('purchasing')
   }
 
   return (
     <>
       <PageHead title="Purchasing">
-        What the team needs to buy, from asking for it to it being in the shop. Add anything we need to order, or use Purchase on a BOM part. Tap an item to change it.
+        What the team needs to buy, from asking for it to it being in the shop. Add anything we need to order, or use Purchase on a BOM part or Order more on an Inventory part. Tap an item to change it.
       </PageHead>
 
       {routeItem && (
@@ -132,7 +141,7 @@ export default function PurchasingPage() {
       {form && (
         <InView key={form.key}>
           <Panel title="Add new item">
-            <ItemForm item={null} start={form.start} bomPartId={form.bomPartId} onDone={closeForm} />
+            <ItemForm item={null} start={form.start} bomPartId={form.bomPartId} fromInventory={form.fromInventory} onDone={closeForm} />
           </Panel>
         </InView>
       )}
@@ -194,6 +203,19 @@ function useBomRequest(rest: string[]): Asking | null {
 }
 
 /**
+ * The Add new item form for an Inventory part's Order more link, or null when
+ * the address isn't one. A part that isn't found (deleted, or a bad link) opens
+ * Purchasing as normal.
+ */
+function useInventoryRequest(rest: string[]): Asking | null {
+  const parts = useInventoryItems()
+  if (rest[0] !== 'from-inventory') return null
+  const part = parts.find((p) => p.id === rest[1])
+  if (!part) return null
+  return { start: requestFromInventoryItem(part), bomPartId: null, fromInventory: true, key: `inventory-${part.id}` }
+}
+
+/**
  * One item in a list. Tapping it opens it for changing, except on its
  * buttons, which sit apart so they're easy to hit on a phone.
  */
@@ -248,7 +270,7 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
  * request can start filled in (`start`), for Duplicate and the BOM's
  * Purchase button.
  */
-function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId?: string | null; onDone: () => void }) {
+function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId?: string | null; fromInventory?: boolean; onDone: () => void }) {
   const { item } = props
   const nameOf = useMemberNames()
   const members = useMembers()
@@ -328,6 +350,7 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
       <p className="note" style={{ margin: 0 }}>
         {item ? `Requested by ${nameOf(item.requested_by)} · ${shortDate(item.created_at)}` : `Requested by ${me.name}`}
         {props.bomPartId && ' · from the BOM: fill in what\'s missing, like the link and the priority'}
+        {props.fromInventory && ' · from Inventory: check the number needed and the priority'}
       </p>
       {text('name', 'What to buy', 'Like "Ethernet cables, 5 ft (10 pack)"')}
       {locked && item ? (
