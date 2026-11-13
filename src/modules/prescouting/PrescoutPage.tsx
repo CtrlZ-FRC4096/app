@@ -1,14 +1,16 @@
 import { useState, type FormEvent } from 'react'
 import { href, useRoute } from '../../core/router'
+import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
 import type { Result } from '../../core/table'
 import { MAX_TEAM, tbaTeamUrl } from '../scouting/data'
 import {
-  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, firstLine, isEventKey, prescoutOverview, reloadPrescoutTeams, savePrescout,
-  setPrescoutEvent, toggleMark, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams,
+  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, firstLine, isEventKey, prescoutOverview, reloadPrescoutTeams, savePrescout,
+  setPrescoutEvent, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
   type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutTeam,
 } from './data'
+import Stars from './Stars'
 
 // Big enough to tap, and 16px text so phones don't zoom in on the box.
 const BOX = { minHeight: 46, fontSize: 16 }
@@ -46,12 +48,15 @@ function Overview() {
   const event = usePrescoutEvent()
   const result = usePrescoutTeams(event)
   const notes = usePrescoutNotes(event)
+  const stars = useStars(event)
+  const me = useSession().id
   const [sort, setSort] = useState<PrescoutSort>('Team number')
-  const teams = result?.ok ? prescoutOverview(result.value, notes, sort) : []
+  const teams = result?.ok ? prescoutOverview(result.value, notes, stars, me, sort) : []
+  const starred = teams.some((t) => t.group !== 'Everyone else')
 
   return (
     <>
-      <PageHead title="Prescouting">Every team coming to an event, to look up before it starts. Mark the ones we care about to keep them at the top.</PageHead>
+      <PageHead title="Prescouting">Every team coming to an event, to look up before it starts. Star the ones we care about to keep them at the top.</PageHead>
       <EventBox event={event} />
       <Panel title={`Teams at ${event}`} aside={result?.ok ? <span className="note">{result.value.length} teams</span> : undefined}>
         {!result ? (
@@ -64,8 +69,9 @@ function Overview() {
               Sort by
               <Pick label="Sort by" options={[...PRESCOUT_SORTS]} value={sort} onChange={setSort} />
             </div>
-            <TeamGroup title="Marked" event={event} teams={teams.filter((t) => t.marked)} />
-            <TeamGroup title={teams.some((t) => t.marked) ? 'Everyone else' : ''} event={event} teams={teams.filter((t) => !t.marked)} />
+            {STAR_GROUPS.map((group) => (
+              <TeamGroup key={group} title={starred ? group : ''} event={event} teams={teams.filter((t) => t.group === group)} />
+            ))}
           </div>
         )}
       </Panel>
@@ -74,9 +80,9 @@ function Overview() {
 }
 
 /**
- * Marked teams, or everyone else, each in the chosen sort. The headings
- * show why a marked team stays above a team with a better EPA. With no
- * marked teams there's one list and no heading (title '').
+ * Team stars, your stars, or everyone else, each in the chosen sort. The
+ * headings show why a starred team stays above a team with a better EPA.
+ * With no starred teams there's one list and no heading (title '').
  */
 function TeamGroup(props: { title: string; event: string; teams: OverviewTeam[] }) {
   if (props.teams.length === 0) return null
@@ -158,8 +164,8 @@ export function TeamCard(props: { event: string; team: OverviewTeam }) {
           <br />
           <span className="note tnum">{`EPA ${formatEpa(t.epa)}`}</span>
         </a>
-        <MarkButton event={props.event} team={t.team} marked={t.marked} />
       </div>
+      <Stars event={props.event} team={t.team} />
       {notes ? (
         <dl style={{ margin: 0, display: 'grid', gap: 4, fontSize: 14 }}>
           {OVERVIEW_ANSWERS.map((key) => (
@@ -184,22 +190,6 @@ function formatEpa(epa: number | null): string {
   return epa === null ? '—' : epa.toFixed(1)
 }
 
-/** The star. Marks are shared: everyone sees the same marked teams. */
-function MarkButton(props: { event: string; team: number; marked: boolean }) {
-  const [busy, setBusy] = useState(false)
-  async function toggle() {
-    setBusy(true)
-    const result = await toggleMark(props.event, props.team)
-    setBusy(false)
-    if (!result.ok) toast(result.error)
-  }
-  return (
-    <button type="button" className="btn" style={{ flexShrink: 0, minHeight: 44 }} aria-pressed={props.marked} disabled={busy} onClick={() => void toggle()}>
-      {props.marked ? '★ Marked' : '☆ Mark'}
-    </button>
-  )
-}
-
 // ---------------------------------------------------------------------------
 // One team's page: who they are, then our notes.
 
@@ -218,11 +208,15 @@ export function TeamPage(props: { event: string; team: number }) {
         <TeamLine list={list} details={details} />
       </PageHead>
       <div className="toolbar">
-        <MarkButton event={event} team={team} marked={notes?.marked ?? false} />
         <a className="btn" style={{ minHeight: 44 }} href={details?.tbaUrl ?? tbaTeamUrl(team, event)} target="_blank" rel="noreferrer">
           The Blue Alliance
         </a>
       </div>
+      <Panel title="Stars">
+        <div className="panel-body">
+          <Stars event={event} team={team} />
+        </div>
+      </Panel>
       <NotesForm event={event} team={team} saved={notes ?? NO_ANSWERS} />
     </>
   )

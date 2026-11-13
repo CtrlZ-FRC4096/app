@@ -12,19 +12,20 @@ describe('the prescouting pages', () => {
     expect(html).toContain('Loading teams…')
   })
 
-  it("have a team's page with a text box for every question, filled in with what's saved, and their mark", () => {
+  it("have a team's page with a text box for every question, filled in with what's saved, and their team stars", () => {
     const html = renderToString(<TeamPage event={EVENT_KEY} team={9991} />)
     for (const q of PRESCOUT_QUESTIONS) expect(html).toContain(`id="prescout-${q.key}"`)
     expect(html).toContain('Starts center, scores preload')
-    expect(html).toContain('★ Marked')
+    expect(html).toContain('Fast, reliable auto. Good second pick.')
+    expect(html).toContain('☆ Star')
   })
 
   it('say a team with no notes is not prescouted yet, and link to their page', () => {
-    const team = { team: 9995, name: 'Mock Mechanics', epa: null, tbaUrl: tbaTeamUrl(9995, EVENT_KEY), notes: null, marked: false, prescouted: false }
+    const team = { team: 9995, name: 'Mock Mechanics', epa: null, tbaUrl: tbaTeamUrl(9995, EVENT_KEY), notes: null, prescouted: false, stars: { forTeam: [], mine: null }, group: 'Everyone else' as const }
     const html = renderToString(<TeamCard event={EVENT_KEY} team={team} />)
     expect(html).toContain('Not prescouted yet')
     expect(html).toContain(`href="#/prescouting/${EVENT_KEY}/9995"`)
     expect(html).toContain('EPA —')
-    expect(html).toContain('☆ Mark')
+    expect(html).toContain('☆ Star')
   })
 })
