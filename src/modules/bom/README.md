@@ -10,8 +10,9 @@ The bill of materials for each robot, checked against Inventory, so the team can
 | `data.ts` | The four tables (`bom_robots`, `bom_systems`, `bom_parts`, `bom_steps`), their example rows, adding and changing them, moving stages along, assigning them, and reading a system from Onshape. |
 | `onshape.ts` | Works out what an import from Onshape changes: `planOnshapeImport()`. |
 | `stats.ts` | How close each system, and the whole robot, is to being built: `systemStats()`, `robotStats()`, and the home page tile's `useRobotSummary()` (see [Dashboard](#dashboard)). |
+| `numbering.ts` | Team part numbers: `nextPartNumber()`, and the `bom_part_counters` table that remembers every number used (see [Part numbers](#part-numbers-21)). |
 | `catalog.ts`, `Catalog.tsx` | The catalog of bought parts (`bom_catalog`): see [Catalog of bought parts](#catalog-of-bought-parts). |
-| `data.test.ts`, `onshape.test.ts`, `stats.test.ts`, `catalog.test.ts` | Tests for them. |
+| `data.test.ts`, `onshape.test.ts`, `stats.test.ts`, `numbering.test.ts`, `catalog.test.ts` | Tests for them. |
 | `BomPage.tsx` | Pick a system, then see its parts in a table with their stages, change them, and import from Onshape. Below, the robot's To order list. |
 | `Dashboard.tsx` | The page's **Dashboard** view: the robot's total, then a card for each system. |
 
@@ -27,6 +28,7 @@ The tables are made by `supabase/migrations/20261027150000_bom.sql`, and their p
 | Add and rename robots | | Yes |
 | Add, change and delete parts | | Yes |
 | Import from Onshape | | Yes |
+| Give parts team numbers, and write part numbers to Onshape | | Yes |
 | Delete a system (and every part in it) | | Yes |
 
 The rules are in `supabase/migrations/20261110130000_bom_student_leaders.sql` (using `private.is_leader()`), and tested in `supabase/tests/bom.test.ts` and `bom-steps.test.ts`. In the app, `canEditRobotsAndParts()` in `data.ts` decides which buttons a student sees, and the functions in `data.ts` explain who to ask.
@@ -161,6 +163,28 @@ Parts are matched by which Onshape part they are (`onshape_id`), never by name, 
 
 The example Intake in demo mode is linked to a made-up assembly, so **Import from Onshape** shows how it works without keys. The import columns are added by `supabase/migrations/20261028090000_bom_onshape_import.sql`.
 
+## Part numbers (#21)
+
+Every part has a team number in the format `4096-<year>-<system code>-<number>`, like `4096-26-INT-014`. The first three pieces, `4096-26-INT`, are the part's **series**.
+
+- **A number is never given out twice.** `nextPartNumber()` in `numbering.ts` gives one more than the highest number the series has *ever* used, not just the highest there is now. So if `4096-26-INT-006` is deleted, the next new part is `-007`, not `-006` again, and an old printed drawing never points at the wrong part. Gaps are skipped, not filled.
+  - The database remembers the highest number in `bom_part_counters`, one row per series. A trigger raises it whenever a part with a team number is added or renumbered, and never lowers it. Nobody can change it from the app, students or mentors. In demo mode, `rememberNumbers()` does what the trigger does.
+  - It's one row per series, not per system, because part numbers are unique across the whole BOM: a system deleted and added again, or a practice robot that also has an INT system, carries on from the same number.
+  - Typing a number by hand still works, even an old one (to put back a part deleted by mistake). A typo like `-900` moves the series on to `-901`.
+  - Made by `supabase/migrations/20261114110000_bom_part_counters.sql`, with its rules tested in `supabase/tests/bom.test.ts`. Numbers used by parts deleted before that migration can't be remembered.
+- **Give team numbers** shows on a system when some of its custom parts have no team number: usually one kept from Onshape, like `BRKT-1`. It gives each the next number. COTS parts are left alone: every one added or imported already gets a team number, and they're known by their vendor's number.
+- **Write part numbers to Onshape** puts each custom part's team number into its **Part number** property in Onshape, through the `onshape` server function (its `part-numbers` request, in `supabase/functions/onshape/numbers.ts`). The next import reads them back, so the part on the bench, its drawing, the BOM and CAD all have the same name.
+  - **Only in a workspace.** The system's Onshape link needs `/w/` in it. Onshape doesn't let a version change, so a version link is refused, with what to do instead.
+  - **Only custom parts in the system's own Onshape document.** Parts linked in from another document, parts with configurations, COTS parts (CAD keeps the vendor's number) and parts removed in Onshape aren't written. The message after says which were skipped and why.
+  - **Cost:** one Onshape API call for each Part Studio, plus one for each part whose number is different. Parts that already match aren't written, so doing it again is cheap.
+  - The server function checks the caller is a student leader, mentor or admin, and the Onshape keys never leave the server. The keys need **Write to your documents** (see `supabase/README.md`). In demo mode it pretends every number was written.
+
+### When CAD and the app disagree
+
+- **For team part numbers, the app wins.** The app hands the numbers out and remembers every one ever used, across all the team's Onshape documents, so it's the one list. When importing, a part that already has a team number keeps it, whatever Onshape's Part number says. To change a number, **Edit** the part here, then **Write part numbers to Onshape**. Until a custom part has a team number, Onshape's number is used (if no other part has it), so a number typed into CAD first still comes in.
+- **For everything else Onshape has, CAD wins:** names, quantities, materials and revisions are updated on each import, where Onshape has them. A COTS part's vendor details and product page stay what was typed here (#169).
+- We don't number parts inside CAD with a FeatureScript (FRCBOM's, or Onshape's community "Automated Part Numbering"): each document would keep its own list of numbers, which could clash with the app's.
+
 ## Files for the machines
 
 Whoever is at a machine can download the part's file without opening Onshape (#24). Under a custom part's stages, **Files:** has a **Download STEP** or **Download STL** button for each file its machines need. Pick a machine in the station filter (say "Lathe only") and **Download all 3 STEP files** at the top gets every part in that queue, one after another (the browser may ask once whether the site can download several files: choose Allow). There's no zip, so no extra package was needed.
@@ -207,7 +231,7 @@ Messages from the team's Slack bot about the stages assigned to people (#22). Th
 ## Still to do
 
 - View 3D, and DXF downloads for the laser and router (#24). 3D needs a mentor to pick a viewer library
-- Write team part numbers into Onshape (#21)
+- Try **Write part numbers to Onshape** on the team's real CAD, once a mentor has checked the Onshape keys can write (#21). It's only been tested against a made-up Onshape
 - Slack reminders (#22): the team to confirm the days and who gets the weekly summary (see [Slack reminders](#slack-reminders))
 - Move a part's CNC router stage along when the CNC board marks it cut
 - Mentors mark short parts as ordered
