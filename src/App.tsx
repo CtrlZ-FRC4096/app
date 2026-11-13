@@ -4,7 +4,7 @@ import { ROLES, canOpen, roleName, signOut, switchUser, useAccess, useSession, u
 import { isLive } from './core/supabase'
 import { setDemoRole } from './core/demo'
 import { initials } from './core/members'
-import { groupModules } from './core/registry'
+import { groupModules, useNothingHidden, type ModuleDefinition } from './core/registry'
 import { href, useRoute } from './core/router'
 import { resetAllStores } from './core/store'
 import { toast, useToast } from './core/toast'
@@ -70,6 +70,48 @@ function Frame({ children }: { children: ReactNode }) {
       </header>
       <main className="wrap gutter" id="main">{children}</main>
     </>
+  )
+}
+
+/**
+ * One module in a menu. A module with pages has a button that opens and
+ * closes a list of them. Pages (or the whole module) the module hides from
+ * this person with useHiddenPages, like Scouting's strategy-only pages,
+ * aren't listed.
+ */
+function MenuEntry(props: { module: ModuleDefinition; id: string; subpage: string; pagesOpen: boolean; onTogglePages: () => void }) {
+  const { module: m, id, subpage } = props
+  const useHidden = m.useHiddenPages ?? useNothingHidden
+  const hidden = useHidden()
+  if (hidden === 'all') return null
+  const pages = m.pages?.filter((p) => !hidden.includes(p.path))
+  if (!pages) {
+    return (
+      <a className="menu-item" href={href(m.id)} aria-current={m.id === id ? 'page' : undefined}>
+        <span className="menu-item-name">{m.name}</span>
+      </a>
+    )
+  }
+  return (
+    <div className="menu-pages">
+      <button
+        type="button"
+        className="menu-item menu-pages-btn"
+        aria-expanded={props.pagesOpen}
+        aria-controls={`menu-pages-${m.id}`}
+        onClick={props.onTogglePages}
+      >
+        <span className="menu-item-name">{m.name}</span>
+        <span className="chev" aria-hidden="true" />
+      </button>
+      <div id={`menu-pages-${m.id}`} className="menu-pages-list" hidden={!props.pagesOpen}>
+        {pages.map((p) => (
+          <a key={p.path} className="menu-item" href={href(m.id, p.path)} aria-current={m.id === id && p.path === subpage ? 'page' : undefined}>
+            <span className="menu-item-name">{p.name}</span>
+          </a>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -160,31 +202,8 @@ function Shell({ user }: { user: User }) {
                 onToggle={() => toggle(group.id)}
                 onClose={close}
               >
-                {group.modules.map((m) => m.pages ? (
-                  // A module with pages: its name opens and closes a list of them.
-                  <div key={m.id} className="menu-pages">
-                    <button
-                      type="button"
-                      className="menu-item menu-pages-btn"
-                      aria-expanded={openPages === m.id}
-                      aria-controls={`menu-pages-${m.id}`}
-                      onClick={() => setOpenPages(openPages === m.id ? '' : m.id)}
-                    >
-                      <span className="menu-item-name">{m.name}</span>
-                      <span className="chev" aria-hidden="true" />
-                    </button>
-                    <div id={`menu-pages-${m.id}`} className="menu-pages-list" hidden={openPages !== m.id}>
-                      {m.pages.map((p) => (
-                        <a key={p.path} className="menu-item" href={href(m.id, p.path)} aria-current={m.id === id && p.path === subpage ? 'page' : undefined}>
-                          <span className="menu-item-name">{p.name}</span>
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <a key={m.id} className="menu-item" href={href(m.id)} aria-current={m.id === id ? 'page' : undefined}>
-                    <span className="menu-item-name">{m.name}</span>
-                  </a>
+                {group.modules.map((m) => (
+                  <MenuEntry key={m.id} module={m} id={id} subpage={subpage} pagesOpen={openPages === m.id} onTogglePages={() => setOpenPages(openPages === m.id ? '' : m.id)} />
                 ))}
               </Menu>
             ))}

@@ -50,6 +50,14 @@ export interface ModuleDefinition {
   pages?: ModulePage[]
   /** Who can open it. Leave it out to let everyone in. */
   roles?: Role[]
+  /**
+   * For a module where who can open a page depends on more than roles, like
+   * Scouting's strategy team (#167): a hook giving the paths of the pages to
+   * hide from the signed-in person, or 'all' to hide the whole module from
+   * the menu and the home page. Hiding is only tidiness: the page itself must
+   * still say no, and the database's rules keep the data safe.
+   */
+  useHiddenPages?: () => string[] | 'all'
   /** Loads the page only when someone opens it, so one module can't slow the others down. */
   load: () => Promise<{ default: ComponentType }>
   /**
@@ -95,6 +103,11 @@ export interface ModulePage {
    * or '' for the module's own address, #/scouting. Lowercase letters and dashes.
    */
   path: string
+}
+
+/** For a module with no useHiddenPages: nothing is hidden. */
+export function useNothingHidden(): string[] {
+  return []
 }
 
 /** A menu in the top bar, with the modules in it. */

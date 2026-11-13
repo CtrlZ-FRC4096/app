@@ -5,7 +5,9 @@ import { href, navigate } from '../../core/router'
 import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { Bar, PageHead, Panel, Pill } from '../../core/ui'
-import { useCurrentEvent, useScoutedTeams, useTeamSummary, type Tally, type TeamSummary } from './data'
+import { MIN_MATCHES, pointsRange, useCurrentEvent, useIsStrategy, useScoutedTeams, useTeamPoints, useTeamSummary, type Tally, type TeamSummary } from './data'
+import { PRESCOUT_QUESTIONS, prescoutHref, usePrescoutFor } from '../prescouting/data'
+import TeamPhotos from './TeamPhotos'
 // Stars belong to the Prescouting module (#118), and are the same here and
 // there: starring a team in either place shows in both.
 import { starredFirst, useStars } from '../prescouting/data'
@@ -14,8 +16,10 @@ import TeamRank from './TeamRank'
 import TeamVideos from './TeamVideos'
 import TeamRatings from './TeamRatings'
 
-/** "Team 9991", as a link to its team page. */
+/** "Team 9991", as a link to its team page, or just the words for someone off the strategy team (#167), who can't open it. */
 export function TeamLink(props: { team: number }) {
+  const strategy = useIsStrategy()
+  if (!strategy) return <>Team {props.team}</>
   return <a href={href('scouting', 'team', String(props.team))}>Team {props.team}</a>
 }
 
@@ -126,12 +130,69 @@ function TeamDetails(props: { team: number }) {
         </div>
       </Panel>
       <TeamRank team={props.team} />
+      <TeamPhotos team={props.team} />
+      <AveragePoints team={props.team} />
       {summary.matchCount > 0 && <Numbers summary={summary} />}
       <TeamRatings team={props.team} />
       {summary.matchCount + summary.pitCount > 0 && <HowOften summary={summary} />}
       {summary.written.length > 0 && <WrittenAnswers summary={summary} />}
+      <Prescouting team={props.team} />
       <TeamVideos team={props.team} />
     </>
+  )
+}
+
+// The team's average points per match (APS) from our scouting, with its
+// range, and Match 13's xP as a second opinion (#166). teamPoints() in
+// data.ts works them out.
+function AveragePoints(props: { team: number }) {
+  const { pointsFor } = useTeamPoints()
+  const { aps, xp, fewMatches } = pointsFor(props.team)
+  if (!aps && xp === null) return null
+  return (
+    <Panel title="Average points (APS)" aside={xp !== null && <span className="note">{`Match 13 xP: ${xp.toFixed(1)}`}</span>}>
+      <p className="panel-body" style={{ margin: 0 }}>
+        {aps ? (
+          <>
+            <strong className="tnum" style={{ fontSize: 22 }}>{`APS ${pointsRange(aps.average, aps.low, aps.high)}`}</strong>{' '}
+            <span className="note">{`from ${aps.matches} ${aps.matches === 1 ? 'match' : 'matches'}`}</span>
+            {fewMatches && <><br /><span className="note">{`Fewer than ${MIN_MATCHES} matches, so this is only a guess.`}</span></>}
+          </>
+        ) : (
+          <span className="note">Not scouted in a match yet.</span>
+        )}
+      </p>
+    </Panel>
+  )
+}
+
+// What we expected from the team before the event (#119), from Prescouting,
+// with a link to their full prescouting page. The team page is what we saw
+// in matches; this puts the two one tap apart.
+const PRESCOUT_SHOWN = ['key_task', 'strengths', 'weaknesses', 'auto_paths'] as const
+
+function Prescouting(props: { team: number }) {
+  const event = useCurrentEvent().key
+  const notes = usePrescoutFor(event, props.team)
+  const link = <a href={prescoutHref(event, props.team)}>{notes ? 'Full prescouting page →' : 'Prescout them →'}</a>
+  return (
+    <Panel title="Prescouting" aside={link}>
+      {notes ? (
+        <div className="row-list">
+          {PRESCOUT_QUESTIONS.filter((q) => (PRESCOUT_SHOWN as readonly string[]).includes(q.key) && notes[q.key].trim()).map((q) => (
+            <div key={q.key}>
+              <span style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-line' }}>
+                <span className="note">{q.label}</span>
+                <br />
+                {notes[q.key].trim()}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="panel-body muted" style={{ margin: 0 }}>Not prescouted yet</p>
+      )}
+    </Panel>
   )
 }
 
@@ -160,7 +221,10 @@ function Numbers(props: { summary: TeamSummary }) {
 function HowOften(props: { summary: TeamSummary }) {
   const s = props.summary
   return (
-    <Panel title="How often" aside={s.matchCount > 0 && <span className="note">{`Broke down in ${s.brokeDown} of ${s.matchCount}`}</span>}>
+    <Panel
+      title="How often"
+      aside={s.matchCount > 0 && <span className="note">{`Broke down in ${s.brokeDown} of ${s.matchCount} · Died or browned out in ${s.brownedOut} of ${s.matchCount}`}</span>}
+    >
       <div className="panel-body">
         {s.matchCount > 0 && (
           <>
@@ -168,6 +232,9 @@ function HowOften(props: { summary: TeamSummary }) {
             <Tallies title="Role" tallies={s.roles} />
             <Tallies title="Driver skill (5 is best)" tallies={s.driverSkill} />
             <Tallies title="E-stop or A-stop" tallies={s.stops} />
+            {s.brokeDown > 0 && <Tallies title="What broke (when it broke down)" tallies={s.brokeParts} />}
+            {s.autoSides.some((t) => t.count > 0) && <Tallies title="Auto starting side (seen in matches)" tallies={s.autoSides} />}
+            <Tallies title="Ranking points their alliance earned" tallies={s.rankingPoints} />
           </>
         )}
         {s.pitCount > 0 && <Tallies title="Drivetrain (pit)" tallies={s.drivetrain} />}

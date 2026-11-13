@@ -1,19 +1,25 @@
-import { useState, type FormEvent } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
 import { navigate, useRoute } from '../../core/router'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
-import { DRIVER_SKILLS, STOPS, saveEntry, useEntries, type Stop } from './data'
+import { DRIVER_SKILLS, STOPS, STRATEGY_ONLY, STRATEGY_PATHS, saveEntry, useEntries, useIsStrategy, type Stop } from './data'
 import EventPicker from './EventPicker'
 import FormSection from './FormSection'
 import MatchTeamFields from './MatchTeamFields'
+import MyPicklist from './MyPicklist'
+import Overview from './Overview'
+import PickMany from './PickMany'
 import Picklist from './Picklist'
 import PitForm from './PitForm'
 import RankingsPage from './RankingsPage'
 import Schedule from './Schedule'
 import SavedOnDevice from './SavedOnDevice'
 import SharedPicklist from './SharedPicklist'
+import Simulator from './Simulator'
+import StatsTable from './StatsTable'
 import TeamPage, { TeamLink } from './TeamPage'
-import { COUNTERS, ENDGAME, ROLES } from './season'
+import TeamPicklist from './TeamPicklist'
+import { AUTO_SIDES, BREAKDOWN_PARTS, COUNTERS, ENDGAME, RANKING_POINTS, ROLES } from './season'
 
 /** Width and height of the − and + buttons, in pixels. Big enough to tap without looking. */
 const TAP_SIZE = 60
@@ -23,33 +29,42 @@ function zeroCounts(): Record<string, number> {
   return Object.fromEntries(COUNTERS.map((c) => [c.key, 0]))
 }
 
-/**
- * A row of buttons where any number can be chosen, like <Pick> but for
- * more than one. It uses Pick's look, so the form looks like one thing.
- */
-function PickMany(props: { label: string; options: string[]; value: string[]; onChange: (value: string[]) => void }) {
-  function toggle(option: string) {
-    const chosen = props.value.includes(option)
-    props.onChange(chosen ? props.value.filter((o) => o !== option) : [...props.value, option])
-  }
+/** A big tick box with its words beside it. */
+function Tick(props: { checked: boolean; onChange: (checked: boolean) => void; children: ReactNode }) {
   return (
-    <div className="pick" role="group" aria-label={props.label}>
-      {props.options.map((option) => (
-        <button key={option} type="button" aria-pressed={props.value.includes(option)} onClick={() => toggle(option)}>
-          {option}
-        </button>
-      ))}
-    </div>
+    <label style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 44 }}>
+      <input type="checkbox" style={{ width: 24, height: 24, flexShrink: 0 }} checked={props.checked} onChange={(e) => props.onChange(e.target.checked)} />
+      {props.children}
+    </label>
   )
 }
 
-const VIEWS = ['Match', 'Pit', 'Schedule', 'Rankings', 'Picklist', 'Final picklist']
-/** Each view's address after #/scouting/. */
-const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedule', Rankings: 'rankings', Picklist: 'picklist', 'Final picklist': 'shared-picklist' }
+/** A one-line box for a short answer. 16px text so phones don't zoom in on it. */
+function ShortAnswer(props: { id: string; label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
+  return (
+    <label className="field" htmlFor={props.id}>
+      {props.label}
+      <input id={props.id} className="input" style={{ minHeight: 46, fontSize: 16 }} value={props.value} onChange={(e) => props.onChange(e.target.value)} placeholder={props.placeholder} />
+    </label>
+  )
+}
 
-// A Match / Pit / Schedule / Rankings / Picklist / Final picklist switch at
-// the top. The choice is in the address, so #/scouting/pit opens the pit form
-// straight away: a menu or a bookmark can link to any of them. Both forms
+/** Each page's address after #/scouting/. */
+const PATHS: Record<string, string> = {
+  Overview: '', Match: 'match', Pit: 'pit', Schedule: 'schedule', Rankings: 'rankings',
+  Picklist: 'picklist', 'My picklist': 'my-picklist', 'Team picklist': 'team-picklist', 'Final picklist': 'shared-picklist',
+  Simulator: 'simulate', Stats: 'stats',
+}
+/** The switch at the top. The four picklists are one choice, with their own switch below it (#151). */
+const SWITCH = ['Overview', 'Match', 'Pit', 'Schedule', 'Rankings', 'Picklists', 'Simulator', 'Stats']
+/** The Picklists switch: what each choice is called, and which page it opens. */
+const PICKLISTS: Record<string, string> = { Ranked: 'Picklist', Mine: 'My picklist', Team: 'Team picklist', Final: 'Final picklist' }
+
+// An Overview / Match / Pit / Schedule / Rankings / Picklists / Simulator /
+// Stats switch at the top, and a Ranked / Mine / Team / Final switch under
+// Picklists. #/scouting is the overview (#160), and #/scouting/match the
+// match form. The choice is in the address, so #/scouting/pit opens the pit
+// form straight away: a menu or a bookmark can link to any of them. Both forms
 // stay on the page, and the one not chosen is hidden, so switching doesn't
 // lose what's typed. The other pages are only on the page while they're
 // chosen, so they only load and update while someone's looking at them.
@@ -57,23 +72,45 @@ const PATHS: Record<string, string> = { Match: '', Pit: 'pit', Schedule: 'schedu
 // #/scouting/team/9991 is the team page for team 9991 (TeamPage.tsx), with
 // both forms hidden. It's only drawn while open: it waits for the team
 // database, and the forms must work with no connection.
+//
+// Some pages are for the strategy team and mentors only (#167): the
+// overview, team pages, picklists, simulator and stats. Anyone else gets a
+// shorter switch, #/scouting opens the match form for them, and going to a
+// strategy page by its address says it's strategy only.
 export default function ScoutingPage() {
   const [rest = '', teamText] = useRoute().rest
-  const view = rest === 'team' ? 'Team' : VIEWS.find((v) => PATHS[v] === rest) ?? 'Match'
+  const strategy = useIsStrategy()
+  const found = rest === 'team' ? 'Team' : Object.keys(PATHS).find((v) => PATHS[v] === rest) ?? 'Overview'
+  // Off the strategy team, the overview's address is the match form.
+  const view = !strategy && found === 'Overview' ? 'Match' : found
+  const blocked = !strategy && STRATEGY_PATHS.includes(rest === 'team' ? 'team' : PATHS[view])
+  const picklist = Object.keys(PICKLISTS).find((choice) => PICKLISTS[choice] === view)
   const team = Number(teamText)
+  const choices = strategy ? SWITCH : SWITCH.filter((v) => v !== 'Picklists' && !STRATEGY_PATHS.includes(PATHS[v]))
   return (
     <>
       <EventPicker />
-      <div style={{ marginBottom: 12 }}>
-        <Pick label="Which page" options={VIEWS} value={view} onChange={(v) => navigate('scouting', PATHS[v])} />
+      <div style={{ marginBottom: 12, display: 'grid', gap: 8 }}>
+        <Pick label="Which page" options={choices} value={picklist ? 'Picklists' : view} onChange={(v) => navigate('scouting', PATHS[v === 'Picklists' ? 'Picklist' : v])} />
+        {picklist && !blocked && <Pick label="Which picklist" options={Object.keys(PICKLISTS)} value={picklist} onChange={(choice) => navigate('scouting', PATHS[PICKLISTS[choice]])} />}
       </div>
+      {blocked && (
+        <Panel>
+          <p className="panel-body" style={{ margin: 0 }}>{`${STRATEGY_ONLY} Ask a mentor if you need it.`}</p>
+        </Panel>
+      )}
+      {!blocked && view === 'Overview' && <Overview paths={{ ...PATHS, Teams: 'team' }} />}
       <div hidden={view !== 'Match'}><MatchForm /></div>
       <div hidden={view !== 'Pit'}><PitForm /></div>
       {view === 'Schedule' && <Schedule />}
       {view === 'Rankings' && <RankingsPage />}
-      {view === 'Picklist' && <Picklist />}
-      {view === 'Final picklist' && <SharedPicklist />}
-      {view === 'Team' && <TeamPage team={Number.isInteger(team) && team > 0 ? team : null} />}
+      {!blocked && view === 'Picklist' && <Picklist />}
+      {!blocked && view === 'My picklist' && <MyPicklist />}
+      {!blocked && view === 'Team picklist' && <TeamPicklist />}
+      {!blocked && view === 'Final picklist' && <SharedPicklist />}
+      {!blocked && view === 'Simulator' && <Simulator />}
+      {!blocked && view === 'Stats' && <StatsTable />}
+      {!blocked && view === 'Team' && <TeamPage team={Number.isInteger(team) && team > 0 ? team : null} />}
     </>
   )
 }
@@ -89,10 +126,18 @@ function MatchForm() {
   const [counts, setCounts] = useState(zeroCounts)
   const [endgame, setEndgame] = useState(ENDGAME[0])
   const [roles, setRoles] = useState<string[]>([])
+  const [roleNotes, setRoleNotes] = useState('')
   const [brokeDown, setBrokeDown] = useState(false)
+  const [brokeParts, setBrokeParts] = useState<string[]>([])
+  const [brokeOther, setBrokeOther] = useState('')
+  const [brownedOut, setBrownedOut] = useState(false)
   const [stop, setStop] = useState<Stop>('None')
   // 0 until the scout chooses, so no button is pressed and Save asks for one.
   const [driverSkill, setDriverSkill] = useState(0)
+  // '' until the scout chooses: they may not have seen where it started.
+  const [autoSide, setAutoSide] = useState('')
+  const [autoNotes, setAutoNotes] = useState('')
+  const [rankingPoints, setRankingPoints] = useState<string[]>([])
   const [notes, setNotes] = useState('')
 
   function change(key: string, by: number) {
@@ -107,9 +152,16 @@ function MatchForm() {
       counts,
       endgame,
       roles,
+      role_notes: roleNotes,
       broke_down: brokeDown,
+      broke_parts: brokeParts,
+      broke_other: brokeOther,
+      browned_out: brownedOut,
       stop,
       driver_skill: driverSkill,
+      auto_side: autoSide,
+      auto_notes: autoNotes,
+      ranking_points: rankingPoints,
       notes,
     })
     if (!result.ok) {
@@ -122,9 +174,16 @@ function MatchForm() {
     setCounts(zeroCounts())
     setEndgame(ENDGAME[0])
     setRoles([])
+    setRoleNotes('')
     setBrokeDown(false)
+    setBrokeParts([])
+    setBrokeOther('')
+    setBrownedOut(false)
     setStop('None')
     setDriverSkill(0)
+    setAutoSide('')
+    setAutoNotes('')
+    setRankingPoints([])
     setNotes('')
     toast(`Saved match ${result.value.match}, team ${result.value.team}.`)
   }
@@ -141,6 +200,13 @@ function MatchForm() {
           <FormSection title="Match" first>
             {/* Position, match and team. The team fills in from the schedule: see MatchTeamFields.tsx. */}
             <MatchTeamFields match={match} team={team} onMatch={setMatch} onTeam={setTeam} />
+          </FormSection>
+          <FormSection title="Auto">
+            <div className="field">
+              Where it started (tap again to clear if you didn't see)
+              <Pick label="Where it started" options={AUTO_SIDES} value={autoSide} onChange={(side) => setAutoSide(side === autoSide ? '' : side)} />
+            </div>
+            <ShortAnswer id="scout-auto" label="What did its auto do?" value={autoNotes} onChange={setAutoNotes} placeholder="Like: scored preload, picked up 2 from the middle" />
           </FormSection>
           <FormSection title="Scoring">
             {COUNTERS.map((c) => (
@@ -159,10 +225,18 @@ function MatchForm() {
               Role (choose all that fit)
               <PickMany label="Role" options={ROLES} value={roles} onChange={setRoles} />
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 44 }}>
-              <input type="checkbox" style={{ width: 24, height: 24 }} checked={brokeDown} onChange={(e) => setBrokeDown(e.target.checked)} />
-              Broke down (stopped working or lost a mechanism)
-            </label>
+            <ShortAnswer id="scout-role-notes" label="How well does it do its role?" value={roleNotes} onChange={setRoleNotes} placeholder="Like: fast cycles, missed a few shots" />
+            <Tick checked={brokeDown} onChange={setBrokeDown}>Broke down (stopped working or lost a mechanism)</Tick>
+            {brokeDown && (
+              <>
+                <div className="field">
+                  What broke? (choose all that fit)
+                  <PickMany label="What broke" options={BREAKDOWN_PARTS} value={brokeParts} onChange={setBrokeParts} />
+                </div>
+                <ShortAnswer id="scout-broke-other" label="Anything else that broke" value={brokeOther} onChange={setBrokeOther} placeholder="Like: bumper fell off" />
+              </>
+            )}
+            <Tick checked={brownedOut} onChange={setBrownedOut}>Died or browned out (lost power, stuttering, lights flickering)</Tick>
             <div className="field">
               E-stop or A-stop
               <Pick label="E-stop or A-stop" options={[...STOPS]} value={stop} onChange={setStop} />
@@ -175,6 +249,10 @@ function MatchForm() {
           </FormSection>
           <FormSection title="Endgame">
             <Pick label="Endgame" options={ENDGAME} value={endgame} onChange={setEndgame} />
+            <div className="field">
+              Ranking points their alliance earned (choose all that fit)
+              <PickMany label="Ranking points" options={RANKING_POINTS} value={rankingPoints} onChange={setRankingPoints} />
+            </div>
             <label className="field" htmlFor="scout-notes">
               Notes
               <textarea id="scout-notes" className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything the form doesn't show: tipped, fast cycles, slow intake" />

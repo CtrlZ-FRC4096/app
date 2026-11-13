@@ -11,7 +11,7 @@ const LOADED_AT = '2026-03-13T20:40:00Z'
 // A saved copy, as useRatings() would have it. Each test changes only the part it's about.
 const saved = (fields: Partial<RatingsState>): RatingsState => ({ event: EVENT_KEY, ratings: [], rankings: [], loadedAt: LOADED_AT, error: null, ...fields })
 const rating = (teamNumber: number, fields: Partial<Match13Rating> = {}): Match13Rating => ({
-  teamNumber, xpStart: 40, xpEnd: 50, xAuto: 10, xTele: 30, xEnd: 10, epa: 47, opr: null, dpr: null, ...fields,
+  teamNumber, xpStart: 40, xpEnd: 50, xAuto: 10, xTele: 30, xEnd: 10, epa: 47, opr: 52, dpr: 14, xVar: 9, xRp1: 0.5, xRp2: 0.25, xRp3: 0.75, ...fields,
 })
 const draw = (team: number) => renderToString(<TeamRatings team={team} />)
 
@@ -58,5 +58,13 @@ describe('the Match 13 panel', () => {
     ratingsStore.set(saved({ ratings: [rating(4096, { xAuto: null, epa: null })] }))
     const html = draw(4096)
     expect(html.match(/not given/g)).toHaveLength(3) // Auto, EPA, and the record (no rankings saved)
+  })
+
+  it('shows OPR, DPR, variation, the ranking point chances and the game parts (#152), and "not given" for ones a copy saved before #152 lacks', () => {
+    ratingsStore.set(saved({ ratings: [rating(4096, { components: { fuel: 31.5 } })] }))
+    const html = draw(4096)
+    for (const text of ['OPR', '52.0', 'DPR', '14.0', 'Variation', '9.0', 'RP 1 chance', '50%', '75%', 'Game part: fuel', '31.5']) expect(html).toContain(text)
+    ratingsStore.set(saved({ ratings: [rating(4096, { xVar: undefined, xRp1: undefined, xRp2: undefined, xRp3: undefined })] }))
+    expect(draw(4096).match(/not given/g)).toHaveLength(5) // Variation, 3 RP chances, and the record
   })
 })

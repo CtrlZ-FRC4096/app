@@ -1,11 +1,22 @@
 // Tests for the prescouting pages, drawn in demo mode with the example notes.
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { setDemoRole } from '../../core/demo'
 import { renderToString } from 'react-dom/server'
 import { EVENT_KEY, tbaTeamUrl } from '../scouting/data'
 import { PRESCOUT_QUESTIONS } from './data'
 import PrescoutPage, { TeamCard, TeamPage } from './PrescoutPage'
 
 describe('the prescouting pages', () => {
+  // Prescouting is strategy only (#167). A student leader always counts;
+  // Alex, the demo student, isn't on the example strategy team.
+  beforeEach(() => setDemoRole('leader'))
+  afterEach(() => setDemoRole('student'))
+
+  it('are only for the strategy team, student leaders, mentors and admins (#167)', () => {
+    setDemoRole('student')
+    expect(renderToString(<PrescoutPage />)).toContain('Only the strategy team and mentors can see this.')
+  })
+
   it("start on this season's event, and say the teams are loading", () => {
     const html = renderToString(<PrescoutPage />)
     expect(html).toContain(`value="${EVENT_KEY}"`)
@@ -18,6 +29,8 @@ describe('the prescouting pages', () => {
     expect(html).toContain('Starts center, scores preload')
     expect(html).toContain('Fast, reliable auto. Good second pick.')
     expect(html).toContain('☆ Star')
+    // #119: one tap to the team's Scouting page.
+    expect(html).toContain('href="#/scouting/team/9991"')
   })
 
   it('say a team with no notes is not prescouted yet, and link to their page', () => {

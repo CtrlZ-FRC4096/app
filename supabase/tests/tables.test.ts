@@ -66,8 +66,10 @@ describe('every table the app uses', () => {
 
   // This goes through every table in one test, starting each from an empty
   // database, so it gets slower with every table added. It needs longer than
-  // the usual 5 seconds on GitHub's machines.
-  it('accepts its example rows', { timeout: 10_000 }, async () => {
+  // the usual 5 seconds on GitHub's machines, and longer still when every
+  // test runs at once: alone it takes about 5 seconds, but with the whole
+  // suite running beside it, it took over 10 on a team laptop.
+  it('accepts its example rows', { timeout: 30_000 }, async () => {
     const refused: string[] = []
     for (const table of tables) {
       // Start each table from an empty database, so one table's rows can't affect another's.

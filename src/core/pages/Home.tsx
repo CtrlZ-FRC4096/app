@@ -1,7 +1,7 @@
 import { modules } from '../../modules'
 import { canOpen, useSession, type Role } from '../session'
 import { href } from '../router'
-import { groupModules, type ModuleDefinition } from '../registry'
+import { groupModules, useNothingHidden, type ModuleDefinition } from '../registry'
 import { PageHead, Panel, Pick, Pill } from '../ui'
 import { THEMES, setTheme, useTheme } from '../theme'
 import { QuietBoundary } from '../ErrorBoundary'
@@ -67,6 +67,9 @@ export function Home() {
 }
 
 function Tile({ module, role }: { module: ModuleDefinition; role: Role }) {
+  // A module can hide itself from some people beyond their role (useHiddenPages).
+  const useHidden = module.useHiddenPages ?? useNothingHidden
+  if (useHidden() === 'all') return null
   return (
     <a className="panel tile" href={href(module.id)}>
       <div className="tile-top">
