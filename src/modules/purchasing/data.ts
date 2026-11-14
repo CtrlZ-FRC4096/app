@@ -336,7 +336,7 @@ export function arrivalText(item: PurchaseItem): string | null {
   return isOnItsWay(item) && item.estimated_arrival ? `Arrives ${dayText(item.estimated_arrival)}` : null
 }
 
-const NOT_A_BUYER = 'Only mentors and purchasers place and change orders. Ask one of them: they\'re listed at the bottom of this page.'
+const NOT_A_BUYER = 'Only mentors and purchasers place and change orders. Ask a mentor.'
 
 /** Who chooses the purchasers: mentors and admins, on the Members page (#144). */
 export function canChooseBuyers(role: Role): boolean {
@@ -521,7 +521,7 @@ export async function prepareReceipt(file: File, encoder?: ImageEncoder): Promis
  */
 export async function addReceipt(item: PurchaseItem, file: File): Promise<Result<Receipt>> {
   if (!receiptAddingShown(item.status)) return fail('Mark the item Order Placed before adding a receipt.')
-  if (!canOrder(currentUser(), buyersTable.rows())) return fail('Only mentors and purchasers add receipts. Ask one of them: they\'re listed at the bottom of this page.')
+  if (!canOrder(currentUser(), buyersTable.rows())) return fail('Only mentors and purchasers add receipts. Ask a mentor.')
   const problem = checkReceipt(file)
   if (problem) return fail(problem)
   const content_type = receiptType(file)
