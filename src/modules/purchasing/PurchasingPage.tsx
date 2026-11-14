@@ -1,6 +1,6 @@
 import { useState, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
 import { useMemberNames, useMembers, type Member } from '../../core/members'
-import { href, navigate, useRoute } from '../../core/router'
+import { navigate, useRoute } from '../../core/router'
 import { isMentor, useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { shortDate } from '../../core/format'
@@ -14,7 +14,6 @@ import {
   TYPES,
   VENDORS,
   VIEWS,
-  canChooseBuyers,
   addItem,
   arrivalText,
   changeItem,
@@ -181,8 +180,6 @@ export default function PurchasingPage() {
       )}
 
       {items.length > 0 && <p className="note">{summaryText(items)}</p>}
-
-      <Purchasers />
     </>
   )
 }
@@ -469,37 +466,5 @@ function OrderDetails(props: {
         </>
       )}
     </div>
-  )
-}
-
-/**
- * Who the purchasers are, so people know who to ask: the error messages point
- * here. Mentors and admins choose them on the Members page (#144).
- */
-function Purchasers() {
-  const buyers = useBuyers()
-  const nameOf = useMemberNames()
-  const chooser = canChooseBuyers(useSession().role)
-  const where = chooser
-    ? <>Choose them on the <a href={href('members')}>Members page</a>.</>
-    : 'Mentors choose them on the Members page.'
-
-  return (
-    <Panel title="Purchasers" aside={<span className="note">Place and change orders, with mentors and admins</span>}>
-      {buyers.length === 0 ? (
-        <p className="panel-body muted">No purchasers yet: ask a mentor to place orders. {where}</p>
-      ) : (
-        <>
-          <div className="row-list">
-            {buyers.map((buyer) => (
-              <div key={buyer.id}>
-                <span style={{ flex: 1, minWidth: 0 }}>{nameOf(buyer.member_id)}</span>
-              </div>
-            ))}
-          </div>
-          <p className="panel-body note">{where}</p>
-        </>
-      )}
-    </Panel>
   )
 }
