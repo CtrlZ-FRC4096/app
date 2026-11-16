@@ -677,6 +677,11 @@ export function receiptAddingShown(status: StatusKey): boolean {
   return !isAsking(status)
 }
 
+/** Whether the Receipts section has anything in it: receipts to list, or Add receipt for someone who may use it. */
+export function receiptsSectionShown({ canManage, count, showAdd }: { canManage: boolean; count: number; showAdd: boolean }): boolean {
+  return count > 0 || (canManage && showAdd)
+}
+
 /**
  * The form's changes when someone picks a new status. Moving an order to
  * Order Placed fills in Ordered by with them, as saving does (the database

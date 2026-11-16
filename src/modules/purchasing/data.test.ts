@@ -27,6 +27,7 @@ import {
   changeItem,
   checkItem,
   orderFieldsShown,
+  receiptsSectionShown,
   pickStatus,
   checkReceipt,
   choices,
@@ -636,6 +637,26 @@ describe('orderFieldsShown', () => {
     for (const status of ['placed', 'backordered', 'received'] as const) expect(orderFieldsShown({ ...empty, status }), status).toEqual(all(true))
     // So nothing saved is hidden.
     expect(orderFieldsShown({ ...empty, status: 'order', shipped_to: DEMO_PEOPLE.pat })).toEqual({ ordered_by: false, shipped_to: true, estimated_arrival: false })
+  })
+})
+
+describe('receiptsSectionShown', () => {
+  it('shows the section only when there is something in it', () => {
+    const cases = [
+      // A manager on an item that isn't ordered yet: no receipts, no Add receipt.
+      { canManage: true, count: 0, showAdd: false, shown: false },
+      // Ordered: Add receipt is there, so the section has content.
+      { canManage: true, count: 0, showAdd: true, shown: true },
+      // Existing receipts stay visible even when the item goes back to asking.
+      { canManage: true, count: 2, showAdd: false, shown: true },
+      { canManage: true, count: 2, showAdd: true, shown: true },
+      // A student with no receipts sees nothing; with receipts they see the count and the note.
+      { canManage: false, count: 0, showAdd: false, shown: false },
+      { canManage: false, count: 1, showAdd: false, shown: true },
+      // Add receipt is never offered to someone who can't manage it.
+      { canManage: false, count: 0, showAdd: true, shown: false },
+    ]
+    for (const { shown, ...input } of cases) expect(receiptsSectionShown(input)).toBe(shown)
   })
 })
 
