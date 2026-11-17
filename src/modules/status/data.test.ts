@@ -6,8 +6,8 @@ import { renderToString } from 'react-dom/server'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   MAX_ITEM_LENGTH, PRACTICE_KEY, PRACTICE_MATCH, addPitItem, assignPitItem, belongsToSubgroup, canCheck, checkedIds, checksTable, defaultMatch, itemsTable,
-  matchMembers, matchProgress, movePitItem, movePitItemTo, myItems, nameMatches, ourMatches, pitSummary, positionBetween, progressByPerson, progressText,
-  canManagePit, clearPitChecklist, removePitItem, renamePitItem, reorderPitItem, setPitItemCompleted, setPitItemSubgroup, setSubgroupMembers, subgroupMembersStore, uncheckAllPitItems, uncheckedByPerson,
+  matchProgress, movePitItem, movePitItemTo, myItems, nameMatches, ourMatches, pitSummary, positionBetween, progressByPerson, progressText,
+  assignedPeople, canManagePit, matchMembers, clearPitChecklist, pickablePeople, takenOffText, removePitItem, renamePitItem, reorderPitItem, setPitItemCompleted, setPitItemSubgroup, setSubgroupMembers, subgroupMembersStore, uncheckAllPitItems, uncheckedByPerson,
   usePitSummary, type PitCheck, type PitItem,
 } from './data'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
@@ -29,12 +29,13 @@ beforeEach(() => {
   scheduleStore.reset()
 })
 
-describe('finding someone to assign', () => {
+describe('finding someone to add', () => {
   const people = [
     { id: 'a', name: 'Alex Rivera' },
     { id: 'b', name: 'Jordan Lee' },
     { id: 'c', name: 'Pat Morgan' },
   ]
+  const ids = (found: { id: string }[]) => found.map((p) => p.id)
 
   it('narrows by any part of a name, ignoring capitals and spaces at the ends, showing everyone for an empty search', () => {
     const searches: [string, string[]][] = [
@@ -45,14 +46,48 @@ describe('finding someone to assign', () => {
       ['r', ['a', 'b', 'c']],
       ['zzz', []],
     ]
-    for (const [search, ids] of searches) expect(matchMembers(people, search).map((p) => p.id), `"${search}"`).toEqual(ids)
+    for (const [search, found] of searches) expect(ids(pickablePeople(people, [], search)), `"${search}"`).toEqual(found)
     expect(nameMatches('Alex Rivera', 'x r')).toBe(true)
     expect(nameMatches('Alex Rivera', 'zzz')).toBe(false)
   })
 
-  it('always keeps chosen people, in their usual order, so searching never hides an assignment', () => {
-    expect(matchMembers(people, 'lee', ['c']).map((p) => p.id)).toEqual(['b', 'c'])
-    expect(matchMembers(people, 'zzz', ['a', 'c']).map((p) => p.id)).toEqual(['a', 'c'])
+  it('in the Training picker, always keeps chosen people, in their usual order, so searching never hides them', () => {
+    expect(ids(matchMembers(people, 'lee', ['c']))).toEqual(['b', 'c'])
+    expect(ids(matchMembers(people, 'zzz', ['a', 'c']))).toEqual(['a', 'c'])
+  })
+
+  it('leaves out people already chosen: they show above the box as name tags', () => {
+    expect(ids(pickablePeople(people, ['a'], ''))).toEqual(['b', 'c'])
+    expect(ids(pickablePeople(people, ['c'], 'r'))).toEqual(['a', 'b'])
+    expect(ids(pickablePeople(people, ['a', 'b', 'c'], ''))).toEqual([])
+  })
+
+  it('for the whole team, lists only suggested people until a name is typed, then anyone, suggested first', () => {
+    expect(ids(pickablePeople(people, [], '', ['c']))).toEqual(['c'])
+    expect(ids(pickablePeople(people, [], '', []))).toEqual([])
+    expect(ids(pickablePeople(people, [], 'r', ['c']))).toEqual(['c', 'a', 'b'])
+    expect(ids(pickablePeople(people, ['c'], '', ['c']))).toEqual([])
+    expect(ids(pickablePeople(people, [], 'lee', ['c']))).toEqual(['b'])
+  })
+
+  it('suggests the people already on other items, once each', () => {
+    expect(assignedPeople(itemsTable.rows()).sort()).toEqual([DEMO_PEOPLE.alex, DEMO_PEOPLE.jordan, DEMO_PEOPLE.pat].sort())
+    expect(assignedPeople([])).toEqual([])
+  })
+
+  it('says who was taken off when a subgroup they are not in is picked', () => {
+    const members = membersTable.rows()
+    // Electrical in the example data is Alex and Pat.
+    const cases: [string[], string, string][] = [
+      [[DEMO_PEOPLE.alex, DEMO_PEOPLE.pat], 'Electrical', ''],
+      [[], 'Electrical', ''],
+      [[DEMO_PEOPLE.jordan], 'General', ''],
+      [[DEMO_PEOPLE.casey], 'Electrical', "You're not in Electrical, so you were taken off."],
+      [[DEMO_PEOPLE.jordan, DEMO_PEOPLE.alex], 'Electrical', "Jordan Kim isn't in Electrical, and was taken off."],
+      [[DEMO_PEOPLE.jordan, DEMO_PEOPLE.casey], 'Electrical', "Jordan Kim and you aren't in Electrical, and were taken off."],
+      [[DEMO_PEOPLE.jordan, DEMO_PEOPLE.morgan, DEMO_PEOPLE.casey], 'Electrical', "Jordan Kim, Morgan Lee and you aren't in Electrical, and were taken off."],
+    ]
+    for (const [chosen, subgroup, text] of cases) expect(takenOffText(chosen, subgroup, members, DEMO_PEOPLE.casey), `${chosen} → ${subgroup}`).toBe(text)
   })
 })
 

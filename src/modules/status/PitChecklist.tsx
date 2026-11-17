@@ -1,15 +1,16 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { Bar, Panel, Pill } from '../../core/ui'
 import {
-  MAX_ITEM_LENGTH, PIT_SUBGROUPS, type PitMatch, type PitSubgroup, addPitItem, assignPitItem, belongsToSubgroup, canCheck, checkedIds, matchProgress,
-  movePitItem, movePitItemTo, progressText, setPitItemCompleted, setSubgroupMembers, usePitChecklist, usePitChecks, useSubgroupMembers,
+  MAX_ITEM_LENGTH, PIT_SUBGROUPS, type PitMatch, type PitSubgroup, addPitItem, assignedPeople, belongsToSubgroup, canCheck, checkedIds, matchProgress,
+  movePitItem, movePitItemTo, progressText, setPitItemCompleted, takenOffText, usePitChecklist, usePitChecks, useSubgroupMembers,
 } from './data'
 import { useMembers } from '../../core/members'
 import { useSession } from '../../core/session'
 import { usePitDrag } from './usePitDrag'
 import { ClearList } from './ClearList'
 import { ItemPopup, type ItemPopupMode } from './ItemPopup'
-import { MemberPicker } from './MemberPicker'
+import { PeoplePicker } from './PeoplePicker'
+import { SubgroupsPanel } from './SubgroupsPanel'
 
 /** The full pit checklist, for student leaders, mentors and admins: every item, checked for the chosen match. */
 export function PitChecklist({ match }: { match: PitMatch }) {
@@ -19,12 +20,16 @@ export function PitChecklist({ match }: { match: PitMatch }) {
   const user = useSession()
   const members = useMembers()
   const activeMembers = members.filter((member) => member.active)
-  const subgroupMembers = useSubgroupMembers()
+  // Read so the lists of who can be chosen update when a subgroup's members change.
+  useSubgroupMembers()
+  const nameOf = (id: string) => members.find((member) => member.id === id)?.name ?? 'Former member'
   const membersFor = (group: string) => activeMembers.filter((member) => belongsToSubgroup(member.id, group))
   const [assigneeIds, setAssigneeIds] = useState<string[]>([])
   const [text, setText] = useState('')
   const [subgroup, setSubgroup] = useState<PitSubgroup>('General')
   const [error, setError] = useState('')
+  // Who was taken off the new item when its subgroup changed, to say so.
+  const [takenOff, setTakenOff] = useState('')
   const [popup, setPopup] = useState<{ id: string; mode: ItemPopupMode } | null>(null)
   const popupItem = items.find((item) => item.id === popup?.id)
   const input = useRef<HTMLInputElement>(null)
@@ -69,6 +74,8 @@ export function PitChecklist({ match }: { match: PitMatch }) {
     event.preventDefault()
     if (!(await run(addPitItem(text, assigneeIds, subgroup), 'Item added.'))) return
     setText('')
+    setAssigneeIds([])
+    setTakenOff('')
     input.current?.focus()
   }
 
@@ -76,7 +83,7 @@ export function PitChecklist({ match }: { match: PitMatch }) {
     <section className="stack" aria-labelledby="pit-checklist-title">
       <h2 id="pit-checklist-title">Full checklist</h2>
       <p className="muted">
-        Checks are for {match.label}. Drag the handle on the right to reorder items, or use Move to… in an item's three-dot menu. Assign, rename and remove items there too. Clear list, under the checklist, unchecks everything for this match or removes every item.
+        Checks are for {match.label}. Drag the handle on the right to reorder items, or use Move to… in an item's three-dot menu. Rename and remove items there too. Tap an item's people to change who's on it, and its subgroup tag to change the subgroup. Clear list, under the checklist, unchecks everything for this match or removes every item.
       </p>
       <Panel title="Checklist" aside={<Pill tone={progress.ready ? 'ok' : 'plain'}>{progressText(progress)}</Pill>}>
         <div className="panel-body">
@@ -104,11 +111,15 @@ export function PitChecklist({ match }: { match: PitMatch }) {
                 }}>{item.subgroup}</button>
               </div>
               <div className="pit-item-tools">
-                <p className={item.assignee_ids.length ? 'note' : 'note pit-unassigned'}>
-                  {item.assignee_ids.length
-                    ? `Assigned to: ${item.assignee_ids.map((id) => members.find((member) => member.id === id)?.name ?? 'Former member').join(', ')}`
-                    : 'Unassigned: open the ⋯ menu to assign someone'}
-                </p>
+                <button type="button" className="pit-people"
+                  aria-label={item.assignee_ids.length ? `Change people for ${item.text}: ${item.assignee_ids.map(nameOf).join(', ')}` : `Add people to ${item.text}`}
+                  onClick={(event) => {
+                    event.currentTarget.closest('li')?.querySelector('.pit-menu')?.removeAttribute('open')
+                    setPopup({ id: item.id, mode: 'people' })
+                  }}>
+                  {item.assignee_ids.map((id) => <span key={id} className="pit-chip">{nameOf(id)}</span>)}
+                  {item.assignee_ids.length === 0 && <span className="pit-chip pit-chip-add">+ Add people</span>}
+                </button>
               </div>
                   <details className="pit-menu" onKeyDown={(event) => {
                     if (event.key === 'Escape') {
@@ -120,29 +131,6 @@ export function PitChecklist({ match }: { match: PitMatch }) {
                     <div className="pit-menu-content">
                     <PitMoveTo name={item.text} place={items.indexOf(item) + 1} count={items.length} group={`pit-tools-${item.id}`}
                       onMove={(place) => moveTo(item.id, place, item.text)} />
-                    <details className="pit-submenu" name={`pit-tools-${item.id}`}>
-                    <summary>Person assignment</summary>
-                    <div className="pit-assign">
-                      <strong>Assign people</strong>
-                      <p className="note">Selections save automatically. Clear all to leave it unassigned.</p>
-                      <p className="note">Showing {item.subgroup} members only.</p>
-                      {membersFor(item.subgroup).length === 0 && <p className="note">No active members in this subgroup. Edit subgroup members below.</p>}
-                      <MemberPicker members={membersFor(item.subgroup)} chosenIds={item.assignee_ids} onChange={(memberId, chosen) => {
-                        const ids = chosen ? [...item.assignee_ids, memberId] : item.assignee_ids.filter((id) => id !== memberId)
-                        void run(assignPitItem(item.id, ids), 'Assignment saved.')
-                      }} />
-                    </div>
-                    {item.subgroup !== 'General' && <details className="pit-members-editor">
-                      <summary>Edit subgroup members</summary>
-                      <div className="pit-assign">
-                        <p className="note">Saved on this device only. Applies to all {item.subgroup} items; removing people also removes their assignments.</p>
-                        <MemberPicker members={activeMembers} chosenIds={subgroupMembers[item.subgroup] ?? []} onChange={(memberId, chosen) => {
-                          const ids = subgroupMembers[item.subgroup] ?? []
-                          void run(setSubgroupMembers(item.subgroup as PitSubgroup, chosen ? [...ids, memberId] : ids.filter((id) => id !== memberId)), 'Subgroup members saved.')
-                        }} />
-                      </div>
-                    </details>}
-                    </details>
                     {(['rename', 'remove'] as const).map((mode) => (
                       <button key={mode} type="button" className="pit-menu-action" onClick={(event) => {
                         const menu = event.currentTarget.closest('.pit-menu')
@@ -194,23 +182,30 @@ export function PitChecklist({ match }: { match: PitMatch }) {
             <select id="new-pit-subgroup" className="input" value={subgroup} onChange={(event) => {
               const group = event.target.value as PitSubgroup
               setSubgroup(group)
+              // Say who comes off, rather than taking them off without a word.
+              setTakenOff(takenOffText(assigneeIds, group, members, user.id))
               setAssigneeIds((ids) => ids.filter((id) => belongsToSubgroup(id, group)))
             }}>
               {PIT_SUBGROUPS.map((group) => <option key={group}>{group}</option>)}
             </select>
           </label>
+          {takenOff && <p className="note" role="status" style={{ margin: 0 }}>{takenOff}</p>}
           <fieldset className="pit-assign">
-            <legend>Assign people (choose at least one)</legend>
-            {membersFor(subgroup).length === 0 && <p className="note">No active members in this subgroup. Edit subgroup members in an item's ⋯ menu.</p>}
-            <MemberPicker members={membersFor(subgroup)} chosenIds={assigneeIds} onChange={(memberId, chosen) => {
-              setAssigneeIds(chosen ? [...assigneeIds, memberId] : assigneeIds.filter((id) => id !== memberId))
-            }} />
+            <legend>People (choose at least one)</legend>
+            <PeoplePicker findId="new-pit-people-find"
+              chosen={assigneeIds.map((id) => ({ id, name: nameOf(id) }))}
+              pool={membersFor(subgroup)}
+              suggestedIds={subgroup === 'General' ? assignedPeople(items) : undefined}
+              nobody={`Nobody is in ${subgroup} yet. Add people to it in the Subgroups panel below.`}
+              onAdd={(id) => { setAssigneeIds([...assigneeIds, id]); setTakenOff('') }}
+              onRemove={(id) => setAssigneeIds(assigneeIds.filter((old) => old !== id))} />
           </fieldset>
           <div className="toolbar">
             <button type="submit" className="btn btn-primary pit-add">Add item</button>
           </div>
         </form>
       </Panel>
+      <SubgroupsPanel onSaved={(message) => { setError(''); setAnnouncement(message) }} />
     </section>
   )
 }

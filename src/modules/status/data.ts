@@ -54,12 +54,49 @@ export function nameMatches(name: string, search: string): boolean {
 }
 
 /**
- * The people to show under a "Find someone" box: everyone whose name matches
- * the search, plus the people already chosen, in their usual order. Chosen
- * people always stay visible, so searching never hides who is assigned.
+ * The people to show under the Training module's "Find someone" box
+ * (`MemberPicker.tsx`): everyone whose name matches the search, plus the
+ * people already chosen, in their usual order. Chosen people always stay
+ * visible, so searching never hides who is chosen.
  */
 export function matchMembers<T extends { id: string; name: string }>(members: T[], search: string, chosenIds: string[] = []): T[] {
   return members.filter((member) => chosenIds.includes(member.id) || nameMatches(member.name, search))
+}
+
+/**
+ * The people to list under a "Find someone" box, to tap and add: everyone
+ * in `pool` (who may be chosen) whose name matches the search and who isn't
+ * chosen already. The chosen people are shown above the box as name tags.
+ *
+ * `suggestedIds` is for when the pool is the whole team (General items):
+ * only those people are listed until a name is typed, so the list isn't
+ * sixty names long. Once something is typed, anyone can match, suggested
+ * people first.
+ */
+export function pickablePeople<T extends { id: string; name: string }>(pool: T[], chosenIds: string[], search: string, suggestedIds?: string[]): T[] {
+  const open = pool.filter((person) => !chosenIds.includes(person.id) && nameMatches(person.name, search))
+  if (!suggestedIds) return open
+  const suggested = open.filter((person) => suggestedIds.includes(person.id))
+  return search.trim() ? [...suggested, ...open.filter((person) => !suggestedIds.includes(person.id))] : suggested
+}
+
+/** Everyone on any item's list of people, once each: who to suggest for a General item. */
+export function assignedPeople(items: Pick<PitItem, 'assignee_ids'>[]): string[] {
+  return [...new Set(items.flatMap((item) => item.assignee_ids))]
+}
+
+/**
+ * What to tell someone when picking a subgroup takes people off, like
+ * "You're not in Electrical, so you were taken off." `ids` are the people
+ * chosen before; `me` is who's using the page. Empty when nobody comes off.
+ */
+export function takenOffText(ids: string[], subgroup: string, members: { id: string; name: string }[], me: string | null): string {
+  const off = ids.filter((id) => !belongsToSubgroup(id, subgroup))
+  if (off.length === 0) return ''
+  if (off.length === 1 && off[0] === me) return `You're not in ${subgroup}, so you were taken off.`
+  const names = off.map((id) => (id === me ? 'you' : members.find((member) => member.id === id)?.name ?? 'Former member'))
+  if (names.length === 1) return `${names[0]} isn't in ${subgroup}, and was taken off.`
+  return `${names.slice(0, -1).join(', ')} and ${names.at(-1)} aren't in ${subgroup}, and were taken off.`
 }
 
 // ---------------------------------------------------------------------------
