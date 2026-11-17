@@ -34,7 +34,8 @@ import {
   setSignUps,
   shownDescription,
   signUp,
-  signUpLink,
+  signUpButtonText,
+  signUpLinks,
   signUpsFor,
   signUpsTable,
   timeOfDay,
@@ -127,46 +128,54 @@ describe('plainText', () => {
   })
 })
 
-describe('signUpLink', () => {
-  it('finds the link on a "Sign up:" line, however it is written, and however Google Calendar wraps it', () => {
-    const found: [string, string, string][] = [
-      ['on its own line', 'Robot demo at the library.\nSign up: https://forms.gle/abc123', 'https://forms.gle/abc123'],
-      ['in lower case, with no space', 'signup: https://forms.gle/abc123', 'https://forms.gle/abc123'],
-      ['in capitals, with words after', 'SIGN UP:https://forms.gle/abc123 by Friday', 'https://forms.gle/abc123'],
-      ['wrapped in HTML', 'Bring a laptop.<br>Sign up: <a href="https://forms.gle/abc123">https://forms.gle/abc123</a>', 'https://forms.gle/abc123'],
+describe('signUpLinks', () => {
+  it('finds every "Sign up:" line, in order, with its name, however Google Calendar wraps it, and drops unsafe links', () => {
+    const form = 'https://forms.gle/abc123'
+    const cases: [string, string | null, { name: string; link: string }[]][] = [
+      ['no description', null, []],
+      ['no sign-up line', 'Leave from school at 6 AM.', []],
+      ['no link', 'Sign up:', []],
+      // Only a line that starts with "Sign up" counts.
+      ['a line that only mentions signing up', `Remember to sign up: ${form}`, []],
+      ['one, on its own line', `Robot demo at the library.\nSign up: ${form}`, [{ name: '', link: form }]],
+      ['in lower case, with no space', `signup: ${form}`, [{ name: '', link: form }]],
+      ['in capitals, with words after', `SIGN UP:${form} by Friday`, [{ name: '', link: form }]],
+      [
+        'several, with and without names, in order',
+        'Sign up (Travel): https://forms.gle/travel\nBring your badge.\nsign up ( Hotel ):https://forms.gle/hotel\nSign up: https://forms.gle/other',
+        [{ name: 'Travel', link: 'https://forms.gle/travel' }, { name: 'Hotel', link: 'https://forms.gle/hotel' }, { name: '', link: 'https://forms.gle/other' }],
+      ],
+      ['wrapped in HTML', `Bring a laptop.<br>Sign up (Drivers): <a href="${form}">${form}</a>`, [{ name: 'Drivers', link: form }]],
       [
         'wrapped in HTML, with different words shown',
         '<p>Bring a laptop.</p><p>Sign up: <a href="https://example.com/form?a=1&amp;b=2" target="_blank">the form</a></p>',
-        'https://example.com/form?a=1&b=2',
+        [{ name: '', link: 'https://example.com/form?a=1&b=2' }],
       ],
-      ['after a non-breaking space', 'Sign up:&nbsp;<a href="https://forms.gle/abc123">https://forms.gle/abc123</a>', 'https://forms.gle/abc123'],
+      ['after a non-breaking space', `Sign up:&nbsp;<a href="${form}">${form}</a>`, [{ name: '', link: form }]],
       // Pasted from Google Docs or Gmail. Still https, and the redirect takes people to the form.
       [
         'in a Google redirect',
-        'Sign up: <a href="https://www.google.com/url?q=https://forms.gle/abc123&amp;sa=D">https://forms.gle/abc123</a>',
-        'https://www.google.com/url?q=https://forms.gle/abc123&sa=D',
+        `Sign up: <a href="https://www.google.com/url?q=${form}&amp;sa=D">${form}</a>`,
+        [{ name: '', link: `https://www.google.com/url?q=${form}&sa=D` }],
       ],
+      // A bad link never becomes a button; the others on the event still do.
+      ['an http link, dropped', `Sign up (Hotel): http://forms.gle/hotel\nSign up (Travel): ${form}`, [{ name: 'Travel', link: form }]],
+      ['a javascript link', 'Sign up: javascript:alert(1)', []],
+      ['a javascript link shown as https', `Sign up: <a href="javascript:alert(1)">${form}</a>`, []],
     ]
-    for (const [label, description, link] of found) expect(signUpLink(description), label).toBe(link)
+    for (const [label, description, links] of cases) expect(signUpLinks(description), label).toEqual(links)
   })
 
-  it('is null with no sign-up line, or an http or javascript link, so a bad link never becomes a button', () => {
-    const none: [string, string | null][] = [
-      ['no description', null],
-      ['no sign-up line', 'Leave from school at 6 AM.'],
-      ['no link', 'Sign up:'],
-      ['a line that only mentions signing up', 'Remember to sign up: https://forms.gle/abc123'], // only a line that starts with "Sign up:" counts
-      ['an http link', 'Sign up: http://forms.gle/abc123'],
-      ['a javascript link', 'Sign up: javascript:alert(1)'],
-      ['a javascript link shown as https', 'Sign up: <a href="javascript:alert(1)">https://forms.gle/abc123</a>'],
-    ]
-    for (const [label, description] of none) expect(signUpLink(description), label).toBeNull()
+  it('names each button after its link, or just "Sign up"', () => {
+    expect(signUpButtonText({ name: 'Hotel', link: 'https://forms.gle/hotel' })).toBe('Sign up: Hotel')
+    expect(signUpButtonText({ name: '', link: 'https://forms.gle/abc123' })).toBe('Sign up')
   })
 })
 
 describe('shownDescription', () => {
-  it('leaves out the sign-up line, since the Sign up button has the link, but keeps one whose link was ignored', () => {
+  it('leaves out every sign-up line, since the Sign up buttons have the links, but keeps one whose link was ignored', () => {
     expect(shownDescription('Robot demo at the library.\nSign up: https://forms.gle/abc123\nWear your team shirt.')).toBe('Robot demo at the library. Wear your team shirt.')
+    expect(shownDescription('Sign up (Travel): https://forms.gle/travel\nBring your badge.\nSign up (Hotel): https://forms.gle/hotel')).toBe('Bring your badge.')
     expect(shownDescription('Bring a laptop.<br>Sign up: <a href="https://forms.gle/abc123">https://forms.gle/abc123</a>')).toBe('Bring a laptop.')
     expect(shownDescription('Sign up: https://forms.gle/abc123')).toBeNull()
     // So nothing goes missing.
@@ -291,12 +300,19 @@ describe('the event form', () => {
     expect(eventFromForm(form({ allDay: true, day: '2027-03-12', lastDay: '2027-03-14' }))).toMatchObject({ ok: true, value: { allDay: true, start: '2027-03-12', end: '2027-03-14' } })
   })
 
-  it('puts a sign-up link on its own "Sign up:" line, and turns on sign-ups in the app', () => {
-    expect(eventFromForm(form({ signUps: 'With a link', link: ' https://forms.gle/abc123 ', description: 'Bring your team shirt.' }))).toMatchObject({
-      ok: true, value: { description: 'Bring your team shirt.\nSign up: https://forms.gle/abc123', signUps: false },
-    })
-    expect(eventFromForm(form({ signUps: 'With a link', link: 'https://forms.gle/abc123' }))).toMatchObject({ value: { description: 'Sign up: https://forms.gle/abc123' } })
-    expect(eventFromForm(form({ signUps: 'In the app', link: 'https://forms.gle/abc123' }))).toMatchObject({ value: { description: '', signUps: true } })
+  it('puts each sign-up link on its own "Sign up:" line, in order, with its name, skipping empty rows', () => {
+    const links = (...rows: [string, string][]) => rows.map(([name, link]) => ({ name, link }))
+    const cases: [Partial<EventForm>, string][] = [
+      [{ links: links(['', ' https://forms.gle/abc123 ']), description: 'Bring your team shirt.' }, 'Bring your team shirt.\nSign up: https://forms.gle/abc123'],
+      [{ links: links(['', 'https://forms.gle/abc123']) }, 'Sign up: https://forms.gle/abc123'],
+      [
+        { links: links([' Travel ', 'https://forms.gle/travel'], ['', ''], ['Hotel', 'https://forms.gle/hotel']) },
+        'Sign up (Travel): https://forms.gle/travel\nSign up (Hotel): https://forms.gle/hotel',
+      ],
+    ]
+    for (const [more, description] of cases) expect(eventFromForm(form({ signUps: 'With a link', ...more }))).toMatchObject({ ok: true, value: { description, signUps: false } })
+    // In-app sign-ups leave any link rows out.
+    expect(eventFromForm(form({ signUps: 'In the app', links: links(['', 'https://forms.gle/abc123']) }))).toMatchObject({ value: { description: '', signUps: true } })
   })
 
   it('says what to fix', () => {
@@ -305,14 +321,26 @@ describe('the event form', () => {
     expect(eventFromForm(form({ endClock: '' }))).toEqual({ ok: false, error: 'Pick when it starts and ends.' })
     expect(eventFromForm(form({ endClock: '18:00' }))).toEqual({ ok: false, error: 'The event ends before it starts.' })
     expect(eventFromForm(form({ allDay: true, day: '2027-03-12', lastDay: '2027-03-11' }))).toEqual({ ok: false, error: 'The last day is before the first.' })
-    expect(eventFromForm(form({ signUps: 'With a link', link: '' }))).toMatchObject({ ok: false, error: expect.stringMatching(/Paste the sign-up link/) })
-    expect(eventFromForm(form({ signUps: 'With a link', link: 'http://forms.gle/abc123' }))).toMatchObject({ ok: false, error: expect.stringMatching(/https:/) })
-    expect(eventFromForm(form({ signUps: 'With a link', link: 'javascript:alert(1)' }))).toMatchObject({ ok: false, error: expect.stringMatching(/https:/) })
+    const link = (name: string, link: string) => ({ name, link })
+    const linkProblems: [EventForm['links'], RegExp][] = [
+      [[link('', '')], /Paste the sign-up link/],
+      [[link('Hotel', '')], /link for "Hotel"/],
+      [[link('', 'http://forms.gle/abc123')], /sign-up link has to start with https:/],
+      [[link('Hotel', 'javascript:alert(1)')], /"Hotel" link has to start with https:/],
+      [[link('Hotel (main)', 'https://forms.gle/hotel')], /brackets/],
+      [[link('x'.repeat(41), 'https://forms.gle/hotel')], /under 40/],
+      [Array.from({ length: 6 }, (_, i) => link(`Form ${i}`, `https://forms.gle/${i}`)), /up to 5/],
+    ]
+    for (const [links, error] of linkProblems) expect(eventFromForm(form({ signUps: 'With a link', links })), String(error)).toMatchObject({ ok: false, error: expect.stringMatching(error) })
   })
 
-  it('fills the Change form back in from the event, with the sign-up line in the link box', () => {
+  it('fills the Change form back in from the event, with its sign-up links and names in order', () => {
     for (const filled of [
-      form({ location: 'The shop', description: 'Bring your team shirt.', signUps: 'With a link', link: 'https://forms.gle/abc123' }),
+      form({ location: 'The shop', description: 'Bring your team shirt.', signUps: 'With a link', links: [{ name: '', link: 'https://forms.gle/abc123' }] }),
+      form({
+        signUps: 'With a link',
+        links: [{ name: 'Travel', link: 'https://forms.gle/travel' }, { name: 'Hotel', link: 'https://forms.gle/hotel' }, { name: '', link: 'https://forms.gle/other' }],
+      }),
       form({ signUps: 'In the app' }),
       form({ allDay: true, day: '2027-03-12', lastDay: '2027-03-14', startClock: '18:00', endClock: '20:00' }),
     ]) {
@@ -422,7 +450,7 @@ describe('only student leaders and mentors', () => {
 describe('sign-ups on any event (#159)', () => {
   /** A made-up build session, made in Google Calendar: no sign-ups, no link. */
   const madeInGoogle = () => {
-    const found = calendarNow().events.find((e) => !e.fromApp && !e.signUps && !signUpLink(e.description))
+    const found = calendarNow().events.find((e) => !e.fromApp && !e.signUps && signUpLinks(e.description).length === 0)
     if (!found) throw new Error('No made-up build session')
     return found
   }
