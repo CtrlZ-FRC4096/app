@@ -40,11 +40,13 @@ import {
   useCanOrder,
   useReceipts,
   useItems,
+  waitingByVendor,
   type NewItem,
   type PurchaseItem,
   type View,
 } from './data'
 import { Receipts } from './Receipts'
+import { VendorOrder } from './VendorOrder'
 
 // Fields and their boxes may shrink to the screen's width. Without this, a
 // dropdown grows to fit its longest choice and the page scrolls sideways
@@ -85,6 +87,10 @@ export default function PurchasingPage() {
   // The item opened for changing, if any.
   const [openId, setOpenId] = useState<string | null>(null)
   const groups = groupItems(searchItems(items, search), view)
+  // Order these, in the By vendor view: the vendor whose waiting items are open to order together.
+  const canOrder = useCanOrder()
+  const [orderingVendor, setOrderingVendor] = useState<string | null>(null)
+  const waiting = view === 'By vendor' && canOrder ? waitingByVendor(items) : new Map<string, PurchaseItem[]>()
 
   // Two hooks, each called every time (a hook can't be skipped).
   const fromBom = useBomRequest(route.rest)
@@ -157,8 +163,18 @@ export default function PurchasingPage() {
           <Panel
             key={group.title}
             title={group.status ? <h2><Pill tone={group.status.tone}>{group.title}</Pill></h2> : group.title}
-            aside={<span className="note">{group.status ? group.status.hint + ' · ' : ''}{group.items.length}</span>}
+            aside={
+              <span className="toolbar">
+                <span className="note">{group.status ? group.status.hint + ' · ' : ''}{group.items.length}</span>
+                {waiting.has(group.title) && orderingVendor !== group.title && (
+                  <button type="button" className="btn btn-sm" onClick={() => setOrderingVendor(group.title)}>Order these</button>
+                )}
+              </span>
+            }
           >
+            {waiting.has(group.title) && orderingVendor === group.title && (
+              <VendorOrder key={group.title} vendor={group.title} items={waiting.get(group.title)!} onDone={() => setOrderingVendor(null)} />
+            )}
             <div className="row-list">
               {group.items.map((item) =>
                 item.id === openId ? (

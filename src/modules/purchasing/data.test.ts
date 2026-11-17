@@ -25,6 +25,11 @@ import {
   addReceipt,
   buyersTable,
   canOrder,
+  cartCsv,
+  markOrdered,
+  orderCsv,
+  orderTotalText,
+  waitingByVendor,
   changeItem,
   checkItem,
   orderFieldsShown,
@@ -490,6 +495,7 @@ describe('only mentors and purchasers', () => {
     const receiptFile = new File(['receipt'], 'order.pdf', { type: 'application/pdf' })
     const actions: [string, () => Promise<unknown>][] = [
       ['place an order', () => changeItem(asked, { ...itemToForm(asked), status: 'placed' })],
+      ["mark a vendor's items as ordered", () => markOrdered([asked.id], { ordered_by: '', ordered_on: '', shipped_to: '', estimated_arrival: '', tracking: '' })],
       ['add an item that is already ordered', () => addItem({ ...valid, status: 'placed' })],
       ['change the price of an order', () => changeItem(ordered, { ...itemToForm(ordered), price: '1.00' })],
       ['empty the price of an order', () => changeItem(ordered, { ...itemToForm(ordered), price: '' })],
@@ -510,6 +516,83 @@ describe('only mentors and purchasers', () => {
       expect(await run(), action).toMatchObject({ ok: false, error: expect.stringMatching(/^Only mentors and (purchasers|admins)/) })
     }
     expect(everything()).toEqual(before)
+  })
+})
+
+describe("ordering a vendor's items together", () => {
+  const details = { ordered_by: '', ordered_on: '2026-11-16', shipped_to: DEMO_PEOPLE.jordan, estimated_arrival: '2026-11-20', tracking: ' EXAMPLE-TRACK-0003 ' }
+  const names = (items: PurchaseItem[] | undefined) => items?.map((i) => i.name)
+
+  it('groups what is waiting to be ordered by vendor, highest priority first, leaving out Wait to Order and what is already ordered', async () => {
+    await addItem({ ...valid, name: 'Tape', vendor: 'Amazon', status: 'order_high' })
+    await addItem({ ...valid, name: 'Glue', vendor: 'Amazon', status: 'order' })
+    const waiting = waitingByVendor(itemsTable.rows())
+    expect([...waiting.keys()].sort()).toEqual(['Amazon', 'Andy Mark', 'REV Robotics'])
+    // Amazon's Ethernet cables are Wait to Order; Andy Mark's Hex bearing is backordered.
+    expect(names(waiting.get('Amazon'))).toEqual(['Tape', 'Glue', 'Zip ties, 8 in (pack of 100)'])
+    expect(names(waiting.get('Andy Mark'))).toEqual(['Compliant wheel, 2 in'])
+  })
+
+  it('adds up the ticked items, and says how many have no price', () => {
+    const totals: [string, { price: number | null; quantity: number }[], string][] = [
+      ['nothing ticked', [], 'Nothing ticked.'],
+      ['one item', [{ price: 6.5, quantity: 8 }], 'Total $52.00 for 1 item'],
+      ['cents that add up exactly', [{ price: 0.1, quantity: 1 }, { price: 0.2, quantity: 1 }], 'Total $0.30 for 2 items'],
+      ['one without a price', [{ price: 7.25, quantity: 2 }, { price: null, quantity: 1 }], 'Total $14.50 for 2 items · 1 has no price yet'],
+    ]
+    for (const [label, items, text] of totals) expect(orderTotalText(items), label).toBe(text)
+  })
+
+  it("copies part numbers and quantities for the vendor's cart, leaving out items with no part number, and everything for records", () => {
+    const items = [find('Compliant wheel, 2 in'), find('Zip ties, 8 in (pack of 100)')]
+    expect(cartCsv(items)).toBe('EXAMPLE-CW-2,8\r\n')
+    expect(orderCsv(items, () => 'Alex').split('\r\n').slice(0, 3)).toEqual([
+      'Name,Part number,Quantity,Price each,Link,Requested by',
+      '"Compliant wheel, 2 in",EXAMPLE-CW-2,8,6.50,https://example.com/parts/EXAMPLE-CW-2,Alex',
+      '"Zip ties, 8 in (pack of 100)",,2,7.25,,Alex',
+    ])
+  })
+
+  it('marks several as ordered at once, with the same order details, ordered by you unless you pick someone', async () => {
+    setDemoRole('mentor')
+    const ids = [find('Compliant wheel, 2 in').id, find('Brushless motor').id]
+    const result = await markOrdered(ids, details)
+    expect(result.ok && result.value).toHaveLength(2)
+    for (const name of ['Compliant wheel, 2 in', 'Brushless motor']) {
+      expect(find(name), name).toMatchObject({
+        status: 'placed', ordered_by: DEMO_PEOPLE.pat, ordered_on: '2026-11-16', shipped_to: DEMO_PEOPLE.jordan, estimated_arrival: '2026-11-20', tracking: 'EXAMPLE-TRACK-0003',
+      })
+    }
+    expect(find('Zip ties, 8 in (pack of 100)').status).toBe('order_low')
+  })
+
+  it('saves nothing when nothing is ticked, the details are wrong, or an item is no longer waiting', async () => {
+    setDemoRole('mentor')
+    const wheel = find('Compliant wheel, 2 in').id
+    const refused: [string, string[], Partial<typeof details>, RegExp][] = [
+      ['nothing ticked', [], {}, /Tick at least one/],
+      ['a date that does not exist', [wheel], { ordered_on: '2026-02-30' }, /date ordered/],
+      ['one already ordered', [wheel, find('Timing belt, 60T').id], {}, /Timing belt, 60T.*Nothing was saved/],
+      ['one that was deleted', [wheel, 'gone'], {}, /deleted.*nothing was saved/],
+    ]
+    const before = itemsTable.rows()
+    for (const [label, ids, change, problem] of refused) {
+      expect(await markOrdered(ids, { ...details, ...change }), label).toMatchObject({ ok: false, error: expect.stringMatching(problem) })
+    }
+    expect(itemsTable.rows()).toEqual(before)
+  })
+
+  it('says which item failed and which were already saved, and carries on with the rest', async () => {
+    setDemoRole('mentor')
+    // An item that can't be saved: its link was never a real one.
+    const { id: _id, created_at: _at, ...motor } = find('Brushless motor')
+    const broken = await itemsTable.insert({ ...motor, name: 'Broken link', link: 'not a link' })
+    if (!broken.ok) throw new Error(broken.error)
+    const result = await markOrdered([find('Compliant wheel, 2 in').id, broken.value.id, find('Brushless motor').id], details)
+    expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/Couldn't mark these as ordered: Broken link \(.*https.*\)\. Already saved as ordered: Compliant wheel, 2 in, Brushless motor\./) })
+    expect(find('Broken link').status).toBe('order_high')
+    expect(find('Compliant wheel, 2 in').status).toBe('placed')
+    expect(find('Brushless motor').status).toBe('placed')
   })
 })
 
