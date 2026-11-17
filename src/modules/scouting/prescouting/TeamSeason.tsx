@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { useMemberNames } from '../../core/members'
-import { currentUser } from '../../core/session'
-import type { Result } from '../../core/table'
-import { toast } from '../../core/toast'
-import { Panel, Pick, Stepper } from '../../core/ui'
-import { COUNTERS, ENDGAME, ROLES, eventWhenWhere, getTeamEvents, getTeamMatches, getTeamSeasonRatings, tbaEventUrl, type TbaEvent, type TeamEventRating } from '../scouting/data'
+import { useMemberNames } from '../../../core/members'
+import { currentUser } from '../../../core/session'
+import type { Result } from '../../../core/table'
+import { toast } from '../../../core/toast'
+import { Panel, Pick, Stepper } from '../../../core/ui'
+import { COUNTERS, ENDGAME, ROLES, eventWhenWhere, getTeamEvents, getTeamMatches, getTeamSeasonRatings, tbaEventUrl, type TbaEvent, type TeamEventRating } from '../data'
 import { prescoutAverages, savePrescoutMatch, seasonMatches, usePrescoutMatches, type PrescoutMatch, type PrescoutMatchFields, type SeasonMatch } from './data'
 
 /** Big enough to tap. */

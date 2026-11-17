@@ -6,13 +6,13 @@ import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { Bar, PageHead, Panel, Pill } from '../../core/ui'
 import { MIN_MATCHES, pointsRange, useCurrentEvent, useIsStrategy, useScoutedTeams, useTeamPoints, useTeamSummary, type Tally, type TeamSummary } from './data'
-import { PRESCOUT_QUESTIONS, prescoutHref, usePrescoutFor } from '../prescouting/data'
+import { PRESCOUT_QUESTIONS, prescoutFacts, prescoutHref, usePrescoutFor } from './prescouting/data'
 import TeamAutoPaths from './TeamAutoPaths'
 import TeamPhotos from './TeamPhotos'
-// Stars belong to the Prescouting module (#118), and are the same here and
-// there: starring a team in either place shows in both.
-import { starredFirst, useStars } from '../prescouting/data'
-import Stars from '../prescouting/Stars'
+// Stars come from Prescouting (#118), now a Scouting tab (#184), and are the
+// same on both: starring a team in either place shows in both.
+import { starredFirst, useStars } from './prescouting/data'
+import Stars from './prescouting/Stars'
 import TeamRank from './TeamRank'
 import TeamVideos from './TeamVideos'
 import TeamRatings from './TeamRatings'
@@ -181,6 +181,13 @@ function Prescouting(props: { team: number }) {
     <Panel title="Prescouting" aside={link}>
       {notes ? (
         <div className="row-list">
+          {/* #184: the quick answers (drivetrain, best climb, rating...) on one line each. */}
+          {prescoutFacts(notes).map((fact) => (
+            <div key={fact.key} style={{ flexWrap: 'wrap' }}>
+              <span className="note">{fact.label}</span>
+              <strong className="tnum" style={{ marginLeft: 'auto', overflowWrap: 'anywhere' }}>{fact.value}</strong>
+            </div>
+          ))}
           {PRESCOUT_QUESTIONS.filter((q) => (PRESCOUT_SHOWN as readonly string[]).includes(q.key) && notes[q.key].trim()).map((q) => (
             <div key={q.key}>
               <span style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-line' }}>

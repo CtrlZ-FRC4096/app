@@ -1,46 +1,50 @@
 // Tests for the prescouting pages, drawn in demo mode with the example notes.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { setDemoRole } from '../../core/demo'
+// In demo mode you're Alex, a student who isn't on the strategy team: every
+// scout can use Prescouting (#184).
+import { afterEach, describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
-import { EVENT_KEY, tbaTeamUrl } from '../scouting/data'
-import { NO_ANSWERS, PRESCOUT_QUESTIONS, prescoutViewStore, reloadPrescoutTeams, setPrescoutView } from './data'
+import { EVENT_KEY, tbaTeamUrl } from '../data'
+import { NO_ANSWERS, NO_FACTS, PRESCOUT_QUESTIONS, prescoutViewStore, reloadPrescoutTeams, setPrescoutView } from './data'
 import PrescoutPage, { Match13Panel, TeamCard, TeamPage, TeamTable } from './PrescoutPage'
 
 describe('the prescouting pages', () => {
-  // Prescouting is strategy only (#167). A student leader always counts;
-  // Alex, the demo student, isn't on the example strategy team.
-  beforeEach(() => setDemoRole('leader'))
-  afterEach(() => {
-    setDemoRole('student')
-    prescoutViewStore.reset()
-  })
+  afterEach(() => { prescoutViewStore.reset() })
 
-  it('are only for the strategy team, student leaders, mentors and admins (#167)', () => {
-    setDemoRole('student')
-    expect(renderToString(<PrescoutPage />)).toContain('Only the strategy team and mentors can see this.')
-  })
-
-  it("start on this season's event, and say the teams are loading", () => {
+  it("start on this season's event, and say the teams are loading, for any scout (#184)", () => {
     const html = renderToString(<PrescoutPage />)
+    expect(html).not.toContain('Only the strategy team')
     expect(html).toContain(`value="${EVENT_KEY}"`)
     expect(html).toContain('Loading teams…')
   })
 
-  it("have a team's page with a text box for every question, filled in with what's saved, and their team stars", () => {
+  it("have a team's page with a text box for every question and the quick answers, filled in with what's saved, and their team stars", () => {
     const html = renderToString(<TeamPage event={EVENT_KEY} team={9991} />)
     for (const q of PRESCOUT_QUESTIONS) expect(html).toContain(`id="prescout-${q.key}"`)
     expect(html).toContain('Starts center, scores preload')
+    // #184: the quick answers, from the example row (Swerve, Level 2, 5 fuel, 8 seconds, rated 4).
+    expect(html).toContain('aria-pressed="true">Swerve</button>')
+    expect(html).toContain('aria-pressed="true">Level 2</button>')
+    expect(html).toContain('aria-pressed="true">4</button>')
+    expect(html).toMatch(/id="prescout-auto_fuel"[^>]*value="5"/)
+    expect(html).toMatch(/id="prescout-cycle_seconds"[^>]*value="8"/)
     expect(html).toContain('Fast, reliable auto. Good second pick.')
     expect(html).toContain('☆ Star')
     // #119: one tap to the team's Scouting page.
     expect(html).toContain('href="#/scouting/team/9991"')
+    // #184: back to the list in the Prescouting tab.
+    expect(html).toContain('href="#/scouting/prescouting"')
   })
 
-  it('say a team with no notes is not prescouted yet, and link to their page', () => {
+  it('open a team from the address the Scouting page passes in, and say when it is not a team', () => {
+    expect(renderToString(<PrescoutPage event={EVENT_KEY} team="9991" />)).toContain('id="prescout-overall"')
+    expect(renderToString(<PrescoutPage event={EVENT_KEY} team="nope" />)).toContain("That address isn&#x27;t a team&#x27;s prescouting page.")
+  })
+
+  it('say a team with no notes is not prescouted yet, and link to their page in the Prescouting tab', () => {
     const team = { team: 9995, name: 'Mock Mechanics', epa: null, xp: null, xpRank: null, auto: null, teleop: null, endgame: null, opr: null, dpr: null, tbaUrl: tbaTeamUrl(9995, EVENT_KEY), notes: null, prescouted: false, stars: { forTeam: [], mine: null }, group: 'Everyone else' as const }
     const html = renderToString(<TeamCard event={EVENT_KEY} team={team} />)
     expect(html).toContain('Not prescouted yet')
-    expect(html).toContain(`href="#/prescouting/${EVENT_KEY}/9995"`)
+    expect(html).toContain(`href="#/scouting/prescouting/${EVENT_KEY}/9995"`)
     expect(html).toContain('EPA — · xP —')
     expect(html).toContain('☆ Star')
   })
@@ -60,7 +64,7 @@ describe('the prescouting pages', () => {
     expect(headings).toEqual(['Team', ...PRESCOUT_QUESTIONS.map((q) => q.label)])
     // Every example team has a row, with its number linking to its prescouting page.
     for (const team of [4096, 9991, 9992, 9993, 9994, 9995]) {
-      expect(html).toMatch(new RegExp(`<a href="#/prescouting/${EVENT_KEY}/${team}"[^>]*><strong class="tnum">${team}</strong>`))
+      expect(html).toMatch(new RegExp(`<a href="#/scouting/prescouting/${EVENT_KEY}/${team}"[^>]*><strong class="tnum">${team}</strong>`))
     }
     // The star groups are heading rows, and the search box is still there.
     expect(html).toContain('Team stars')
@@ -80,7 +84,7 @@ describe('the prescouting pages', () => {
   })
 
   it("show a team's tier on their card, their table row and their page, with S to F buttons to choose it (#191)", () => {
-    const notes = { id: 'n1', event_key: EVENT_KEY, team_number: 9993, ...NO_ANSWERS, tier: 'B' as const, created_at: '2026-11-05T19:00:00Z', created_by: null }
+    const notes = { id: 'n1', event_key: EVENT_KEY, team_number: 9993, ...NO_ANSWERS, ...NO_FACTS, tier: 'B' as const, created_at: '2026-11-05T19:00:00Z', created_by: null }
     const team = { team: 9993, name: 'Example Robotics', epa: null, xp: null, xpRank: null, auto: null, teleop: null, endgame: null, opr: null, dpr: null, tbaUrl: tbaTeamUrl(9993, EVENT_KEY), notes, prescouted: false, stars: { forTeam: [], mine: null }, group: 'Everyone else' as const }
     let html = renderToString(<TeamCard event={EVENT_KEY} team={team} />)
     expect(html).toMatch(/data-tier="B"[^>]*>Tier B</)

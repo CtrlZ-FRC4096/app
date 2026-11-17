@@ -6,8 +6,9 @@ import { allTables, type Row, type Table } from '../../src/core/table'
 import { DEMO_PEOPLE } from '../../src/core/demo'
 import { setUpTestDatabase } from './database'
 
-// Load every module's data.ts so all their tables are made.
-import.meta.glob('../../src/modules/*/data.ts', { eager: true })
+// Load every module's data.ts so all their tables are made, including ones
+// in a folder inside a module, like Scouting's prescouting/data.ts (#184).
+import.meta.glob('../../src/modules/**/data.ts', { eager: true })
 import '../../src/core/members'
 import '../../src/core/notifications'
 
