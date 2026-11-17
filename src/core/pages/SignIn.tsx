@@ -90,5 +90,5 @@ export function NoAccess({ name, reason }: { name: string | null; reason: string
 
 /** Shown for a moment while the app checks whether someone is signed in. */
 export function Checking() {
-  return <p className="muted signin">Checking who you are…</p>
+  return <p className="muted signin loading" role="status">Checking who you are…</p>
 }

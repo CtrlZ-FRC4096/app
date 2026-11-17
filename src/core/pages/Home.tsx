@@ -113,7 +113,7 @@ function Attention({ module, role }: { module: ModuleDefinition; role: Role }) {
   return notices.map((notice) => (
     <a key={notice.text} href={href(module.id)}>
       <Pill tone={notice.tone}>{module.name}</Pill>
-      <span>{notice.text}</span>
+      <span className="attention-text">{notice.text}</span>
       <span className="note open">Open →</span>
     </a>
   ))

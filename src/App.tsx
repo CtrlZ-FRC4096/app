@@ -336,7 +336,8 @@ function Bell(props: { current: boolean }) {
         <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
         <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
       </svg>
-      {count > 0 && <span className="bell-count" aria-hidden="true">{badgeText(count)}</span>}
+      {/* Keyed by what it shows, so the count pops in again when the number changes ("9+" stays put). */}
+      {count > 0 && <span key={badgeText(count)} className="bell-count" aria-hidden="true">{badgeText(count)}</span>}
     </a>
   )
 }
@@ -375,7 +376,7 @@ function Page({ id }: { id: string }) {
   if (!canOpen(role, module.roles)) return <Message title="Not available">Your role can't open {module.name}. Ask a mentor if you need it.</Message>
   return (
     <ErrorBoundary key={module.id} moduleName={module.name}>
-      <Suspense fallback={<p className="muted">Loading {module.name}…</p>}>
+      <Suspense fallback={<p className="muted loading" role="status">Loading {module.name}…</p>}>
         {createElement(pages.get(module.id)!)}
       </Suspense>
     </ErrorBoundary>
@@ -384,9 +385,14 @@ function Page({ id }: { id: string }) {
 
 function ToastHost() {
   const current = useToast()
+  // The last message, kept while the toast fades away so it doesn't go blank
+  // first. Set while drawing, like lastPage in Shell.
+  const [shown, setShown] = useState(current)
+  if (current && current !== shown) setShown(current)
   return (
     <div className="toast" role="status" aria-live="polite" hidden={!current}>
-      {current?.text}
+      {/* A new key for each message: it fades in, and a screen reader reads it even when the words repeat. */}
+      {shown && <span key={shown.id}>{shown.text}</span>}
     </div>
   )
 }

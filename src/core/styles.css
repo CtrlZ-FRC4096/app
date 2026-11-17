@@ -32,13 +32,31 @@
   --header-bg: var(--surface);
   --header-ink: var(--ink);
   --header-muted: var(--muted);
-  --shadow: 0 1px 2px hsl(214 30% 20% / 0.05);
+  /*
+   * Three heights: resting (panels, buttons), lifted a little (a tile under the
+   * pointer, the top bar once you scroll), and floating (menus, messages).
+   */
+  --shadow: 0 1px 2px hsl(214 30% 20% / 0.05), 0 2px 6px -1px hsl(214 30% 20% / 0.05);
+  --shadow-md: 0 1px 3px hsl(214 30% 20% / 0.06), 0 6px 16px hsl(214 30% 20% / 0.08);
   --shadow-lg: 0 2px 6px hsl(214 30% 20% / 0.07), 0 12px 28px hsl(214 30% 20% / 0.09);
   --display: 'Barlow Condensed', 'Arial Narrow', 'Roboto Condensed', sans-serif;
   --body: 'Barlow', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
   --radius: 8px;
   --radius-lg: 12px;
+  /*
+   * Motion: how long things take and how they move. Short and quiet, so the
+   * app feels quick, not busy. Use these for anything new that moves, so the
+   * app moves the same way everywhere (the drag lists in Scouting and Status
+   * still have their own numbers). Devices set to reduce motion get none (see
+   * prefers-reduced-motion below).
+   */
+  --motion-fast: 120ms;   /* colours on hover, presses, and menus closing */
+  --motion-medium: 180ms; /* menus and arrows opening; a message leaving */
+  --motion-slow: 240ms;   /* things arriving: a page, a message, a bar filling */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);  /* quick start, soft landing: the drag lists' curve too */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);       /* for things leaving */
+  --ease-pop: cubic-bezier(0.3, 1.4, 0.6, 1);  /* a small overshoot, for the bell's count */
   color-scheme: light;
 }
 /*
@@ -68,6 +86,7 @@
   --blue-alliance: #86b8ff;
   --blue-alliance-bg: hsl(212 45% 18%);
   --shadow: 0 1px 2px hsl(0 0% 0% / 0.4);
+  --shadow-md: 0 1px 3px hsl(0 0% 0% / 0.4), 0 6px 16px hsl(0 0% 0% / 0.35);
   --shadow-lg: 0 2px 6px hsl(0 0% 0% / 0.45), 0 14px 32px hsl(0 0% 0% / 0.4);
   color-scheme: dark;
 }
@@ -80,7 +99,7 @@ h1, h2, h3 { font-family: var(--display); line-height: 1.1; text-wrap: balance; 
 h1 { font-size: clamp(29px, 4.2vw, 38px); font-weight: 700; }
 h2 { font-size: 21px; font-weight: 600; }
 h3 { font-size: 18px; font-weight: 600; }
-p { margin: 0; }
+p { margin: 0; text-wrap: pretty; }
 button, input, select, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
 .tnum, td.num { font-variant-numeric: tabular-nums; }
@@ -96,6 +115,26 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* Top bar: the logo, the section menus, and who's signed in. */
 .app-header { position: sticky; top: 0; z-index: 20; background: var(--header-bg); color: var(--header-ink); border-bottom: 1px solid var(--line); }
+/*
+ * On a computer with a mouse, where the browser can, the top bar is a little
+ * see-through and blurs the page scrolling under it. Phones and tablets keep
+ * the solid bar: blurring on every scroll is slow on cheap ones. So does
+ * anyone who asked for more contrast, or turned transparency off (Chrome and
+ * Edge only: Safari doesn't support that setting yet). Menu panels stay
+ * solid: there's nothing behind them to blur. Once the page scrolls, a soft
+ * shadow fades in under the bar, in browsers that can tie that to scrolling.
+ */
+@media (min-width: 880px) and (hover: hover) and (pointer: fine) {
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) and (color: color-mix(in srgb, currentColor 50%, transparent)) {
+    .app-header { background: color-mix(in srgb, var(--header-bg) 82%, transparent); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+  }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .app-header { background: var(--header-bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@supports (animation-timeline: scroll()) {
+  .app-header { animation: header-lift linear both; animation-timeline: scroll(); animation-range: 0 48px; }
+}
 .topbar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; padding-block: 9px; }
 .brand { display: flex; align-items: center; text-decoration: none; color: inherit; margin-right: auto; padding: 2px; border-radius: var(--radius); }
 /*
@@ -103,27 +142,41 @@ button, input, select, textarea { font: inherit; color: inherit; }
  * one flat shape, so the page paints it through a mask: it takes the colour
  * below rather than carrying its own, and stays sharp on any screen.
  */
-.logo { width: 40px; height: 39px; background-color: var(--blue); -webkit-mask: url('./logo.png') center / contain no-repeat; mask: url('./logo.png') center / contain no-repeat; }
+.logo { width: 40px; height: 39px; background-color: var(--blue); -webkit-mask: url('./logo.png') center / contain no-repeat; mask: url('./logo.png') center / contain no-repeat; transition: background-color var(--motion-fast) ease; }
 .brand:hover .logo { background-color: var(--orange); }
 /* On a phone the logo, the bell and the account share the first line, the menus go below. */
 .topbar .account, .topbar .bell { order: 2; }
 /* The bell (Bell in src/App.tsx) and how many notifications are new. */
 .bell { padding: 7px 9px; }
-.bell-count { position: absolute; top: 2px; right: 1px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; display: grid; place-items: center; background: var(--orange); color: #fff; font-family: var(--body, inherit); font-size: 11px; font-weight: 700; line-height: 1; }
+.bell-count { position: absolute; top: 2px; right: 1px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; display: grid; place-items: center; background: var(--orange); color: #fff; font-family: var(--body, inherit); font-size: 11px; font-weight: 700; line-height: 1; box-shadow: 0 0 0 2px var(--header-bg); animation: pop-in var(--motion-slow) var(--ease-pop) backwards; }
 .nav { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; flex-basis: 100%; order: 3; }
 .nav-link, .menu-btn { position: relative; display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 7px 11px; border: 0; border-radius: var(--radius); background: none; color: var(--header-muted); font-family: var(--display); font-weight: 600; font-size: 16.5px; letter-spacing: 0.01em; text-decoration: none; cursor: pointer; }
 .nav-link:hover, .menu-btn:hover, .menu-btn[aria-expanded='true'] { color: var(--header-ink); background: var(--surface-2); }
 .nav-link[aria-current='page'], .menu-btn[data-current] { color: var(--header-ink); }
-.nav-link[aria-current='page']::after, .menu-btn[data-current]::after { content: ''; position: absolute; left: 11px; right: 11px; bottom: 3px; height: 2px; border-radius: 2px; background: var(--orange); }
-.chev { width: 6px; height: 6px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-2px) rotate(45deg); opacity: 0.55; }
+.nav-link[aria-current='page']::after, .menu-btn[data-current]::after { content: ''; position: absolute; left: 11px; right: 11px; bottom: 3px; height: 2px; border-radius: 2px; background: var(--orange); animation: grow-x var(--motion-slow) var(--ease-out) backwards; }
+.chev { width: 6px; height: 6px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-2px) rotate(45deg); opacity: 0.55; transition: transform var(--motion-medium) var(--ease-out); }
 .menu-btn[aria-expanded='true'] .chev { transform: translateY(1px) rotate(225deg); }
 .account .menu-btn { padding: 4px 8px 4px 5px; }
 
 /* The panel under a menu button (see Menu in src/App.tsx). */
 .menu { position: relative; }
 .menu-panel { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; display: grid; gap: 2px; min-width: 208px; max-width: min(300px, calc(100vw - 32px)); padding: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
-.menu-panel[hidden] { display: none; }
-.account .menu-panel { left: auto; right: 0; }
+/*
+ * Menus fade and drop into place, and fade away a little faster. Opening
+ * starts from @starting-style; closing, allow-discrete keeps the menu on
+ * screen until it has faded. Browsers without these open and close at once,
+ * as before. Keep allow-discrete inside the transition line: the build's CSS
+ * minifier can move a separate transition-behavior line above it, where it's
+ * switched off (it would work with npm run dev, but not on the site).
+ * pointer-events: none means a closing menu never catches a tap.
+ */
+.menu-panel { transform-origin: top left; transition: opacity var(--motion-medium) var(--ease-out), translate var(--motion-medium) var(--ease-out), scale var(--motion-medium) var(--ease-out), display var(--motion-medium) allow-discrete; }
+.menu-panel[hidden] { display: none; opacity: 0; translate: 0 -6px; scale: 0.98; pointer-events: none; transition-duration: var(--motion-fast); transition-timing-function: var(--ease-in); }
+@starting-style { .menu-panel { opacity: 0; translate: 0 -6px; scale: 0.98; } }
+.account .menu-panel { left: auto; right: 0; transform-origin: top right; }
+/* A module's pages fade in under its name; they close at once, so the menu doesn't hang open. */
+.menu-pages-list { transition: opacity var(--motion-medium) var(--ease-out), translate var(--motion-medium) var(--ease-out); }
+@starting-style { .menu-pages-list { opacity: 0; translate: 0 -4px; } }
 .menu-item { display: grid; align-content: center; gap: 1px; width: 100%; min-height: 44px; padding: 8px 10px; border: 0; border-radius: var(--radius); background: none; color: inherit; font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
 .menu-item:hover { background: var(--surface-2); }
 .menu-item-name { font-weight: 600; }
@@ -148,7 +201,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 @media (max-width: 879px) {
   /* The section panels line up with the row of buttons instead of one button. */
   .nav .menu { position: static; }
-  .nav .menu-panel { left: 0; right: 0; max-width: none; }
+  .nav .menu-panel { left: 0; right: 0; max-width: none; transform-origin: top center; }
 }
 @media (min-width: 880px) {
   .brand { margin-right: 8px; }
@@ -175,19 +228,43 @@ main.wrap > * { min-width: 0; }
 .split { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 20px; align-items: start; }
 @media (max-width: 900px) { .split { grid-template-columns: minmax(0, 1fr); } }
 .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 7px 14px; border-radius: var(--radius); cursor: pointer; font-weight: 500; font-size: 14px; min-height: 38px; text-decoration: none; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 7px 14px; border-radius: var(--radius); cursor: pointer; font-weight: 500; font-size: 14px; min-height: 38px; text-decoration: none; box-shadow: var(--shadow); }
 .btn:hover { background: var(--surface-2); border-color: var(--muted); }
 .btn-primary { background: var(--blue); border-color: var(--blue); color: var(--on-blue); }
-.btn-primary:hover { background: var(--blue); filter: brightness(1.1); border-color: var(--blue); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary:hover { background: var(--blue); filter: brightness(1.1); border-color: var(--blue); box-shadow: 0 2px 10px color-mix(in srgb, var(--blue) 30%, transparent); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
 .btn-sm { min-height: 32px; padding: 4px 11px; font-size: 13px; }
+/*
+ * Things you press: colours fade instead of snapping, and buttons sink a
+ * pixel under your finger. (Not shrink: a wide button shrinking away from a
+ * finger near its edge would lose the tap.) The grey tap flash is off where
+ * these show their own pressed state. touch-action: manipulation stops a
+ * quick double tap (a scout tapping + twice) from zooming the page. Moving
+ * with translate, not transform, never undoes a transform something has.
+ */
+.btn, .nav-link, .menu-btn, .menu-item, .pick button, .stepper button { transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease, opacity var(--motion-fast) ease, filter var(--motion-fast) ease, box-shadow var(--motion-medium) ease, translate var(--motion-fast) var(--ease-out); -webkit-tap-highlight-color: transparent; }
+.btn:active:not(:disabled), .pick button:active:not(:disabled), .nav-link:active, .menu-btn:active { translate: 0 1px; }
+.menu-item:active { background: var(--surface-2); }
+/* Pressed, a button also loses its shadow, so a tap feels like it landed. */
+.btn:active:not(:disabled) { box-shadow: none; }
+.btn-primary:active:not(:disabled) { filter: brightness(0.95); }
+button, .btn { touch-action: manipulation; }
 .field { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
 .field > .stepper, .field > .pick { justify-self: start; }
-.input { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius); padding: 8px 11px; min-height: 38px; font-size: 14px; }
-.input:focus { border-color: var(--blue); outline: none; box-shadow: 0 0 0 3px var(--blue-soft); }
+.input { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: var(--radius); padding: 8px 11px; min-height: 38px; font-size: 14px; transition: border-color var(--motion-fast) ease, box-shadow var(--motion-medium) var(--ease-out); }
+.input:hover:not(:focus):not(:disabled) { border-color: color-mix(in srgb, var(--muted) 40%, var(--line)); }
+/*
+ * The glow is mixed from team blue, so it shows on a dark page too (blue-soft
+ * is nearly the panel colour there). The outline is see-through, but Windows
+ * high contrast mode draws it, where it drops the glow.
+ */
+.input:focus { border-color: var(--blue); outline: 2px solid transparent; box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 22%, transparent); }
+.input::placeholder { color: var(--muted); opacity: 0.8; }
+.input:disabled { background: var(--surface-2); color: var(--muted); cursor: not-allowed; }
 .check { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
-.check input { width: 18px; height: 18px; accent-color: var(--blue); }
-.pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.check input { width: 18px; height: 18px; accent-color: var(--blue); transition: scale var(--motion-fast) var(--ease-out); }
+.check:active input:not(:disabled) { scale: 0.9; }
+.pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12.5px; font-weight: 600; white-space: nowrap; box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 18%, transparent); }
 .pill::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .pill.ok { color: var(--ok); background: var(--ok-bg); }
 .pill.warn { color: var(--warn); background: var(--warn-bg); }
@@ -201,15 +278,27 @@ th { text-align: left; font-family: var(--mono); font-weight: 500; font-size: 11
 td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 tr:last-child td { border-bottom: 0; }
 td.num, th.num { text-align: right; }
-tbody tr.clickable { cursor: pointer; }
+tbody tr.clickable { cursor: pointer; transition: background-color var(--motion-fast) ease; }
 tbody tr.clickable:hover { background: var(--surface-2); }
 tbody tr[aria-selected='true'] { background: var(--blue-soft); }
-.callout { border-left: 3px solid var(--orange); background: var(--surface); padding: 12px 14px; border-radius: 0 var(--radius) var(--radius) 0; font-size: 14px; display: grid; gap: 6px; }
+.callout { border: 1px solid var(--line); border-left: 3px solid var(--orange); background: color-mix(in srgb, var(--orange) 5%, var(--surface)); padding: 12px 14px; border-radius: var(--radius); box-shadow: var(--shadow); font-size: 14px; display: grid; gap: 6px; }
 .callout > * { min-width: 0; }
 .bar { height: 6px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
-.bar > span { display: block; height: 100%; background: var(--blue); border-radius: 999px; }
-.stepper { display: inline-flex; align-items: stretch; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.bar > span { display: block; height: 100%; background: var(--blue); border-radius: 999px; transform-origin: left; transition: width var(--motion-slow) var(--ease-out); animation: grow-x var(--motion-slow) var(--ease-out) backwards; }
+/*
+ * 44px tall, so − and + are easy to tap. The box hides what overflows it,
+ * which would cut off a focus ring inside, so the whole box lights up like a
+ * text box instead.
+ */
+.stepper { display: inline-flex; align-items: stretch; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; min-height: 44px; transition: border-color var(--motion-fast) ease, box-shadow var(--motion-medium) var(--ease-out); }
+.stepper:focus-within { border-color: var(--blue); outline: 2px solid transparent; box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 22%, transparent); }
+/* A tap or click on − or + gives that button focus, but only typing or the keyboard should light the box. */
+.stepper:has(> button:focus:not(:focus-visible)) { border-color: var(--line); box-shadow: none; }
+.stepper input:focus { outline: none; }
 .stepper button { border: 0; background: var(--surface-2); width: 42px; cursor: pointer; font-size: 18px; }
+@media (hover: hover) { .stepper button:hover { background: color-mix(in srgb, var(--line) 45%, var(--surface-2)); } }
+.stepper button:active { background: var(--blue-soft); }
+.stepper button:focus-visible { outline-offset: -3px; }
 .stepper input { width: 64px; border: 0; text-align: center; background: var(--surface); font-variant-numeric: tabular-nums; font-size: 16px; }
 .pick { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 .pick button { border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); padding: 6px 12px; min-height: 40px; cursor: pointer; }
@@ -231,20 +320,78 @@ button.person-chip-remove:hover:not(:disabled) { border-color: var(--crit); }
 .crash { border: 1px solid var(--crit); background: var(--crit-bg); color: var(--ink); border-radius: var(--radius-lg); padding: 16px; display: grid; gap: 10px; }
 .crash pre { margin: 0; font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: var(--radius); font-size: 14px; box-shadow: var(--shadow-lg); z-index: 30; max-width: calc(100% - 32px); }
+/*
+ * A message rises into view and sinks away. It moves with translate, not
+ * transform, so the translateX(-50%) that centres it stays put. ToastHost
+ * keeps the words while it fades, and each new message fades in, so the same
+ * words twice still show something happened.
+ */
+.toast { transition: opacity var(--motion-slow) var(--ease-out), translate var(--motion-slow) var(--ease-out), display var(--motion-slow) allow-discrete; }
+.toast[hidden] { display: none; opacity: 0; translate: 0 12px; transition-duration: var(--motion-medium); transition-timing-function: var(--ease-in); }
+@starting-style { .toast { opacity: 0; translate: 0 12px; } }
+.toast > span { animation: fade-in var(--motion-medium) ease; }
 @media (max-width: 560px) { h1 { font-size: 30px; } }
-@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+
+/*
+ * Anything that arrives in the page area (a page you open, a page you switch
+ * to inside a module, a form that opens) fades and rises 6px into place. It
+ * runs only when something is added, not when it changes. :where() keeps the
+ * rule weak, so a module's own animation wins.
+ */
+:where(main.wrap) > * { animation: rise-in var(--motion-slow) var(--ease-out) backwards; }
+
+/*
+ * The animations used in this file. Most are "backwards": they hold their
+ * first frame through any delay, and once done leave the element exactly as
+ * its own style says. ("both" would leave a do-nothing transform behind,
+ * which changes how anything pinned with position: fixed inside it sits.)
+ * The top bar's shadow uses "both" so it stays while the page is scrolled,
+ * and the loading ring turns until it goes away.
+ */
+@keyframes rise-in { from { opacity: 0; translate: 0 6px; } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes grow-x { from { scale: 0 1; } }
+@keyframes pop-in { from { opacity: 0; scale: 0.5; } }
+@keyframes spin { to { rotate: 360deg; } }
+@keyframes header-lift { to { box-shadow: var(--shadow-md); } }
+/*
+ * Some people get dizzy or distracted by movement and turn it off on their
+ * phone or computer. Then nothing moves: transitions don't run, and
+ * animations jump straight to their end without waiting, so nothing is left
+ * half-shown. (* doesn't match ::before and ::after, so they're named too.)
+ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+/* On paper, everything as it is. */
+@media print { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
 /* Home */
 .home-group { display: grid; gap: 12px; }
 .home-group-head { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; }
 .modules { display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); gap: 14px; }
 .tile { display: grid; grid-template-rows: auto 1fr auto; gap: 8px; padding: 16px; color: inherit; text-decoration: none; }
-a.tile { transition: border-color 120ms ease, box-shadow 120ms ease; }
-a.tile:hover { border-color: var(--blue); box-shadow: var(--shadow-lg); }
+a.tile { position: relative; transition: border-color var(--motion-fast) ease, box-shadow var(--motion-medium) ease, translate var(--motion-medium) var(--ease-out); -webkit-tap-highlight-color: transparent; }
+a.tile:hover { border-color: color-mix(in srgb, var(--blue) 55%, var(--line)); box-shadow: var(--shadow-md); }
+/*
+ * With a mouse, a tile lifts toward you. (Not on touch screens, where a hover
+ * would stick after the tap.) The strip under it keeps the pointer "on" the
+ * tile as it lifts, so a pointer resting on its bottom edge doesn't make it
+ * flicker up and down.
+ */
+@media (hover: hover) and (prefers-reduced-motion: no-preference) { a.tile:hover { translate: 0 -2px; } }
+a.tile::after { content: ''; position: absolute; left: 0; right: 0; bottom: -3px; height: 3px; }
+a.tile:active { translate: none; box-shadow: var(--shadow); }
 .tile-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tile h3 { font-size: 22px; }
 .tile-open { color: var(--orange-text); font-weight: 600; font-size: 13.5px; }
-.tile-open i { font-style: normal; display: inline-block; transition: transform 120ms ease; }
+.tile-open i { font-style: normal; display: inline-block; transition: transform var(--motion-medium) var(--ease-out); }
 a.tile:hover .tile-open i { transform: translateX(3px); }
 .tile.add { border-style: dashed; box-shadow: none; background: transparent; }
 /* The settings at the bottom: Appearance and Size, the labels in one column and the choices lined up in the next. */
@@ -258,9 +405,19 @@ a.tile:hover .tile-open i { transform: translateX(3px); }
 .size-pick button { min-height: 36px; padding: 4px 10px; font-size: 14px; }
 .goal-list { margin: 0; padding: 14px 16px 14px 34px; display: grid; gap: 8px; }
 .goal-list li::marker { color: var(--orange); }
-.attention-list a { display: flex; color: inherit; text-decoration: none; }
+.attention-list a { display: flex; color: inherit; text-decoration: none; transition: background-color var(--motion-fast) ease; }
 .attention-list a:hover { background: var(--surface-2); }
-.attention-list .open { margin-left: auto; white-space: nowrap; }
+.attention-list .open { margin-left: auto; white-space: nowrap; transition: translate var(--motion-medium) var(--ease-out); }
+.attention-list a:hover .open { translate: 2px 0; }
+/* On a phone: the module and "Open →" share the top line, and the words go under them, using the full width. */
+@media (max-width: 560px) {
+  .attention-list a { display: grid; grid-template-columns: 1fr auto; grid-template-areas: 'pill open' 'text text'; gap: 6px 12px; }
+  .attention-list a > .pill { grid-area: pill; justify-self: start; }
+  .attention-list .attention-text { grid-area: text; }
+  .attention-list .open { grid-area: open; }
+}
+/* A table or row at the bottom of a panel keeps the panel's round corners when it lights up. */
+.panel > .table-wrap:last-child, .attention-list > a:last-child { border-radius: 0 0 calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px); }
 .attention-list:empty, .attention-empty { display: none; }
 .attention-list:empty + .attention-empty { display: grid; }
 
@@ -269,6 +426,13 @@ a.tile:hover .tile-open i { transform: translateX(3px); }
 .btn-lg { min-height: 46px; padding: 10px 20px; font-size: 16px; justify-self: start; }
 .avatar { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--orange); color: #fff; font-weight: 600; font-size: 12px; }
 img.avatar { object-fit: cover; background: var(--surface-2); }
+/*
+ * Something is loading ("Loading Scouting…", "Checking who you are…"): a small
+ * ring turns before the words. They wait 0.4s before showing, so a quick load
+ * doesn't flash them.
+ */
+.loading { display: inline-flex; align-items: center; gap: 10px; animation: rise-in var(--motion-slow) var(--ease-out) 400ms backwards; }
+.loading::before { content: ''; flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--blue); animation: spin 0.8s linear infinite; }
 
 /* Members */
 .member { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -282,7 +446,7 @@ img.avatar { object-fit: cover; background: var(--surface-2); }
 .cell-good { color: var(--ok); font-weight: 600; }
 .cell-bad { color: var(--crit); font-weight: 600; }
 .cell-warn { color: var(--warn); background: var(--warn-bg); }
-.name-btn { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.name-btn { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; transition: text-decoration-color var(--motion-fast) ease; }
 .name-btn:hover { text-decoration-color: currentColor; }
 .checks { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
 .check-ignored { text-decoration: line-through; color: var(--muted); }

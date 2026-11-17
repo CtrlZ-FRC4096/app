@@ -43,7 +43,9 @@ export function InView(props: { children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
   // Braces, so the effect returns nothing: newer Chrome returns a Promise from scrollIntoView().
   useEffect(() => {
-    ref.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    // A jump, not a glide, on devices set to reduce motion (CSS can't stop a glide asked for here).
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ref.current?.scrollIntoView({ block: 'start', behavior: still ? 'auto' : 'smooth' })
   }, [])
   return <div ref={ref} style={{ scrollMarginTop: 160 }}>{props.children}</div>
 }
