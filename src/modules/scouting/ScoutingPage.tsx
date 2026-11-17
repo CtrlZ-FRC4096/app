@@ -2,8 +2,9 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { navigate, useRoute } from '../../core/router'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
-import { DRIVER_SKILLS, STOPS, STRATEGY_ONLY, STRATEGY_PATHS, saveEntry, useEntries, useIsStrategy, type Stop } from './data'
+import { DRIVER_SKILLS, STOPS, STRATEGY_ONLY, STRATEGY_PATHS, saveEntry, useEntries, useIsStrategy, usePathDraft, type Stop } from './data'
 import EventPicker from './EventPicker'
+import FieldDrawing from './FieldDrawing'
 import FormSection from './FormSection'
 import MatchTeamFields from './MatchTeamFields'
 import MyPicklist from './MyPicklist'
@@ -137,6 +138,7 @@ function MatchForm() {
   const [brokeDown, setBrokeDown] = useState(false)
   const [brokeParts, setBrokeParts] = useState<string[]>([])
   const [brokeOther, setBrokeOther] = useState('')
+  const [died, setDied] = useState(false)
   const [brownedOut, setBrownedOut] = useState(false)
   const [stop, setStop] = useState<Stop>('None')
   // 0 until the scout chooses, so no button is pressed and Save asks for one.
@@ -144,6 +146,8 @@ function MatchForm() {
   // '' until the scout chooses: they may not have seen where it started.
   const [autoSide, setAutoSide] = useState('')
   const [autoNotes, setAutoNotes] = useState('')
+  // The auto path drawn on the field (#205). Every change goes through editPath() in data.ts.
+  const [autoDraft, editAuto, resetAuto] = usePathDraft()
   const [rankingPoints, setRankingPoints] = useState<string[]>([])
   const [notes, setNotes] = useState('')
 
@@ -163,11 +167,13 @@ function MatchForm() {
       broke_down: brokeDown,
       broke_parts: brokeParts,
       broke_other: brokeOther,
+      died,
       browned_out: brownedOut,
       stop,
       driver_skill: driverSkill,
       auto_side: autoSide,
       auto_notes: autoNotes,
+      auto_path: autoDraft.path,
       ranking_points: rankingPoints,
       notes,
     })
@@ -185,11 +191,13 @@ function MatchForm() {
     setBrokeDown(false)
     setBrokeParts([])
     setBrokeOther('')
+    setDied(false)
     setBrownedOut(false)
     setStop('None')
     setDriverSkill(0)
     setAutoSide('')
     setAutoNotes('')
+    resetAuto()
     setRankingPoints([])
     setNotes('')
     toast(`Saved match ${result.value.match}, team ${result.value.team}.`)
@@ -213,7 +221,8 @@ function MatchForm() {
               Where it started (tap again to clear if you didn't see)
               <Pick label="Where it started" options={AUTO_SIDES} value={autoSide} onChange={(side) => setAutoSide(side === autoSide ? '' : side)} />
             </div>
-            <ShortAnswer id="scout-auto" label="What did its auto do?" value={autoNotes} onChange={setAutoNotes} placeholder="Like: scored preload, picked up 2 from the middle" />
+            <FieldDrawing draft={autoDraft} onEdit={editAuto} />
+            <ShortAnswer id="scout-auto" label="Anything else about its auto?" value={autoNotes} onChange={setAutoNotes} placeholder="Like: scored preload, picked up 2 from the middle" />
           </FormSection>
           <FormSection title="Scoring">
             {COUNTERS.map((c) => (
@@ -243,7 +252,8 @@ function MatchForm() {
                 <ShortAnswer id="scout-broke-other" label="Anything else that broke" value={brokeOther} onChange={setBrokeOther} placeholder="Like: bumper fell off" />
               </>
             )}
-            <Tick checked={brownedOut} onChange={setBrownedOut}>Died or browned out (lost power, stuttering, lights flickering)</Tick>
+            <Tick checked={died} onChange={setDied}>Died (battery ran out: lost power and stopped)</Tick>
+            <Tick checked={brownedOut} onChange={setBrownedOut}>Browned out (stuttered or lights flickered, then kept going)</Tick>
             <div className="field">
               E-stop or A-stop
               <Pick label="E-stop or A-stop" options={[...STOPS]} value={stop} onChange={setStop} />

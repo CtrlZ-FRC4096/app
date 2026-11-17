@@ -7,6 +7,7 @@ import { toast } from '../../core/toast'
 import { Bar, PageHead, Panel, Pill } from '../../core/ui'
 import { MIN_MATCHES, pointsRange, useCurrentEvent, useIsStrategy, useScoutedTeams, useTeamPoints, useTeamSummary, type Tally, type TeamSummary } from './data'
 import { PRESCOUT_QUESTIONS, prescoutFacts, prescoutHref, usePrescoutFor } from './prescouting/data'
+import TeamAutoPaths from './TeamAutoPaths'
 import TeamPhotos from './TeamPhotos'
 // Stars come from Prescouting (#118), now a Scouting tab (#184), and are the
 // same on both: starring a team in either place shows in both.
@@ -133,6 +134,7 @@ function TeamDetails(props: { team: number }) {
       <TeamPhotos team={props.team} />
       <AveragePoints team={props.team} />
       {summary.matchCount > 0 && <Numbers summary={summary} />}
+      <TeamAutoPaths team={props.team} />
       <TeamRatings team={props.team} />
       {summary.matchCount + summary.pitCount > 0 && <HowOften summary={summary} />}
       {summary.written.length > 0 && <WrittenAnswers summary={summary} />}
@@ -230,7 +232,7 @@ function HowOften(props: { summary: TeamSummary }) {
   return (
     <Panel
       title="How often"
-      aside={s.matchCount > 0 && <span className="note">{`Broke down in ${s.brokeDown} of ${s.matchCount} · Died or browned out in ${s.brownedOut} of ${s.matchCount}`}</span>}
+      aside={s.matchCount > 0 && <span className="note">{`Broke down in ${s.brokeDown} of ${s.matchCount} · Died in ${s.died} of ${s.matchCount} · Browned out in ${s.brownedOut} of ${s.matchCount}`}</span>}
     >
       <div className="panel-body">
         {s.matchCount > 0 && (
