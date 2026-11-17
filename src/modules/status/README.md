@@ -40,7 +40,8 @@ match.
 | See everyone's progress and the full checklist | | Yes |
 | Check or uncheck any item | | Yes |
 | Add, rename, assign, reorder and remove items | | Yes |
-| Change an item's subgroup, and who's in each subgroup | | Yes |
+| Change who's on an item (the People popup) | | Yes |
+| Change an item's subgroup, and who's in each subgroup (the Subgroups panel) | | Yes |
 | Clear list: uncheck everything, or remove every item | | Yes |
 
 A student who tries is told who to ask, like "Ask a student leader or
@@ -58,11 +59,32 @@ turn the transitions off. Releasing outside the list cancels the move.
 
 Each item's three-dot menu has **Move to…** (type a position and press
 **Move**; `movePitItemTo()` checks it's from 1 to the number of items),
-**Person assignment**, **Rename** and **Remove**. Escape closes the menu.
-Assignments save straight away; clearing everyone leaves the item
-unassigned, and changing who's on an item never unchecks it. Remove asks
-first (a second tap), and takes the item's checks with it
-(`removePitItem()`).
+**Rename** and **Remove**. Escape closes the menu. Remove asks first (a
+second tap), and takes the item's checks with it (`removePitItem()`).
+
+**People.** Each item shows its people as name tags, or **+ Add people**
+when it has none. The tags are one button: tap it to open the **People**
+popup (a mode of `ItemPopup.tsx`), with no ⋯ menu in the way:
+
+- The chosen people are at the top. Tap one (it has a ×) to take them off.
+- **Find someone** is under them, ready to type in when the popup opens.
+  Enter adds the first name listed.
+- Under it are the people who can be added: the item's subgroup members.
+  Tap a name to add it. Nothing is a checkbox.
+- For **General** items, where anyone can be chosen, it lists the people
+  already on other items, and everyone else only once a name is typed
+  (`pickablePeople()` and `assignedPeople()` in `data.ts`).
+
+Changes save straight away. Clearing everyone leaves the item unassigned,
+and changing who's on an item never unchecks it. The picker is
+`PeoplePicker.tsx`, and the **Add an item** form uses the same one. In the
+form, picking a subgroup takes off anyone who isn't in it, and says so:
+"You're not in Electrical, so you were taken off." (`takenOffText()`).
+
+**Subgroups**, a panel at the bottom of the page (`SubgroupsPanel.tsx`),
+has a row for each subgroup with its people as name tags. Tap a row to
+change them in the same picker. Taking someone out of a subgroup also takes
+them off that subgroup's items. General isn't listed: it's always everyone.
 
 **Clear list**, under the checklist, opens a small popup with two choices.
 Each says how many items it affects and needs a second tap:
@@ -75,11 +97,8 @@ Each says how many items it affects and needs a second tap:
   (`clearPitChecklist()`).
 
 Each item shows a subgroup tag: General, Mechanical, Electrical,
-Programming or Drive team. Click it to change the subgroup. Assignment
-lists show only that subgroup's members (General shows everyone). Every
-list of people has a **Find someone** box (`matchMembers()` in `data.ts`,
-the box is `MemberPicker.tsx`): searching only hides names, and people
-already chosen always stay in the list.
+Programming or Drive team. Tap it to change the subgroup. People not in
+the new subgroup come off the item.
 
 ## Where it's saved
 
@@ -103,8 +122,8 @@ The database's rules, tested in `supabase/tests/pit-checklist.test.ts`:
   refuses anything else.
 
 **Who's in each subgroup** is still saved in each browser, not the
-database: a student leader or mentor sets it on their own device (Person
-assignment > Edit subgroup members). A subgroup nobody has set up on that device lists
+database: a student leader or mentor sets it on their own device, in the
+Subgroups panel. A subgroup nobody has set up on that device lists
 everyone. It only decides who shows in the assignment lists.
 
 **Items from the old local preview** (saved in a browser before this
@@ -127,8 +146,6 @@ no connection, and `matchesWithPredictions()` puts each match with Match
   and so on), built from each module's `useSummary` hook.
 - A big-screen view for the pit TV.
 - Saving subgroup members in the team database, so they're set once.
-- People as name tags on each item, with a People popup to change them,
-  and a Subgroups panel for who's in each subgroup.
 - Select several items and give them to the same people.
 - Should the checklist show which battery is in the robot (the Batteries
   module)?

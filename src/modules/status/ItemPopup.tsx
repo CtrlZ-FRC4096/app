@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { MAX_ITEM_LENGTH, PIT_SUBGROUPS, removePitItem, renamePitItem, setPitItemSubgroup, type PitItem } from './data'
+import { useMembers } from '../../core/members'
+import {
+  MAX_ITEM_LENGTH, PIT_SUBGROUPS, assignPitItem, assignedPeople, belongsToSubgroup, removePitItem, renamePitItem, setPitItemSubgroup, usePitChecklist,
+  type PitItem,
+} from './data'
+import { PeoplePicker } from './PeoplePicker'
 
-export type ItemPopupMode = 'subgroup' | 'rename' | 'remove'
+export type ItemPopupMode = 'subgroup' | 'rename' | 'remove' | 'people'
 
-const TITLES: Record<ItemPopupMode, string> = { subgroup: 'Choose subgroup', rename: 'Rename item', remove: 'Remove item' }
+const TITLES: Record<ItemPopupMode, string> = { subgroup: 'Choose subgroup', rename: 'Rename item', remove: 'Remove item', people: 'People' }
 
 export function ItemPopup({ item, mode, onClose, onSaved }: {
   item: PitItem
@@ -19,7 +24,7 @@ export function ItemPopup({ item, mode, onClose, onSaved }: {
   useEffect(() => {
     const element = dialog.current!
     element.showModal()
-    element.querySelector<HTMLElement>('#pit-popup-name, [aria-pressed="true"]')?.focus()
+    element.querySelector<HTMLElement>('#pit-popup-name, #pit-people-find, [aria-pressed="true"]')?.focus()
     return () => element.close()
   }, [])
 
@@ -75,8 +80,50 @@ export function ItemPopup({ item, mode, onClose, onSaved }: {
               onClick={() => void save(removePitItem(item.id), 'Checklist item removed.')}>Remove</button>
           </div>
         </>}
+        {mode === 'people' && <ItemPeople item={item} onSaved={onSaved} onError={setError} onClose={onClose} />}
         {error && <p id="pit-popup-error" role="alert">{error}</p>}
       </div>
     </dialog>
+  )
+}
+
+/**
+ * The People popup for one item: who's on it, and adding or taking off
+ * people with one tap each. Changes save straight away and never uncheck
+ * the item. It lists the item's subgroup; for General, where that's the
+ * whole team, the people already on other items until a name is typed.
+ */
+function ItemPeople(props: { item: PitItem; onSaved: (message: string) => void; onError: (error: string) => void; onClose: () => void }) {
+  const { item } = props
+  const members = useMembers()
+  const items = usePitChecklist()
+  const [saving, setSaving] = useState(false)
+  const pool = members.filter((member) => member.active && belongsToSubgroup(member.id, item.subgroup))
+
+  async function save(ids: string[], message: string) {
+    setSaving(true)
+    const result = await assignPitItem(item.id, ids)
+    setSaving(false)
+    props.onError(result.ok ? '' : result.error)
+    if (result.ok) props.onSaved(message)
+  }
+  const nameOf = (id: string) => members.find((member) => member.id === id)?.name ?? 'Former member'
+
+  return (
+    <>
+      <p className="note" style={{ margin: 0 }}>
+        {item.text} · {item.subgroup === 'General' ? 'Anyone on the team' : `${item.subgroup} members`}. Changes save straight away.
+      </p>
+      <PeoplePicker findId="pit-people-find" disabled={saving}
+        chosen={item.assignee_ids.map((id) => ({ id, name: nameOf(id) }))}
+        pool={pool}
+        suggestedIds={item.subgroup === 'General' ? assignedPeople(items) : undefined}
+        nobody={`Nobody is in ${item.subgroup} yet. Add people to it in the Subgroups panel under the checklist.`}
+        onAdd={(id) => void save([...item.assignee_ids, id], `${nameOf(id)} added to ${item.text}.`)}
+        onRemove={(id) => void save(item.assignee_ids.filter((old) => old !== id), `${nameOf(id)} taken off ${item.text}.`)} />
+      <div className="toolbar">
+        <button type="button" className="btn btn-primary pit-add" onClick={props.onClose}>Done</button>
+      </div>
+    </>
   )
 }
