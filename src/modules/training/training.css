@@ -1,0 +1,32 @@
+/* Training: hands-on skills, sign-off requests and everyone's progress. (The
+   lessons use the shared .row-list.) Skills and requests are one row each,
+   with their buttons on the right; on a phone the buttons wrap under the
+   name. Only the app's colour variables are used (src/core/styles.css). */
+.training-list { list-style: none; margin: 0; padding: 0; }
+.training-list > li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 16px; }
+.training-list > li + li,
+.panel-body + .training-list,
+.training-list + .panel-body { border-top: 1px solid var(--line); }
+.training-name { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.training-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; margin-left: auto; }
+
+/* Big enough to tap on a phone. Skills match the lessons above them. */
+.training-actions .btn, .training-tap { min-height: 44px; }
+.training-skills .training-name { font-size: 17px; }
+.training-skills .training-actions .btn { min-height: 52px; }
+.training-picker { display: grid; gap: 4px; }
+.training-picker .check { min-height: 44px; }
+
+.training-done { color: var(--ok); font-weight: 600; }
+.training-form { display: grid; gap: 14px; }
+
+/* Everyone's progress: one person per row, with a bar under their name. */
+.training-people > li { display: grid; gap: 6px; }
+.training-person { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
+.training-person-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.training-person:hover .training-person-name { text-decoration-color: currentColor; }
+.training-detail { display: grid; gap: 14px; padding: 8px 0 4px; }
+.training-detail h3 { font-size: 16px; }
+.training-ticks { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; font-size: 14px; }
+.training-ticks > li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 12px; }
+.training-ticks > li > :first-child { min-width: 0; overflow-wrap: anywhere; }
