@@ -127,6 +127,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .menu-item { display: grid; align-content: center; gap: 1px; width: 100%; min-height: 44px; padding: 8px 10px; border: 0; border-radius: var(--radius); background: none; color: inherit; font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
 .menu-item:hover { background: var(--surface-2); }
 .menu-item-name { font-weight: 600; }
+/* With the Size setting (src/core/size.ts), 100vw doesn't shrink with the zoom: a menu is at most the screen less 32px. */
+.menu-panel { max-width: min(300px, calc(100vw / var(--zoom, 1) - 32px)); }
 .menu-item[aria-current='page'], .menu-item[aria-pressed='true'] { background: var(--blue-soft); }
 .menu-item[aria-current='page'] .menu-item-name, .menu-item[aria-pressed='true'] .menu-item-name { color: var(--blue); }
 .menu-head { display: grid; gap: 1px; padding: 6px 10px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
@@ -245,7 +247,15 @@ a.tile:hover { border-color: var(--blue); box-shadow: var(--shadow-lg); }
 .tile-open i { font-style: normal; display: inline-block; transition: transform 120ms ease; }
 a.tile:hover .tile-open i { transform: translateX(3px); }
 .tile.add { border-style: dashed; box-shadow: none; background: transparent; }
-.theme-row { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; }
+/* The settings at the bottom: Appearance and Size, the labels in one column and the choices lined up in the next. */
+.home-settings { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px 14px; }
+.home-settings .pick { justify-self: start; }
+/*
+ * The Size choices: smaller than other buttons, each drawn at its own size
+ * (Home.tsx zooms each one), lined up along the bottom like steps.
+ */
+.size-pick { align-items: flex-end; }
+.size-pick button { min-height: 36px; padding: 4px 10px; font-size: 14px; }
 .goal-list { margin: 0; padding: 14px 16px 14px 34px; display: grid; gap: 8px; }
 .goal-list li::marker { color: var(--orange); }
 .attention-list a { display: flex; color: inherit; text-decoration: none; }

@@ -4,6 +4,7 @@ import { href } from '../router'
 import { groupModules, useNothingHidden, type ModuleDefinition } from '../registry'
 import { PageHead, Panel, Pick, Pill } from '../ui'
 import { THEMES, setTheme, useTheme } from '../theme'
+import { SIZES, setSize, useSize, zoomFor } from '../size'
 import { QuietBoundary } from '../ErrorBoundary'
 
 const ADD_MODULE_DOC = 'https://github.com/CtrlZ-FRC4096/app/blob/main/docs/adding-a-module.md'
@@ -11,6 +12,7 @@ const ADD_MODULE_DOC = 'https://github.com/CtrlZ-FRC4096/app/blob/main/docs/addi
 export function Home() {
   const { name, role } = useSession()
   const theme = useTheme()
+  const size = useSize()
   // The same groups as the menus in the top bar, so both read the same way.
   const groups = groupModules(modules.filter((m) => canOpen(role, m.roles)))
 
@@ -58,9 +60,24 @@ export function Home() {
         </div>
       </section>
 
-      <section className="theme-row">
+      {/* How the app looks in this browser: colours (src/core/theme.ts) and size (src/core/size.ts). */}
+      <section className="home-settings">
         <span className="note">Appearance</span>
         <Pick label="Appearance" options={[...THEMES]} value={theme} onChange={setTheme} />
+        <span className="note">Size</span>
+        {/*
+          Like a Pick, but each choice is drawn at the size it makes the app,
+          so you can see before you pick. The page is already zoomed to the
+          current size, so each button's own zoom takes that back out.
+        */}
+        <div className="pick size-pick" role="group" aria-label="Size">
+          {SIZES.map((option) => (
+            <button key={option} type="button" aria-pressed={option === size} onClick={() => setSize(option)}
+              style={{ zoom: zoomFor(option) / zoomFor(size) }}>
+              {option}
+            </button>
+          ))}
+        </div>
       </section>
     </>
   )
