@@ -6,9 +6,9 @@ import { PageHead, Panel, Pick } from '../../core/ui'
 import type { Result } from '../../core/table'
 import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../scouting/data'
 import {
-  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout, searchPrescout,
-  setPrescoutEvent, useIsStrategy, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
-  type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutTeam,
+  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, TIERS, hasMatch13, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout, searchPrescout,
+  setPrescoutEvent, setTier, useIsStrategy, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
+  type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutTeam, type Tier,
 } from './data'
 import Stars from './Stars'
 import TeamSeason from './TeamSeason'
@@ -184,20 +184,24 @@ function Problem(props: { error: string; retry: () => void }) {
 
 /**
  * One team in the overview (#183): a small tile in the grid, linking to their
- * prescouting page. Only their number, name (cut short with "…"), EPA, a ✓ if
+ * prescouting page. Only their number, name (cut short with "…"), EPA and xP
+ * (#186), a ✓ if
  * they're prescouted (and an emptier, dashed look if not), and ★ for a team
- * star or ☆ for your own. Their notes and the Star button are on their page.
+ * star or ☆ for your own, and their tier (#191). Their notes, the Star
+ * button and the tier buttons are on their page.
  * The classes are in prescouting.css.
  */
 export function TeamTile(props: { event: string; team: OverviewTeam }) {
   const t = props.team
   const star = t.stars.forTeam.length > 0 ? 'team star' : t.stars.mine ? 'your star' : ''
-  const label = [`Team ${t.team} ${t.name}`, `EPA ${formatEpa(t.epa)}`, t.prescouted ? 'prescouted' : 'not prescouted yet', star].filter(Boolean).join(', ')
+  const tier = t.notes?.tier ?? null
+  const label = [`Team ${t.team} ${t.name}`, `EPA ${formatEpa(t.epa)}`, `xP ${formatEpa(t.xp)}`, tier ? `tier ${tier}` : 'not rated', t.prescouted ? 'prescouted' : 'not prescouted yet', star].filter(Boolean).join(', ')
   return (
     <a className={t.prescouted ? 'prescout-tile' : 'prescout-tile prescout-tile-todo'} href={teamHref(props.event, t.team)} aria-label={label} title={t.name}>
       <span className="prescout-tile-top">
         <strong className="prescout-tile-number tnum">{t.team}</strong>
         <span className="prescout-tile-badges" aria-hidden="true">
+          {tier && <TierBadge tier={tier} />}
           {star && <span className="prescout-tile-star">{t.stars.forTeam.length > 0 ? '★' : '☆'}</span>}
           {t.prescouted && <span className="prescout-tile-done">✓</span>}
         </span>
@@ -205,11 +209,44 @@ export function TeamTile(props: { event: string; team: OverviewTeam }) {
       <span className="prescout-tile-name">{t.name}</span>
       <span className="prescout-tile-numbers" aria-hidden="true">
         <span>{`EPA ${formatEpa(t.epa)}`}</span>
+        <span>{`xP ${formatEpa(t.xp)}`}</span>
       </span>
     </a>
   )
 }
 
+/** A team's tier as a small badge, like the tile's ★ (#191). Colours in prescouting.css. */
+function TierBadge(props: { tier: Tier }) {
+  return <span className="prescout-tier-badge" data-tier={props.tier}>{props.tier}</span>
+}
+
+/**
+ * The tier list (#191): six big buttons, S to F. Tap one to choose it, and
+ * tap it again to clear it. Shared with everyone, and changes from other
+ * phones show up by themselves.
+ */
+function TierPanel(props: { event: string; team: number; tier: Tier | null }) {
+  const [saving, setSaving] = useState(false)
+
+  async function choose(tier: Tier | '') {
+    if (tier === '' || saving) return
+    setSaving(true)
+    const result = await setTier(props.event, props.team, tier === props.tier ? null : tier)
+    setSaving(false)
+    if (!result.ok) toast(result.error)
+  }
+
+  return (
+    <Panel title="Tier" aside={props.tier ? <TierBadge tier={props.tier} /> : <span className="note">Not rated</span>}>
+      <div className="panel-body prescout-tier" style={{ display: 'grid', gap: 8 }}>
+        <Pick<Tier | ''> label="Tier" options={[...TIERS]} value={props.tier ?? ''} onChange={(tier) => void choose(tier)} />
+        <p className="note" style={{ margin: 0 }}>S is best. Tap the chosen tier again to clear it.</p>
+      </div>
+    </Panel>
+  )
+}
+
+/** A Match 13 number to one decimal place, or "—" if Match 13 didn't give it. */
 function formatEpa(epa: number | null): string {
   return epa === null ? '—' : epa.toFixed(1)
 }
@@ -240,13 +277,15 @@ export function TeamPage(props: { event: string; team: number }) {
           Scouting team page →
         </a>
       </div>
-      {/* Starring is here, not on the overview's tiles, which are too small for a button (#183). */}
+      {/* Starring and the tier are here, not on the overview's tiles, which are too small for buttons (#183, #191). */}
+      <TierPanel event={event} team={team} tier={notes?.tier ?? null} />
       <Panel title="Stars">
         <div className="panel-body">
           <Stars event={event} team={team} />
         </div>
       </Panel>
       <RobotPhotos event={event} team={team} />
+      {details && <Match13Panel team={details} />}
       <NotesForm event={event} team={team} saved={notes ?? NO_ANSWERS} />
       <TeamSeason event={event} team={team} />
     </>
@@ -279,6 +318,38 @@ function RobotPhotos(props: { event: string; team: number }) {
   )
 }
 
+
+/**
+ * Match 13's numbers for the team (#186), to compare with what scouts read
+ * and watched. "—" for a number Match 13 didn't give, and a line saying so
+ * if it hasn't rated them at all yet.
+ */
+export function Match13Panel(props: { team: PrescoutTeam }) {
+  const t = props.team
+  const numbers: [string, number | null][] = [['Auto', t.auto], ['Teleop', t.teleop], ['Endgame', t.endgame], ['EPA', t.epa], ['OPR', t.opr], ['DPR', t.dpr]]
+  return (
+    <Panel title="Match 13">
+      {hasMatch13(t) ? (
+        <>
+          <div className="stats" aria-label="Match 13 numbers">
+            <div>
+              <strong>{formatEpa(t.xp)}</strong>
+              <span>{t.xpRank ? `xP · Rank ${t.xpRank.rank} of ${t.xpRank.of}` : 'xP'}</span>
+            </div>
+            {numbers.map(([label, value]) => (
+              <div key={label}><strong>{formatEpa(value)}</strong><span>{label}</span></div>
+            ))}
+          </div>
+          <p className="panel-body note" style={{ margin: 0, paddingTop: 0 }}>
+            xP is the points they add to their alliance's score. Before the event, it's Match 13's rating of how strong they are going in; it changes once matches start.
+          </p>
+        </>
+      ) : (
+        <p className="panel-body muted" style={{ margin: 0 }}>No Match 13 numbers yet. They usually show up closer to the event.</p>
+      )}
+    </Panel>
+  )
+}
 
 /** The EPA under the team's name, or why it's not there. */
 function TeamLine(props: { list: Result<PrescoutTeam[]> | null; details: PrescoutTeam | undefined }) {
