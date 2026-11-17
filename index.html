@@ -29,6 +29,18 @@
       } catch (e) {
         // A private window can refuse to say. The device's setting still works.
       }
+      // The same for the size picked on the home page (Normal when nothing is
+      // saved), so the page doesn't jump in size while the app loads.
+      // src/core/size.ts saves it under this name and has the same zooms
+      // (SIZE_ZOOM); change both together.
+      var zoom = 0.9
+      try {
+        zoom = { '"Smallest"': 0.7, '"Smaller"': 0.8, '"Larger"': 1, '"Largest"': 1.15 }[localStorage.getItem('ctrlz-app:size:v1')] || zoom
+      } catch (e) {
+        // Normal size, then.
+      }
+      if (zoom !== 1) document.documentElement.style.zoom = zoom
+      document.documentElement.style.setProperty('--zoom', zoom)
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

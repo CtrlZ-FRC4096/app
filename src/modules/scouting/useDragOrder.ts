@@ -30,6 +30,8 @@ interface Drag {
   right: number
   inside: boolean
   settling: boolean
+  /** Screen pixels per CSS pixel: 1, unless the app is zoomed (the Size setting on the home page). */
+  zoom: number
 }
 
 export interface DragOrderOptions<T> {
@@ -213,6 +215,8 @@ export function useDragOrder<T>({ items, idOf, save, onDone, removing = null }: 
     current.current = {
       id, rows, from, to: from, offset: 0, grabY: event.clientY + window.scrollY - rows[from].top,
       x: event.clientX, y: event.clientY, left: rect.left, right: rect.right, inside: true, settling: false,
+      // The finger moves in screen pixels, but a zoomed page draws each CSS pixel bigger or smaller.
+      zoom: list.offsetHeight ? rect.height / list.offsetHeight : 1,
     }
     event.currentTarget.setPointerCapture(event.pointerId)
     event.currentTarget.focus()
@@ -244,7 +248,8 @@ export function useDragOrder<T>({ items, idOf, save, onDone, removing = null }: 
     if (!drag) return { transition: 'none' }
     const row = drag.rows.find((r) => r.id === id)
     if (!row) return
-    const offset = id === drag.id ? drag.offset : slotTop(drag, id) - row.top
+    // Offsets are in screen pixels; dividing by the zoom keeps the row under the finger.
+    const offset = (id === drag.id ? drag.offset : slotTop(drag, id) - row.top) / drag.zoom
     return {
       transform: `translate3d(0, ${offset}px, 0)`,
       transition: id === drag.id && !drag.settling ? 'none' : undefined,

@@ -39,7 +39,7 @@ button.pit-subgroup-tag:disabled { cursor: default; }
 .pit-menu > summary { display: grid; place-items: center; cursor: pointer; width: 44px; height: 44px; font-size: 26px; border-radius: var(--radius); list-style: none; }
 .pit-menu > summary::-webkit-details-marker { display: none; }
 .pit-menu > summary:hover, .pit-menu[open] > summary { background: var(--surface-2); }
-.pit-menu-content { position: absolute; right: 0; top: 42px; width: min(300px, calc(100vw - 80px)); margin: 0; background: var(--surface); box-shadow: var(--shadow); z-index: 5; }
+.pit-menu-content { position: absolute; right: 0; top: 42px; width: min(300px, calc(100vw / var(--zoom, 1) - 80px)); margin: 0; background: var(--surface); box-shadow: var(--shadow); z-index: 5; }
 .pit-menu-content { border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; max-height: min(460px, 65vh); overflow-y: auto; }
 .pit-submenu > summary { cursor: pointer; padding: 12px; min-height: 44px; border-radius: var(--radius); }
 .pit-submenu > summary:hover { background: var(--surface-2); }
@@ -48,7 +48,7 @@ button.pit-subgroup-tag:disabled { cursor: default; }
 .pit-future-tools { border-top: 1px solid var(--line); padding: 12px; margin-top: 6px; display: grid; gap: 4px; color: var(--muted); }
 .pit-menu-action { display: block; width: 100%; padding: 12px; min-height: 44px; text-align: left; border: 0; background: transparent; border-radius: var(--radius); cursor: pointer; }
 .pit-menu-action:hover { background: var(--surface-2); }
-.pit-popup { width: min(420px, calc(100vw - 32px)); padding: 0; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); max-height: calc(100dvh - 32px); }
+.pit-popup { width: min(420px, calc(100vw / var(--zoom, 1) - 32px)); padding: 0; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); max-height: calc(100dvh / var(--zoom, 1) - 32px); }
 .pit-popup::backdrop { background: color-mix(in srgb, var(--ink) 40%, transparent); }
 .pit-popup-body { padding: 20px; display: grid; gap: 18px; }
 .pit-popup-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
