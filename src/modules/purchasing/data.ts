@@ -31,6 +31,7 @@ import type { Role } from '../../core/roles'
 import { isLive, supabase } from '../../core/supabase'
 import { money, plural } from '../../core/format'
 import type { Notice, Tone } from '../../core/registry'
+import { toCsv } from '../attendance/data'
 import type { BomSystem, Part } from '../bom/data'
 import type { Item as InventoryItem } from '../inventory/data'
 import { compressReceiptImage, type ImageEncoder } from './receipt-image'
@@ -780,9 +781,14 @@ export function checkItem(item: NewItem): string | null {
   if (item.part_number.trim().length > MAX_PART_NUMBER_LENGTH) return `Keep the part number under ${MAX_PART_NUMBER_LENGTH} characters.`
   const notes = item.notes.trim()
   if (notes.length > MAX_NOTES_LENGTH) return `Keep the notes under ${MAX_NOTES_LENGTH} characters. These are ${notes.length}.`
-  if (item.estimated_arrival && !isDate(item.estimated_arrival)) return 'Pick the estimated arrival from the calendar, or leave it empty.'
-  if (item.ordered_on && !isDate(item.ordered_on)) return 'Pick the date ordered from the calendar, or leave it empty.'
-  const tracking = item.tracking.trim()
+  return orderDetailsProblem(item)
+}
+
+/** What's wrong with the dates or tracking number in the order details, or null if they're fine. */
+function orderDetailsProblem(details: Pick<NewItem, 'estimated_arrival' | 'ordered_on' | 'tracking'>): string | null {
+  if (details.estimated_arrival && !isDate(details.estimated_arrival)) return 'Pick the estimated arrival from the calendar, or leave it empty.'
+  if (details.ordered_on && !isDate(details.ordered_on)) return 'Pick the date ordered from the calendar, or leave it empty.'
+  const tracking = details.tracking.trim()
   if (tracking.length > MAX_TRACKING_LENGTH) return `Keep the tracking number under ${MAX_TRACKING_LENGTH} characters. This one is ${tracking.length}.`
   return null
 }
@@ -843,6 +849,100 @@ export async function removeItem(item: PurchaseItem): Promise<Result> {
     return fail('This item has a receipt, so it can\'t be deleted. A mentor or purchaser needs to delete the receipt first.')
   }
   return itemsTable.remove(item.id)
+}
+
+// ---------------------------------------------------------------------------
+// Ordering a vendor's items together: purchasers usually buy everything
+// waiting from one vendor at once, so the By vendor view has Order these.
+
+/** Waiting to be ordered, highest priority first. (Wait to Order isn't: it says don't order yet.) */
+const WAITING: StatusKey[] = ['order_high', 'order', 'order_low']
+
+/** Ready to be ordered: Order High Priority, Order or Order Low Priority. */
+export function isWaiting(item: Pick<PurchaseItem, 'status'>): boolean {
+  return WAITING.includes(item.status)
+}
+
+/**
+ * Each vendor's items waiting to be ordered, by vendor name: highest
+ * priority first, then newest first. Vendors with nothing waiting are left out.
+ */
+export function waitingByVendor(items: PurchaseItem[]): Map<string, PurchaseItem[]> {
+  const byVendor = new Map<string, PurchaseItem[]>()
+  const waiting = items.filter(isWaiting).sort((a, b) => WAITING.indexOf(a.status) - WAITING.indexOf(b.status) || newestFirst(a, b))
+  for (const item of waiting) byVendor.set(item.vendor, [...(byVendor.get(item.vendor) ?? []), item])
+  return byVendor
+}
+
+/** "Total $58.50 for 3 items · 1 has no price yet", for the items ticked to order. */
+export function orderTotalText(items: Pick<PurchaseItem, 'price' | 'quantity'>[]): string {
+  if (items.length === 0) return 'Nothing ticked.'
+  const totals = items.map(lineTotal)
+  const cents = totals.reduce<number>((sum, total) => sum + Math.round((total ?? 0) * 100), 0)
+  const unpriced = totals.filter((total) => total === null).length
+  const missing = unpriced === 0 ? '' : ` · ${unpriced} ${unpriced === 1 ? 'has' : 'have'} no price yet`
+  return `Total ${money(cents / 100)} for ${plural(items.length, 'item', 'items')}${missing}`
+}
+
+/**
+ * Part numbers and quantities, one item per line, to paste into a vendor's
+ * quick order or bulk add page. There's no heading line, because those
+ * pages would read it as a part. Items with no part number are left out:
+ * the page says how many, so they're added by hand.
+ */
+export function cartCsv(items: PurchaseItem[]): string {
+  return toCsv(items.filter((item) => item.part_number).map((item) => [item.part_number!, String(item.quantity)]))
+}
+
+/** Everything about the items as CSV, for the team's records. `nameOf` turns a member's id into their name. */
+export function orderCsv(items: PurchaseItem[], nameOf: (id: string | null) => string): string {
+  return toCsv([
+    ['Name', 'Part number', 'Quantity', 'Price each', 'Link', 'Requested by'],
+    ...items.map((item) => [
+      item.name,
+      item.part_number ?? '',
+      String(item.quantity),
+      item.price === null ? '' : item.price.toFixed(2),
+      item.link ?? '',
+      nameOf(item.requested_by),
+    ]),
+  ])
+}
+
+/** The order details filled in once for every item ordered together. Empty means not filled in. */
+export type OrderDetails = Pick<NewItem, OrderField>
+
+const namesOf = (items: PurchaseItem[]) => items.map((item) => item.name).join(', ')
+
+/**
+ * Move several items to Order Placed at once, with the same order details.
+ * Leaving Ordered by empty means you. Mentors and purchasers only.
+ *
+ * Nothing is saved unless every item is still waiting to be ordered. After
+ * that each item is saved on its own, so if one fails the error says which,
+ * and which were already saved.
+ */
+export async function markOrdered(ids: string[], details: OrderDetails): Promise<Result<PurchaseItem[]>> {
+  if (!canOrder(currentUser(), buyersTable.rows())) return fail(NOT_A_BUYER)
+  if (ids.length === 0) return fail('Tick at least one item to order.')
+  const problem = orderDetailsProblem(details)
+  if (problem) return fail(problem)
+  const rows = itemsTable.rows()
+  const items = ids.map((id) => rows.find((row) => row.id === id))
+  if (!items.every((item) => item !== undefined)) return fail('One of these items has been deleted, so nothing was saved. Close this list, open it again and try again.')
+  const moved = items.filter((item) => !isWaiting(item))
+  if (moved.length > 0) return fail(`Not waiting to be ordered any more: ${namesOf(moved)}. Nothing was saved. Untick ${moved.length === 1 ? 'it' : 'them'} and try again.`)
+
+  const saved: PurchaseItem[] = []
+  const failed: string[] = []
+  for (const item of items) {
+    const result = await changeItem(item, { ...itemToForm(item), ...details, status: 'placed' })
+    if (result.ok) saved.push(result.value)
+    else failed.push(`${item.name} (${result.error.replace(/\.$/, '')})`)
+  }
+  if (failed.length === 0) return ok(saved)
+  const done = saved.length > 0 ? `Already saved as ordered: ${namesOf(saved)}.` : 'Nothing was saved.'
+  return fail(`Couldn't mark these as ordered: ${failed.join('; ')}. ${done} Open each one that failed to fix it, then try again.`)
 }
 
 // ---------------------------------------------------------------------------
