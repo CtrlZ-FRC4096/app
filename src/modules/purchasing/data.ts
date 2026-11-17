@@ -48,13 +48,13 @@ import { compressReceiptImage, type ImageEncoder } from './receipt-image'
  *   - People asking for something pick one of the `ask` statuses: its priority.
  */
 export const STATUSES = [
-  { key: 'wait', label: 'Wait to Order', hint: "Don't order yet", tone: 'plain', current: false, ask: true },
-  { key: 'order_low', label: 'Order Low Priority', hint: 'Place with the next order', tone: 'info', current: true, ask: true },
+  { key: 'wait', label: 'Wait to Order', hint: "Don't order yet", tone: 'warn', current: false, ask: true },
+  { key: 'order_low', label: 'Order Low Priority', hint: 'Place with the next order', tone: 'warn', current: true, ask: true },
   { key: 'order', label: 'Order', hint: 'Place the order now', tone: 'warn', current: true, ask: true },
   { key: 'order_high', label: 'Order High Priority', hint: 'Place the order now, with priority shipping', tone: 'crit', current: true, ask: true },
   { key: 'placed', label: 'Order Placed', hint: 'Ordered, on the way', tone: 'info', current: true, ask: false },
   { key: 'out_of_stock', label: 'Out of Stock', hint: "The vendor doesn't have it", tone: 'crit', current: true, ask: false },
-  { key: 'backordered', label: 'Backordered', hint: "Ordered, but the vendor is waiting for more", tone: 'warn', current: true, ask: false },
+  { key: 'backordered', label: 'Backordered', hint: "Ordered, but the vendor is waiting for more", tone: 'info', current: true, ask: false },
   { key: 'received', label: 'Received', hint: 'Delivered, not in the shop yet', tone: 'ok', current: true, ask: false },
   { key: 'in_shop', label: 'In Shop', hint: 'Put away in the shop', tone: 'ok', current: false, ask: false },
   { key: 'cancelled', label: 'Cancel Item', hint: 'Not buying it', tone: 'plain', current: false, ask: false },
