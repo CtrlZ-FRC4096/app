@@ -37,21 +37,65 @@ export interface Course {
 }
 
 // To add a lesson, give it a new id, copy its title from the wiki's menu and
-// its address from the browser, and add it to its course here.
+// its address from the browser, and add it to its course here. Leave out the
+// number in front of some menu titles ("1. "): the order here does that job.
+// Courses and lessons are in the wiki menu's order. Pages that are only
+// reference, or still empty on the wiki, aren't lessons yet.
 export const COURSES: Course[] = [
   {
-    name: 'Code',
+    name: 'Getting Started with Code',
     lessons: [
-      { id: 'code-first-button', title: 'Give a Button a Job', url: `${WIKI}docs/Code/Tutorials/first-button/` },
-      { id: 'code-first-sequence', title: 'Put the Steps in Order', url: `${WIKI}docs/Code/Tutorials/first-sequence/` },
-      { id: 'code-first-rule', title: 'Teach the Robot to Decide', url: `${WIKI}docs/Code/Tutorials/first-rule/` },
+      { id: 'code-setup', title: 'Setup', url: `${WIKI}docs/Code/Getting%20Started/setup/` },
+      { id: 'code-frc-programming', title: 'Overview of FRC Programming', url: `${WIKI}docs/Code/Getting%20Started/overview/` },
+      { id: 'code-subsystems-and-commands', title: 'Subsystems and Commands', url: `${WIKI}docs/Code/Getting%20Started/subystems/` },
+      { id: 'code-github', title: 'Github', url: `${WIKI}docs/Code/Getting%20Started/github/` },
+      { id: 'code-organization', title: 'Code Organization', url: `${WIKI}docs/Code/Getting%20Started/organization/` },
+    ],
+  },
+  {
+    name: 'Python',
+    lessons: [
+      { id: 'python-variables-and-types', title: 'Variables and Types', url: `${WIKI}docs/Code/Python%20Tutorials/01%20variables%20and%20types/` },
+      { id: 'python-conditionals', title: 'Conditionals and Logic', url: `${WIKI}docs/Code/Python%20Tutorials/02%20conditionals/` },
+      { id: 'python-lists-and-loops', title: 'Lists and Loops', url: `${WIKI}docs/Code/Python%20Tutorials/03%20lists%20and%20loops/` },
+      { id: 'python-functions', title: 'Functions', url: `${WIKI}docs/Code/Python%20Tutorials/04%20functions/` },
+      { id: 'python-classes', title: 'Classes and Objects', url: `${WIKI}docs/Code/Python%20Tutorials/05%20classes/` },
+      { id: 'python-robotpy-patterns', title: 'RobotPy Patterns', url: `${WIKI}docs/Code/Python%20Tutorials/06%20robotpy%20patterns/` },
+      { id: 'python-robotpy-in-our-code', title: 'RobotPy in Our Robot Code', url: `${WIKI}docs/Code/Python%20Tutorials/07%20robotpy%20in%20our%20code/` },
     ],
   },
   {
     name: 'Controls',
     lessons: [
+      { id: 'controls-tuning', title: 'How to Tune a Controller', url: `${WIKI}docs/Code/Controls/tuning/` },
       { id: 'controls-tuning-flywheel', title: 'How to Tune a Flywheel', url: `${WIKI}docs/Code/Controls/tuning-flywheel/` },
+      { id: 'controls-tuning-arm', title: 'How to Tune an Arm', url: `${WIKI}docs/Code/Controls/tuning-arm/` },
       { id: 'controls-tuning-elevator', title: 'How to Tune an Elevator', url: `${WIKI}docs/Code/Controls/tuning-elevator/` },
+      { id: 'controls-operator-interface', title: 'Operator Interface', url: `${WIKI}docs/Code/Controls/operator-interface/` },
+    ],
+  },
+  {
+    name: 'Autonomous',
+    lessons: [{ id: 'auto-planning-an-auto', title: 'How to Plan an Auto', url: `${WIKI}docs/Code/Autonomous/planning-an-auto/` }],
+  },
+  {
+    name: 'Code Tutorials',
+    lessons: [
+      { id: 'code-first-button', title: 'Give a Button a Job', url: `${WIKI}docs/Code/Tutorials/first-button/` },
+      { id: 'code-first-sequence', title: 'Put the Steps in Order', url: `${WIKI}docs/Code/Tutorials/first-sequence/` },
+      { id: 'code-first-rule', title: 'Teach the Robot to Decide', url: `${WIKI}docs/Code/Tutorials/first-rule/` },
+      { id: 'code-joystick-deadband', title: 'Joystick Deadbands', url: `${WIKI}docs/Code/Tutorials/joystick-deadband/` },
+      { id: 'code-unit-conversions', title: 'Unit Conversions', url: `${WIKI}docs/Code/Tutorials/unit-conversions/` },
+      { id: 'code-swerve-module-optimization', title: 'Swerve Module Optimization', url: `${WIKI}docs/Code/Tutorials/swerve-module-optimization/` },
+    ],
+  },
+  {
+    name: 'Code Challenges',
+    lessons: [
+      { id: 'challenge-jam-detector', title: 'Find the Game Piece with the Motor Current', url: `${WIKI}docs/Code/Challenges/jam-detector/` },
+      { id: 'challenge-shoot-on-the-fly', title: 'Shoot While You Are Moving', url: `${WIKI}docs/Code/Challenges/shoot-on-the-fly/` },
+      { id: 'challenge-vision-latency', title: 'Trust a Camera That Tells You the Past', url: `${WIKI}docs/Code/Challenges/vision-latency/` },
+      { id: 'challenge-second-order-swerve', title: 'Drive Straight While You Spin', url: `${WIKI}docs/Code/Challenges/second-order-swerve/` },
     ],
   },
 ]
