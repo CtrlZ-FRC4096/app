@@ -1,16 +1,41 @@
+import { useEffect, useState } from 'react'
+import { isMentor, useSession } from '../../core/session'
 import { PageHead } from '../../core/ui'
+import { keepScheduleFresh } from '../scouting/data'
+import { defaultMatch, useOurMatches } from './data'
+import { MatchPicker } from './MatchPicker'
+import { MyChecklist } from './MyChecklist'
 import { PitChecklist } from './PitChecklist'
+import { TeamProgress } from './TeamProgress'
 import './status.css'
 
-// The subsystem progress grid that used to be here is now its own module,
-// Build progress (src/modules/progress/), under Build (#65).
+// The Pit checklist (#146). The folder and id are still "status" so links and
+// other code keep working. Students see their own items for the chosen match;
+// mentors and admins see everyone's progress and the full checklist.
 export default function StatusPage() {
+  const { role } = useSession()
+  const matches = useOurMatches()
+  const [chosenKey, setChosenKey] = useState<string | null>(null)
+  const match = matches.find((m) => m.key === chosenKey) ?? defaultMatch(matches)
+
+  // Keep the schedule up to date while the page is open. It's saved on this
+  // device, so with no connection the last one still shows.
+  useEffect(() => keepScheduleFresh(), [])
+
   return (
     <>
-      <PageHead title="Robot status">
-        The pit checklist to work through at events. Subsystem progress is now under Build › Build progress.
+      <PageHead title="Pit checklist">
+        Get the robot ready for each of our matches. Pick the match, then check off your items.
       </PageHead>
-      <PitChecklist />
+      <MatchPicker matches={matches} chosen={match} onChoose={setChosenKey} />
+      {isMentor(role) ? (
+        <>
+          <TeamProgress match={match} />
+          <PitChecklist match={match} />
+        </>
+      ) : (
+        <MyChecklist match={match} />
+      )}
     </>
   )
 }

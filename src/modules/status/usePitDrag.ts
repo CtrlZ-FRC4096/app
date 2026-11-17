@@ -78,8 +78,9 @@ export function usePitDrag(onResult: (error: string, announcement: string) => vo
     const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180
     timer.current = setTimeout(() => {
       if (to !== state.from) {
-        const result = reorderPitItem(state.id, state.rows[to].id)
-        onResult(result.ok ? '' : result.error, result.ok ? `Item moved to position ${to + 1}.` : '')
+        void reorderPitItem(state.id, state.rows[to].id).then((result) => {
+          onResult(result.ok ? '' : result.error, result.ok ? `Item moved to position ${to + 1}.` : '')
+        })
       }
       current.current = null
       setDrag(null)
