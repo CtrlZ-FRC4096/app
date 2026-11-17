@@ -57,6 +57,7 @@ import {
   receiptLink,
   receiptText,
   receiptType,
+  receiptsSectionShown,
   receiptsTable,
   removeItem,
   removeReceipt,
@@ -624,6 +625,22 @@ describe('receiptAddingShown', () => {
   it('allows new receipts for every ordered status, but none of the asking statuses', () => {
     for (const status of STATUSES.filter((s) => s.ask)) expect(receiptAddingShown(status.key), status.label).toBe(false)
     for (const status of STATUSES.filter((s) => !s.ask)) expect(receiptAddingShown(status.key), status.label).toBe(true)
+  })
+})
+
+describe('receiptsSectionShown', () => {
+  it('shows the Receipts section only when it has receipts to list or Add receipt to offer', () => {
+    const cases = [
+      { canManage: true, count: 0, showAdd: true, shown: true }, // ordered: Add receipt
+      { canManage: true, count: 0, showAdd: false, shown: false }, // not ordered yet: no empty heading (#230)
+      { canManage: true, count: 2, showAdd: true, shown: true },
+      { canManage: true, count: 2, showAdd: false, shown: true }, // back to asking: receipts stay visible
+      { canManage: false, count: 0, showAdd: true, shown: false }, // students never add
+      { canManage: false, count: 0, showAdd: false, shown: false },
+      { canManage: false, count: 1, showAdd: true, shown: true }, // "1 receipt added."
+      { canManage: false, count: 1, showAdd: false, shown: true },
+    ]
+    for (const { shown, ...input } of cases) expect(receiptsSectionShown(input), JSON.stringify(input)).toBe(shown)
   })
 })
 

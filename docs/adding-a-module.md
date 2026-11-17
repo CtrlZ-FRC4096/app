@@ -19,7 +19,8 @@ In your new folder:
   and `purpose`. Point `load` at your page file. Set `group` to the menu it
   belongs under in the top bar: `build`, `competition`, `team`,
   `software` (code and widgets) or `more` (the menus are listed in
-  `src/core/registry.ts`).
+  `src/core/registry.ts`). Delete the example's `roles: []` line: it hides
+  the example from everyone, and would hide your module too.
 - Rename `ExamplePage.tsx` to match, such as `PitMapPage.tsx`.
 - `data.ts`: replace the notes with your module's data. Give the table a
   new name that starts with your module's, such as `pit_map_spots` (the

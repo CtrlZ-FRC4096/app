@@ -678,6 +678,15 @@ export function receiptAddingShown(status: StatusKey): boolean {
 }
 
 /**
+ * Whether an item's form shows its Receipts section at all: when it has
+ * receipts to list (or count, for a student), or when a mentor or purchaser
+ * can add one. Otherwise the heading would sit there with nothing under it.
+ */
+export function receiptsSectionShown(props: { canManage: boolean; count: number; showAdd: boolean }): boolean {
+  return props.count > 0 || (props.canManage && props.showAdd)
+}
+
+/**
  * The form's changes when someone picks a new status. Moving an order to
  * Order Placed fills in Ordered by with them, as saving does (the database
  * does the same), unless someone else was already picked in the form.

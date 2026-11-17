@@ -14,6 +14,17 @@ module needs, at the smallest size that still does something real.
 
 To start a new module from it, follow [docs/adding-a-module.md](../../../docs/adding-a-module.md).
 
+## It's hidden
+
+Nobody using the app needs it, so it's hidden from everyone, admins too:
+`roles: []` in `index.ts` means no role can open it, so it isn't in the
+menus or on the home page.
+
+- **To see it working on your computer,** delete the `roles: []` line for a
+  moment and run the app. Put it back before you commit.
+- **When you copy `index.ts` for a new module,** leave `roles: []` out, or
+  nobody will be able to open your module.
+
 ## Using Slack
 
 **Send me a Slack message** on the Example page shows how any module sends

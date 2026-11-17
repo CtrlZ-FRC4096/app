@@ -98,6 +98,21 @@ export function useLowItems(): Item[] {
   return useItems().filter(isLow)
 }
 
+/**
+ * The parts that match a search: every word typed is in the part's name,
+ * vendor, part number or location, ignoring capitals. So "bin e2 bolt" finds
+ * the bolts in Bin E2. An empty search matches everything. Purchasing's
+ * searchItems() works the same way.
+ */
+export function searchItems(items: Item[], search: string): Item[] {
+  const words = search.toLowerCase().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return items
+  return items.filter((item) => {
+    const text = [item.name, item.vendor, item.vendor_part_number, item.location].join(' ').toLowerCase()
+    return words.every((word) => text.includes(word))
+  })
+}
+
 /** The home page tile's status. */
 export function useLowStockSummary(): Notice {
   const low = useLowItems()

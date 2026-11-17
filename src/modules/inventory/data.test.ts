@@ -18,6 +18,7 @@ import {
   checkStockChange,
   removeItem,
   isLow,
+  searchItems,
   itemsTable,
   useLowItems,
   useLowStockAttention,
@@ -100,6 +101,23 @@ describe('useLowStockAttention', () => {
     expect(runHook(useLowStockAttention)).toEqual([{ tone: 'warn', text: '3 parts low on stock.' }])
     await stockEverything()
     expect(runHook(useLowStockAttention)).toEqual([])
+  })
+})
+
+describe('searchItems', () => {
+  it('finds parts by name, vendor, part number or location, ignoring capitals, matching every word typed', () => {
+    const searches: [string, string[]][] = [
+      ['bearing', ['Flanged bearing, 1/2 in hex']],
+      ['POWER', ['Mini Power Module (MPM)', 'Power Distribution Hub (PDH)']],
+      ['wcp', ['Flanged bearing, 1/2 in hex']],
+      ['am-0282A', ['Main breaker, 120A']],
+      ['bin e2', ['CANivore']],
+      ['andymark shelf', ['roboRIO 2.0', 'Robot radio (VH-109)']],
+      ['Bin E3 regulator', ['Voltage Regulator Module (VRM)']],
+      ['bolt', []],
+    ]
+    for (const [search, names] of searches) expect(searchItems(itemsTable.rows(), search).map((i) => i.name), search).toEqual(names)
+    expect(searchItems(itemsTable.rows(), '  ')).toHaveLength(itemsTable.rows().length)
   })
 })
 
