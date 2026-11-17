@@ -6,7 +6,7 @@ import { resetAllStores } from '../../core/store'
 import { EVENT_KEY, getTeamEvents, tbaEventUrl, tbaTeamUrl, type TbaMatchWithVideos } from '../scouting/data'
 import {
   PRESCOUT_QUESTIONS, prescoutAverages, prescoutMatchesTable, savePrescoutMatch, seasonMatches, prescoutFor, prescoutHref, type PrescoutMatch, type PrescoutNotes,
-  MAX_PRESCOUT_ANSWER, NO_ANSWERS, cleanEventKey, firstLine, hasAnswers, isEventKey, loadPrescoutTeams, prescoutEventStore, prescoutList, prescoutOverview, searchPrescout,
+  MAX_PRESCOUT_ANSWER, NO_ANSWERS, cleanEventKey, firstLine, hasAnswers, isEventKey, loadPrescoutTeams, prescoutEventStore, prescoutList, prescoutOverview, prescoutViewStore, searchPrescout, setPrescoutView, starCount,
   prescoutTable, savePrescout, setPrescoutEvent, canRemoveStar, starTeam, starredFirst, starsFor, starsTable, unstarTeam, visibleStars,
   type PrescoutStar,
 } from './data'
@@ -265,6 +265,23 @@ describe('the prescouting overview', () => {
     expect(firstLine('  Fast cycles\nNever broke down ')).toBe('Fast cycles …')
     expect(firstLine('x'.repeat(120))).toBe('x'.repeat(100) + '…')
     expect(firstLine('')).toBe('')
+  })
+})
+
+describe('the Cards / Table choice', () => {
+  afterEach(() => prescoutViewStore.reset())
+
+  it('starts as Cards, and remembers Table once chosen', () => {
+    expect(prescoutViewStore.get()).toBe('Cards')
+    setPrescoutView('Table')
+    expect(prescoutViewStore.get()).toBe('Table')
+  })
+
+  it("counts a team's stars: the team's, plus your own just for you", () => {
+    const star = at(9991, true, SOMEONE)
+    expect(starCount({ forTeam: [], mine: null })).toBe(0)
+    expect(starCount({ forTeam: [star, star], mine: null })).toBe(2)
+    expect(starCount({ forTeam: [star], mine: at(9991, false, ME) })).toBe(2)
   })
 })
 

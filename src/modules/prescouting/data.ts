@@ -387,6 +387,31 @@ export function searchPrescout<T extends { team: number; name: string }>(teams: 
   })
 }
 
+/** How the overview shows the teams: a card each, or one compact table with a row each. */
+export const PRESCOUT_VIEWS = ['Cards', 'Table'] as const
+export type PrescoutView = (typeof PRESCOUT_VIEWS)[number]
+
+/** The overview's Cards / Table choice, remembered on this device like the event. */
+export const prescoutViewStore = createStore<PrescoutView>('prescouting-view', 1, () => 'Cards', { keepOnReset: true })
+
+export function usePrescoutView(): PrescoutView {
+  const view = useStore(prescoutViewStore)
+  // Anything else saved on the phone (from an older version, say) means Cards.
+  return PRESCOUT_VIEWS.includes(view) ? view : 'Cards'
+}
+
+export function setPrescoutView(view: PrescoutView): void {
+  prescoutViewStore.set(view)
+}
+
+/** How much of an answer a table cell shows: shorter than a card, so a row stays one line. */
+export const TABLE_ANSWER_LENGTH = 40
+
+/** How many stars a team has that you can see: the team's, plus your own just for you. */
+export function starCount(stars: TeamStars): number {
+  return stars.forTeam.length + (stars.mine ? 1 : 0)
+}
+
 /** The first line of an answer, cut short with "…" if it's long, for the overview. */
 export function firstLine(text: string, max = 100): string {
   const lines = text.trim().split('\n')

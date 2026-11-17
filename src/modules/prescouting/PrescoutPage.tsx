@@ -1,10 +1,11 @@
-import { useState, type FormEvent } from 'react'
+import { Fragment, useState, type FormEvent } from 'react'
 import { href, useRoute } from '../../core/router'
 import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
 import type { Result } from '../../core/table'
 import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../scouting/data'
+import { PRESCOUT_VIEWS, TABLE_ANSWER_LENGTH, setPrescoutView, starCount, usePrescoutView } from './data'
 import {
   NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, firstLine, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout, searchPrescout,
   setPrescoutEvent, useIsStrategy, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
@@ -58,6 +59,7 @@ function Overview() {
   const stars = useStars(event)
   const me = useSession().id
   const [sort, setSort] = useState<PrescoutSort>('Team number')
+  const view = usePrescoutView()
   const teams = result?.ok ? prescoutOverview(result.value, notes, stars, me, sort) : []
   const starred = teams.some((t) => t.group !== 'Everyone else')
   // What's typed in the search box. The list narrows as it's typed.
@@ -75,9 +77,15 @@ function Overview() {
           <Problem error={result.error} retry={() => void reloadPrescoutTeams(event)} />
         ) : (
           <div className="panel-body" style={{ display: 'grid', gap: 12 }}>
-            <div className="field">
-              Sort by
-              <Pick label="Sort by" options={[...PRESCOUT_SORTS]} value={sort} onChange={setSort} />
+            <div className="toolbar" style={{ gap: '10px 20px' }}>
+              <div className="field">
+                Sort by
+                <Pick label="Sort by" options={[...PRESCOUT_SORTS]} value={sort} onChange={setSort} />
+              </div>
+              <div className="field">
+                Show as
+                <Pick label="Show as" options={[...PRESCOUT_VIEWS]} value={view} onChange={setPrescoutView} />
+              </div>
             </div>
             <label className="field" htmlFor="prescout-search">
               Find a team
@@ -100,9 +108,13 @@ function Overview() {
                 <p className="muted" style={{ margin: 0, overflowWrap: 'anywhere' }}>No teams match "{search.trim()}". Check the number or name, or clear the box to see every team.</p>
               )}
             </div>
-            {STAR_GROUPS.map((group) => (
-              <TeamGroup key={group} title={starred ? group : ''} event={event} teams={found.filter((t) => t.group === group)} />
-            ))}
+            {view === 'Table' ? (
+              found.length > 0 && <TeamTable event={event} teams={found} headings={starred} />
+            ) : (
+              STAR_GROUPS.map((group) => (
+                <TeamGroup key={group} title={starred ? group : ''} event={event} teams={found.filter((t) => t.group === group)} />
+              ))
+            )}
           </div>
         )}
       </Panel>
@@ -122,6 +134,77 @@ function TeamGroup(props: { title: string; event: string; teams: OverviewTeam[] 
       {props.title && <h3 style={{ margin: '4px 0 0', fontSize: 15 }}>{props.title} <span className="note">({props.teams.length})</span></h3>}
       {props.teams.map((t) => <TeamCard key={t.team} event={props.event} team={t} />)}
     </section>
+  )
+}
+
+// One line per row, so three or more teams fit where one card did.
+const CELL = { padding: '0 10px', whiteSpace: 'nowrap' } as const
+
+/**
+ * The overview as a table: a row for each team, a column for each question
+ * in PRESCOUT_QUESTIONS (so a new question gets a column by itself). It's
+ * wider than a phone, so it scrolls sideways inside its own box, with the
+ * team column kept in place (.grid-table, like Attendance). The star groups
+ * are heading rows, so the columns stay lined up. `teams` come sorted and
+ * grouped from prescoutOverview(); `headings` is false when nobody is starred.
+ */
+export function TeamTable(props: { event: string; teams: OverviewTeam[]; headings: boolean }) {
+  return (
+    // minWidth 0 lets the box be narrower than the table, so the table scrolls and not the page.
+    <div className="table-wrap" style={{ minWidth: 0, border: '1px solid var(--line)', borderRadius: 'var(--radius)' }}>
+      <table className="grid-table">
+        <thead>
+          <tr>
+            <th scope="col" style={{ padding: '8px 10px' }}>Team</th>
+            {PRESCOUT_QUESTIONS.map((q) => <th key={q.key} scope="col" style={{ padding: '8px 10px' }}>{q.label}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {STAR_GROUPS.map((group) => {
+            const teams = props.teams.filter((t) => t.group === group)
+            if (teams.length === 0) return null
+            return (
+              <Fragment key={group}>
+                {props.headings && (
+                  <tr>
+                    {/* The words stay at the left edge while the table scrolls sideways. */}
+                    <th colSpan={PRESCOUT_QUESTIONS.length + 1} scope="rowgroup" style={{ padding: '6px 10px', background: 'var(--surface-2)' }}>
+                      <span style={{ position: 'sticky', left: 10, display: 'inline-block' }}>{group} ({teams.length})</span>
+                    </th>
+                  </tr>
+                )}
+                {teams.map((t) => <TeamRow key={t.team} event={props.event} team={t} />)}
+              </Fragment>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function TeamRow(props: { event: string; team: OverviewTeam }) {
+  const t = props.team
+  const stars = starCount(t.stars)
+  return (
+    <tr>
+      <td style={CELL}>
+        {/* As tall as the row, so the whole cell is the tap target. */}
+        <a
+          href={teamHref(props.event, t.team)}
+          title={t.name}
+          aria-label={`Team ${t.team}, ${t.name}${stars ? `, ${stars === 1 ? '1 star' : `${stars} stars`}` : ''}`}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 44, minWidth: 44, color: 'inherit' }}
+        >
+          <strong className="tnum">{t.team}</strong>
+          {stars > 0 && <span className="note tnum">★{stars}</span>}
+        </a>
+      </td>
+      {PRESCOUT_QUESTIONS.map((q) => {
+        const answer = firstLine(t.notes?.[q.key] ?? '', TABLE_ANSWER_LENGTH)
+        return <td key={q.key} style={CELL} className={answer ? undefined : 'muted'}>{answer || '—'}</td>
+      })}
+    </tr>
   )
 }
 
