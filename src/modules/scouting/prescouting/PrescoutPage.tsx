@@ -1,14 +1,15 @@
 import { useState, type FormEvent } from 'react'
-import { href, useRoute } from '../../core/router'
-import { useSession } from '../../core/session'
-import { toast } from '../../core/toast'
-import { PageHead, Panel, Pick } from '../../core/ui'
-import type { Result } from '../../core/table'
-import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../scouting/data'
+import { href } from '../../../core/router'
+import { useSession } from '../../../core/session'
+import { toast } from '../../../core/toast'
+import { PageHead, Panel, Pick } from '../../../core/ui'
+import type { Result } from '../../../core/table'
+import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../data'
+import { DRIVETRAINS, ENDGAME } from '../season'
 import {
-  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, firstLine, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout,
-  setPrescoutEvent, useIsStrategy, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
-  type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutTeam,
+  MAX_AUTO_FUEL, MAX_CYCLE_SECONDS, NO_ANSWERS, NO_FACTS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, firstLine, isEventKey, prescoutFacts, prescoutHref, prescoutOverview,
+  reloadPrescoutTeams, savePrescout, setPrescoutEvent, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
+  type OverviewTeam, type PrescoutAnswers, type PrescoutFacts, type PrescoutNotes, type PrescoutSort, type PrescoutTeam,
 } from './data'
 import Stars from './Stars'
 import TeamSeason from './TeamSeason'
@@ -19,20 +20,14 @@ const BOX = { minHeight: 46, fontSize: 16 }
 /** The address of a team's prescouting page. */
 const teamHref = prescoutHref
 
-// Prescouting. #/prescouting is the overview of every team at the event
-// (#116, #118); #/prescouting/<event>/<team> is one team's
-// page with our notes (#117). The event is in a team page's address, so a
-// link to it always opens the same team at the same event.
-export default function PrescoutPage() {
-  const [event, team] = useRoute().rest
-  // Strategy team, student leaders, mentors and admins only (#167). The database refuses anyone else too.
-  if (!useIsStrategy()) {
-    return (
-      <Panel>
-        <p className="panel-body" style={{ margin: 0 }}>{`${STRATEGY_ONLY} Ask a mentor if you need it.`}</p>
-      </Panel>
-    )
-  }
+// Scouting's Prescouting tab (#184). #/scouting/prescouting is the overview
+// of every team at the event (#116, #118); #/scouting/prescouting/<event>/<team>
+// is one team's page with our notes (#117). ScoutingPage.tsx reads the
+// address and passes the event and team in. The event is in a team page's
+// address, so a link to it always opens the same team at the same event.
+// Every scout can use it (#184).
+export default function PrescoutPage(props: { event?: string; team?: string }) {
+  const { event, team } = props
   if (event === undefined) return <Overview />
   const number = Number(team)
   if (!isEventKey(event) || !Number.isInteger(number) || number < 1 || number > MAX_TEAM) {
@@ -40,7 +35,7 @@ export default function PrescoutPage() {
       <Panel>
         <div className="panel-body" style={{ display: 'grid', gap: 10 }}>
           <p style={{ margin: 0 }}>That address isn't a team's prescouting page. Go back to the list and choose the team.</p>
-          <div className="toolbar"><a className="btn" href={href('prescouting')}>All teams</a></div>
+          <div className="toolbar"><a className="btn" href={prescoutHref()}>All teams</a></div>
         </div>
       </Panel>
     )
@@ -175,6 +170,7 @@ export function TeamCard(props: { event: string; team: OverviewTeam }) {
       <Stars event={props.event} team={t.team} />
       {notes ? (
         <dl style={{ margin: 0, display: 'grid', gap: 4, fontSize: 14 }}>
+          <FactsLine notes={notes} />
           {OVERVIEW_ANSWERS.map((key) => (
             <div key={key} style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
               <dt style={{ display: 'inline', fontWeight: 600 }}>{PRESCOUT_QUESTIONS.find((q) => q.key === key)?.label}: </dt>
@@ -190,6 +186,18 @@ export function TeamCard(props: { event: string; team: OverviewTeam }) {
         <a className="btn" href={t.tbaUrl} target="_blank" rel="noreferrer" aria-label={`Team ${t.team} on The Blue Alliance`}>TBA</a>
       </div>
     </section>
+  )
+}
+
+/** The quick answers on one wrapping line, like "Rating 4 of 5 · Swerve · Best climb Level 2". Nothing if none are filled in. */
+function FactsLine(props: { notes: PrescoutNotes }) {
+  const facts = prescoutFacts(props.notes)
+  if (facts.length === 0) return null
+  return (
+    <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+      <dt style={{ display: 'inline', fontWeight: 600 }}>Quick answers: </dt>
+      <dd style={{ display: 'inline', margin: 0 }}>{facts.map((f) => `${f.label} ${f.value}`).join(' · ')}</dd>
+    </div>
   )
 }
 
@@ -209,7 +217,7 @@ export function TeamPage(props: { event: string; team: number }) {
   return (
     <>
       <div className="toolbar">
-        <a className="btn" href={href('prescouting')}>← All teams</a>
+        <a className="btn" href={prescoutHref()}>← All teams</a>
       </div>
       <PageHead title={details ? `${team} ${details.name}` : `Team ${team}`} eyebrow={`Prescouting · ${event}`}>
         <TeamLine list={list} details={details} />
@@ -229,7 +237,7 @@ export function TeamPage(props: { event: string; team: number }) {
         </div>
       </Panel>
       <RobotPhotos event={event} team={team} />
-      <NotesForm event={event} team={team} saved={notes ?? NO_ANSWERS} />
+      <NotesForm event={event} team={team} saved={notes ?? NO_ANSWERS} savedFacts={notes ?? NO_FACTS} />
       <TeamSeason event={event} team={team} />
     </>
   )
@@ -270,16 +278,31 @@ function TeamLine(props: { list: Result<PrescoutTeam[]> | null; details: Prescou
   return <>EPA {formatEpa(props.details.epa)}</>
 }
 
-/** The questions, each an open-ended text box, and Save. */
-function NotesForm(props: { event: string; team: number; saved: PrescoutAnswers }) {
+const NOT_SURE = 'Not sure'
+const NOT_RATED = 'Not rated'
+
+/** The quick answers (#184), then the questions, each an open-ended text box, and Save. */
+function NotesForm(props: { event: string; team: number; saved: PrescoutAnswers; savedFacts: PrescoutFacts }) {
   // Starts from what's saved. Someone else's later changes show after a reload.
   const [answers, setAnswers] = useState<PrescoutAnswers>(() => ({ ...NO_ANSWERS, ...pickAnswers(props.saved) }))
+  const [drivetrain, setDrivetrain] = useState(props.savedFacts.drivetrain || NOT_SURE)
+  const [climb, setClimb] = useState(props.savedFacts.best_climb || NOT_SURE)
+  const [rating, setRating] = useState(props.savedFacts.rating === null ? NOT_RATED : String(props.savedFacts.rating))
+  const [autoFuel, setAutoFuel] = useState(props.savedFacts.auto_fuel === null ? '' : String(props.savedFacts.auto_fuel))
+  const [cycle, setCycle] = useState(props.savedFacts.cycle_seconds === null ? '' : String(props.savedFacts.cycle_seconds))
   const [saving, setSaving] = useState(false)
 
   async function save(e: FormEvent) {
     e.preventDefault()
     setSaving(true)
-    const result = await savePrescout(props.event, props.team, answers)
+    const facts: PrescoutFacts = {
+      drivetrain: drivetrain === NOT_SURE ? '' : drivetrain,
+      best_climb: climb === NOT_SURE ? '' : climb,
+      rating: rating === NOT_RATED ? null : Number(rating),
+      auto_fuel: numberOrNull(autoFuel),
+      cycle_seconds: numberOrNull(cycle),
+    }
+    const result = await savePrescout(props.event, props.team, answers, facts)
     setSaving(false)
     toast(result.ok ? `Saved notes for team ${props.team}.` : result.error)
   }
@@ -287,6 +310,23 @@ function NotesForm(props: { event: string; team: number; saved: PrescoutAnswers 
   return (
     <Panel title="Our notes">
       <form className="panel-body" onSubmit={(e) => void save(e)} style={{ display: 'grid', gap: 14 }}>
+        <div className="field">
+          Overall rating
+          <Pick label="Overall rating" options={[NOT_RATED, '1', '2', '3', '4', '5']} value={rating} onChange={setRating} />
+          <span className="note">1 is weak, 5 is great.</span>
+        </div>
+        <div className="field">
+          Drivetrain
+          <Pick label="Drivetrain" options={[NOT_SURE, ...DRIVETRAINS]} value={drivetrain} onChange={setDrivetrain} />
+        </div>
+        <div className="field">
+          Best climb
+          <Pick label="Best climb" options={[NOT_SURE, ...ENDGAME]} value={climb} onChange={setClimb} />
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+          <NumberBox id="prescout-auto_fuel" label="Fuel in auto (about)" value={autoFuel} onChange={setAutoFuel} placeholder={`0 to ${MAX_AUTO_FUEL}`} />
+          <NumberBox id="prescout-cycle_seconds" label="Seconds per cycle (about)" value={cycle} onChange={setCycle} placeholder={`1 to ${MAX_CYCLE_SECONDS}`} />
+        </div>
         {PRESCOUT_QUESTIONS.map((q) => (
           <label key={q.key} className="field" htmlFor={`prescout-${q.key}`}>
             {q.label}
@@ -307,6 +347,21 @@ function NotesForm(props: { event: string; team: number; saved: PrescoutAnswers 
       </form>
     </Panel>
   )
+}
+
+/** A box that only takes a whole number. The number keypad opens on phones. */
+function NumberBox(props: { id: string; label: string; value: string; onChange: (value: string) => void; placeholder: string }) {
+  return (
+    <label className="field" htmlFor={props.id} style={{ minWidth: 0 }}>
+      {props.label}
+      <input id={props.id} className="input" style={{ ...BOX, width: '12ch', maxWidth: '100%' }} inputMode="numeric" value={props.value} onChange={(e) => props.onChange(e.target.value)} placeholder={props.placeholder} />
+    </label>
+  )
+}
+
+/** What was typed in a number box: empty means we don't know (null). Anything else is checked by savePrescout(). */
+function numberOrNull(typed: string): number | null {
+  return typed.trim() === '' ? null : Number(typed.trim())
 }
 
 function pickAnswers(row: PrescoutAnswers): PrescoutAnswers {

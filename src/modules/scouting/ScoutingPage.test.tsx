@@ -1,6 +1,6 @@
 // Tests for the match form. The form's choices come from season.ts, so a
 // new role there should show up on the form with no other change.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import { setDemoRole } from '../../core/demo'
 import { POSITIONS, eventStore, getRatings, picklistParts, picklistTable, ratingsStore, resetRatings, setWeight, weightsStore } from './data'
@@ -96,6 +96,43 @@ describe('the schedule', () => {
     const html = renderToString(<Schedule />)
     expect(html).toContain('Just ours (<!-- -->4096<!-- -->)')
     expect(html).toContain('Getting the schedule…')
+  })
+})
+
+describe('the Prescouting tab (#184)', () => {
+  it('comes right after Overview in the switch, and is not on the page until chosen', () => {
+    const html = renderToString(<ScoutingPage />)
+    expect(html).toContain('aria-pressed="true">Overview</button><button type="button" aria-pressed="false">Prescouting</button>')
+    expect(html).not.toContain('id="prescout-event"')
+  })
+
+  it('opens for any scout at #/scouting/prescouting, with its own event box instead of Change event', async () => {
+    vi.resetModules()
+    vi.doMock('../../core/router', async (original) => ({ ...(await original<object>()), useRoute: () => ({ id: 'scouting', rest: ['prescouting'] }) }))
+    try {
+      const { default: Page } = await import('./ScoutingPage')
+      const demo = await import('../../core/demo')
+      // Alex, the demo student, isn't on the strategy team.
+      demo.setDemoRole('student')
+      const html = renderToString(<Page />)
+      expect(html).toContain('aria-pressed="true">Prescouting</button>')
+      expect(html).toContain('id="prescout-event"')
+      expect(html).not.toContain('Only the strategy team')
+      demo.setDemoRole('leader')
+      expect(renderToString(<Page />)).not.toContain('Change event')
+      demo.setDemoRole('student')
+    } finally {
+      vi.doUnmock('../../core/router')
+      vi.resetModules()
+    }
+  })
+
+  it("shows the quick answers in the team page's Prescouting panel, linking to the team in the tab", () => {
+    // Team 9991's example prescouting (EXAMPLE_PRESCOUT in prescouting/data.ts) is rated 4, with swerve.
+    const html = renderToString(<TeamPage team={9991} />)
+    expect(html).toContain('4 of 5')
+    expect(html).toContain('Swerve')
+    expect(html).toContain(`href="#/scouting/prescouting/${EVENT_KEY}/9991"`)
   })
 })
 
