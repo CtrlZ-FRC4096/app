@@ -14,7 +14,7 @@
 .prescout-tile-star { color: var(--orange-text); }
 .prescout-tile-done { color: var(--ok); font-weight: 700; }
 .prescout-tile-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-/* EPA, and later more numbers (#186): each its own <span>, wrapping onto a new line if they don't fit. */
+/* EPA and xP (#186): each its own <span>, wrapping onto a new line if they don't fit. */
 .prescout-tile-numbers { display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* Not prescouted yet: an emptier look, so it's easy to see who's left. */
