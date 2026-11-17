@@ -21,12 +21,12 @@ function scoutingLink(): string | undefined {
 }
 
 describe('a module with pages in the menu', () => {
-  it("opens the first page the person can see: Scouting's Overview for the strategy team, Match for other students", async () => {
+  it("opens the first page the person can see: Scouting's Prescouting tab, which is first and for everyone (#184)", async () => {
     const expected: Record<Role, string> = {
-      student: '#/scouting/match',
-      leader: '#/scouting',
-      mentor: '#/scouting',
-      admin: '#/scouting',
+      student: '#/scouting/prescouting',
+      leader: '#/scouting/prescouting',
+      mentor: '#/scouting/prescouting',
+      admin: '#/scouting/prescouting',
     }
     for (const [role, link] of Object.entries(expected)) {
       setDemoRole(role as Role)
@@ -36,6 +36,6 @@ describe('a module with pages in the menu', () => {
     setDemoRole('mentor')
     await addStrategyMember(demoUserId('student'))
     setDemoRole('student')
-    expect(scoutingLink(), 'as a student on the strategy team').toBe('#/scouting')
+    expect(scoutingLink(), 'as a student on the strategy team').toBe('#/scouting/prescouting')
   })
 })

@@ -47,7 +47,7 @@ export default function MembersPage() {
     <>
       <PageHead title="Members">
         Everyone who has signed in. Admins set roles, and switch off access for anyone who has left. Mentors and admins choose
-        the purchasers, who place orders in Purchasing along with them, and the scouting strategy team, who see the scouting analysis and Prescouting.
+        the purchasers, who place orders in Purchasing along with them, and the scouting strategy team, who see the scouting analysis.
       </PageHead>
       {!isLive && (
         <Callout title="Demo mode">

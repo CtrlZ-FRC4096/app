@@ -11,6 +11,7 @@ import Overview from './Overview'
 import PickMany from './PickMany'
 import Picklist from './Picklist'
 import PitForm from './PitForm'
+import PrescoutPage from './prescouting/PrescoutPage'
 import RankingsPage from './RankingsPage'
 import Schedule from './Schedule'
 import SavedOnDevice from './SavedOnDevice'
@@ -51,12 +52,12 @@ function ShortAnswer(props: { id: string; label: string; value: string; onChange
 
 /** Each page's address after #/scouting/. */
 const PATHS: Record<string, string> = {
-  Overview: '', Match: 'match', Pit: 'pit', Schedule: 'schedule', Rankings: 'rankings',
+  Overview: '', Prescouting: 'prescouting', Match: 'match', Pit: 'pit', Schedule: 'schedule', Rankings: 'rankings',
   Picklist: 'picklist', 'My picklist': 'my-picklist', 'Team picklist': 'team-picklist', 'Final picklist': 'shared-picklist',
   Simulator: 'simulate', Stats: 'stats',
 }
 /** The switch at the top. The four picklists are one choice, with their own switch below it (#151). */
-const SWITCH = ['Overview', 'Match', 'Pit', 'Schedule', 'Rankings', 'Picklists', 'Simulator', 'Stats']
+const SWITCH = ['Prescouting', 'Overview', 'Match', 'Pit', 'Schedule', 'Rankings', 'Picklists', 'Simulator', 'Stats']
 /** The Picklists switch: what each choice is called, and which page it opens. */
 const PICKLISTS: Record<string, string> = { Ranked: 'Picklist', Mine: 'My picklist', Team: 'Team picklist', Final: 'Final picklist' }
 
@@ -77,8 +78,12 @@ const PICKLISTS: Record<string, string> = { Ranked: 'Picklist', Mine: 'My pickli
 // overview, team pages, picklists, simulator and stats. Anyone else gets a
 // shorter switch, #/scouting opens the match form for them, and going to a
 // strategy page by its address says it's strategy only.
+//
+// Prescouting (#184, prescouting/PrescoutPage.tsx) is for every scout:
+// #/scouting/prescouting lists the teams, and
+// #/scouting/prescouting/<event>/<team> is one team's page.
 export default function ScoutingPage() {
-  const [rest = '', teamText] = useRoute().rest
+  const [rest = '', teamText, prescoutTeam] = useRoute().rest
   const strategy = useIsStrategy()
   const found = rest === 'team' ? 'Team' : Object.keys(PATHS).find((v) => PATHS[v] === rest) ?? 'Overview'
   // Off the strategy team, the overview's address is the match form.
@@ -89,7 +94,8 @@ export default function ScoutingPage() {
   const choices = strategy ? SWITCH : SWITCH.filter((v) => v !== 'Picklists' && !STRATEGY_PATHS.includes(PATHS[v]))
   return (
     <>
-      <EventPicker />
+      {/* Prescouting has its own event box (#184), for looking ahead to an event before it's picked. */}
+      {view !== 'Prescouting' && <EventPicker />}
       <div style={{ marginBottom: 12, display: 'grid', gap: 8 }}>
         <Pick label="Which page" options={choices} value={picklist ? 'Picklists' : view} onChange={(v) => navigate('scouting', PATHS[v === 'Picklists' ? 'Picklist' : v])} />
         {picklist && !blocked && <Pick label="Which picklist" options={Object.keys(PICKLISTS)} value={picklist} onChange={(choice) => navigate('scouting', PATHS[PICKLISTS[choice]])} />}
@@ -100,6 +106,7 @@ export default function ScoutingPage() {
         </Panel>
       )}
       {!blocked && view === 'Overview' && <Overview paths={{ ...PATHS, Teams: 'team' }} />}
+      {view === 'Prescouting' && <PrescoutPage event={teamText} team={prescoutTeam} />}
       <div hidden={view !== 'Match'}><MatchForm /></div>
       <div hidden={view !== 'Pit'}><PitForm /></div>
       {view === 'Schedule' && <Schedule />}

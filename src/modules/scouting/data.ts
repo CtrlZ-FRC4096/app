@@ -210,9 +210,9 @@ function demoEvents(year: number): (TbaEvent & { ours: boolean })[] {
 // people and mentors see the analysis. Like purchasers, being on it is an
 // extra permission on top of someone's role; mentors and admins always count.
 //
-// Strategy only: the overview, team pages, the picklists, the simulator,
-// stats and Prescouting. Everyone: the match and pit forms, the schedule and
-// the rankings, so any scout can do their job. Hiding pages is only
+// Strategy only: the overview, team pages, the picklists, the simulator
+// and stats. Everyone: Prescouting (#184), the match and pit forms, the
+// schedule and the rankings, so any scout can do their job. Hiding pages is only
 // tidiness: the read rules in supabase/migrations/..._scouting_strategy_team.sql
 // (and the strategy tables' own migrations) keep the data safe.
 
