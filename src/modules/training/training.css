@@ -14,8 +14,6 @@
 .training-actions .btn, .training-tap { min-height: 44px; }
 .training-skills .training-name { font-size: 17px; }
 .training-skills .training-actions .btn { min-height: 52px; }
-.training-picker { display: grid; gap: 4px; }
-.training-picker .check { min-height: 44px; }
 
 .training-done { color: var(--ok); font-weight: 600; }
 .training-form { display: grid; gap: 14px; }

@@ -3,8 +3,7 @@ import { plural } from '../../core/format'
 import { useMemberNames } from '../../core/members'
 import type { Result } from '../../core/table'
 import { toast } from '../../core/toast'
-import { Panel, Pill } from '../../core/ui'
-import { MemberPicker } from '../status/MemberPicker'
+import { Panel, PeoplePicker, Pill } from '../../core/ui'
 import { SKILLS, signOff, signOffPeople, skillName, turnDown, useLearners, useWaitingRequests, waitingTime, type SignOff } from './data'
 
 /**
@@ -101,10 +100,11 @@ function SignOffForm({ onClose }: { onClose: () => void }) {
           {SKILLS.map((skill) => <option key={skill.id} value={skill.id}>{skill.name}</option>)}
         </select>
       </label>
-      <div className="training-picker">
-        <MemberPicker members={people} chosenIds={chosen}
-          onChange={(id, isChosen) => setChosen((ids) => (isChosen ? [...ids, id] : ids.filter((other) => other !== id)))} />
-      </div>
+      <PeoplePicker findId="training-signoff-find" disabled={saving} pool={people}
+        chosen={people.filter((person) => chosen.includes(person.id))}
+        nobody="Nobody to sign off yet: students show up here once they've signed in."
+        onAdd={(id) => setChosen((ids) => (ids.includes(id) ? ids : [...ids, id]))}
+        onRemove={(id) => setChosen((ids) => ids.filter((other) => other !== id))} />
       <div className="toolbar">
         <button type="submit" className="btn btn-primary training-tap" disabled={saving || chosen.length === 0}>
           {saving ? 'Signing off…' : `Sign off ${plural(chosen.length, 'person', 'people')}`}

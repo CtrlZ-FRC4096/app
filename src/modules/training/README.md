@@ -28,7 +28,9 @@ Mentors and admins also see:
   long it's waited, oldest first, with **Sign off** and **Not yet** (which
   deletes the request, so they can ask again later). Below it, **Sign people
   off without a request**: pick a skill and the people, such as everyone at
-  a shop safety session. The home page's "Needs attention" says "2 sign-offs
+  a shop safety session. People are name tags: type in **Find someone** or
+  tap a name to add them, and tap a tag to take them off (`PeoplePicker`
+  in `src/core/ui.tsx`, the same picker as the Pit checklist). The home page's "Needs attention" says "2 sign-offs
   waiting."
 - **Everyone's progress**, at the bottom: every student and student leader
   whose access is on, least done first so whoever needs a nudge is on top,

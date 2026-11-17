@@ -48,38 +48,6 @@ export function belongsToSubgroup(id: string, subgroup: string): boolean {
   return subgroup === 'General' || members === undefined || members.includes(id)
 }
 
-/** True when the name contains the search, ignoring capitals and spaces at the ends. */
-export function nameMatches(name: string, search: string): boolean {
-  return name.toLowerCase().includes(search.trim().toLowerCase())
-}
-
-/**
- * The people to show under the Training module's "Find someone" box
- * (`MemberPicker.tsx`): everyone whose name matches the search, plus the
- * people already chosen, in their usual order. Chosen people always stay
- * visible, so searching never hides who is chosen.
- */
-export function matchMembers<T extends { id: string; name: string }>(members: T[], search: string, chosenIds: string[] = []): T[] {
-  return members.filter((member) => chosenIds.includes(member.id) || nameMatches(member.name, search))
-}
-
-/**
- * The people to list under a "Find someone" box, to tap and add: everyone
- * in `pool` (who may be chosen) whose name matches the search and who isn't
- * chosen already. The chosen people are shown above the box as name tags.
- *
- * `suggestedIds` is for when the pool is the whole team (General items):
- * only those people are listed until a name is typed, so the list isn't
- * sixty names long. Once something is typed, anyone can match, suggested
- * people first.
- */
-export function pickablePeople<T extends { id: string; name: string }>(pool: T[], chosenIds: string[], search: string, suggestedIds?: string[]): T[] {
-  const open = pool.filter((person) => !chosenIds.includes(person.id) && nameMatches(person.name, search))
-  if (!suggestedIds) return open
-  const suggested = open.filter((person) => suggestedIds.includes(person.id))
-  return search.trim() ? [...suggested, ...open.filter((person) => !suggestedIds.includes(person.id))] : suggested
-}
-
 /** Everyone on any item's list of people, once each: who to suggest for a General item. */
 export function assignedPeople(items: Pick<PitItem, 'assignee_ids'>[]): string[] {
   return [...new Set(items.flatMap((item) => item.assignee_ids))]
