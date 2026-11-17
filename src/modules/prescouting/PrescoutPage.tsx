@@ -7,11 +7,12 @@ import type { Result } from '../../core/table'
 import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../scouting/data'
 import { PRESCOUT_VIEWS, TABLE_ANSWER_LENGTH, setPrescoutView, starCount, usePrescoutView } from './data'
 import {
-  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, firstLine, hasMatch13, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout, searchPrescout,
-  setPrescoutEvent, useIsStrategy, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
-  type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutTeam,
+  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, TIERS, firstLine, hasMatch13, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout, searchPrescout,
+  setPrescoutEvent, setTier, useIsStrategy, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
+  type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutTeam, type Tier,
 } from './data'
 import Stars from './Stars'
+import './prescouting.css'
 import TeamSeason from './TeamSeason'
 
 // Big enough to tap, and 16px text so phones don't zoom in on the box.
@@ -193,10 +194,11 @@ function TeamRow(props: { event: string; team: OverviewTeam }) {
         <a
           href={teamHref(props.event, t.team)}
           title={t.name}
-          aria-label={`Team ${t.team}, ${t.name}${stars ? `, ${stars === 1 ? '1 star' : `${stars} stars`}` : ''}`}
+          aria-label={`Team ${t.team}, ${t.name}${t.notes?.tier ? `, tier ${t.notes.tier}` : ''}${stars ? `, ${stars === 1 ? '1 star' : `${stars} stars`}` : ''}`}
           style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 44, minWidth: 44, color: 'inherit' }}
         >
           <strong className="tnum">{t.team}</strong>
+          {t.notes?.tier && <TierBadge tier={t.notes.tier} />}
           {stars > 0 && <span className="note tnum">★{stars}</span>}
         </a>
       </td>
@@ -275,6 +277,7 @@ export function TeamCard(props: { event: string; team: OverviewTeam }) {
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
         <a href={open} style={{ minWidth: 0, overflowWrap: 'anywhere', color: 'inherit', textDecoration: 'none', flex: 1 }}>
           <strong className="tnum">{t.team}</strong> {t.name}
+          {t.notes?.tier && <> <TierBadge tier={t.notes.tier} long /></>}
           <br />
           <span className="note tnum">{`EPA ${formatEpa(t.epa)} · xP ${formatEpa(t.xp)}`}</span>
         </a>
@@ -297,6 +300,37 @@ export function TeamCard(props: { event: string; team: OverviewTeam }) {
         <a className="btn" href={t.tbaUrl} target="_blank" rel="noreferrer" aria-label={`Team ${t.team} on The Blue Alliance`}>TBA</a>
       </div>
     </section>
+  )
+}
+
+/** A team's tier as a small badge (#191): "B", or "Tier B" when `long`. Colours in prescouting.css. */
+function TierBadge(props: { tier: Tier; long?: boolean }) {
+  return <span className="prescout-tier-badge" data-tier={props.tier} title={`Tier ${props.tier}`}>{props.long ? `Tier ${props.tier}` : props.tier}</span>
+}
+
+/**
+ * The tier list (#191): six big buttons, S to F. Tap one to choose it, and
+ * tap it again to clear it. Shared with everyone, and changes from other
+ * phones show up by themselves.
+ */
+function TierPanel(props: { event: string; team: number; tier: Tier | null }) {
+  const [saving, setSaving] = useState(false)
+
+  async function choose(tier: Tier | '') {
+    if (tier === '' || saving) return
+    setSaving(true)
+    const result = await setTier(props.event, props.team, tier === props.tier ? null : tier)
+    setSaving(false)
+    if (!result.ok) toast(result.error)
+  }
+
+  return (
+    <Panel title="Tier" aside={props.tier ? <TierBadge tier={props.tier} /> : <span className="note">Not rated</span>}>
+      <div className="panel-body prescout-tier" style={{ display: 'grid', gap: 8 }}>
+        <Pick<Tier | ''> label="Tier" options={[...TIERS]} value={props.tier ?? ''} onChange={(tier) => void choose(tier)} />
+        <p className="note" style={{ margin: 0 }}>S is best. Tap the chosen tier again to clear it.</p>
+      </div>
+    </Panel>
   )
 }
 
@@ -331,6 +365,8 @@ export function TeamPage(props: { event: string; team: number }) {
           Scouting team page →
         </a>
       </div>
+      {/* Starring and the tier are here (#191). */}
+      <TierPanel event={event} team={team} tier={notes?.tier ?? null} />
       <Panel title="Stars">
         <div className="panel-body">
           <Stars event={event} team={team} />

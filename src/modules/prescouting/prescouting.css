@@ -1,0 +1,12 @@
+/* Prescouting styles. Existing colours only. */
+
+/* A team's tier (#191): a small badge on their card, their table row and
+   their page. S and A green, B and C blue, D yellow, F red. */
+.prescout-tier-badge { display: inline-block; min-width: 1.5em; padding: 0 4px; border-radius: var(--radius); font-weight: 700; text-align: center; color: var(--ok); background: var(--ok-bg); }
+.prescout-tier-badge[data-tier='B'], .prescout-tier-badge[data-tier='C'] { color: var(--blue); background: var(--blue-soft); }
+.prescout-tier-badge[data-tier='D'] { color: var(--warn); background: var(--warn-bg); }
+.prescout-tier-badge[data-tier='F'] { color: var(--crit); background: var(--crit-bg); }
+
+/* The S to F buttons on a team's page: big enough to tap, and they wrap
+   rather than scroll sideways on a narrow phone. */
+.prescout-tier .pick button { min-width: 48px; min-height: 48px; font-size: 18px; font-weight: 700; }

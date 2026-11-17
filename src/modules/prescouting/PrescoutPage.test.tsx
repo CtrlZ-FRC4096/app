@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { setDemoRole } from '../../core/demo'
 import { renderToString } from 'react-dom/server'
 import { EVENT_KEY, tbaTeamUrl } from '../scouting/data'
-import { PRESCOUT_QUESTIONS, prescoutViewStore, reloadPrescoutTeams, setPrescoutView } from './data'
+import { NO_ANSWERS, PRESCOUT_QUESTIONS, prescoutViewStore, reloadPrescoutTeams, setPrescoutView } from './data'
 import PrescoutPage, { Match13Panel, TeamCard, TeamPage, TeamTable } from './PrescoutPage'
 
 describe('the prescouting pages', () => {
@@ -77,6 +77,22 @@ describe('the prescouting pages', () => {
     expect(html.match(/★/g)).toHaveLength(1)
     expect(html).toContain('★<!-- -->3')
     expect(html).not.toContain('Everyone else')
+  })
+
+  it("show a team's tier on their card, their table row and their page, with S to F buttons to choose it (#191)", () => {
+    const notes = { id: 'n1', event_key: EVENT_KEY, team_number: 9993, ...NO_ANSWERS, tier: 'B' as const, created_at: '2026-11-05T19:00:00Z', created_by: null }
+    const team = { team: 9993, name: 'Example Robotics', epa: null, xp: null, xpRank: null, auto: null, teleop: null, endgame: null, opr: null, dpr: null, tbaUrl: tbaTeamUrl(9993, EVENT_KEY), notes, prescouted: false, stars: { forTeam: [], mine: null }, group: 'Everyone else' as const }
+    let html = renderToString(<TeamCard event={EVENT_KEY} team={team} />)
+    expect(html).toMatch(/data-tier="B"[^>]*>Tier B</)
+    expect(renderToString(<TeamCard event={EVENT_KEY} team={{ ...team, notes: null }} />)).not.toContain('data-tier')
+    html = renderToString(<TeamTable event={EVENT_KEY} teams={[team]} headings={false} />)
+    expect(html).toMatch(/data-tier="B"[^>]*>B</)
+    expect(html).toContain('tier B')
+    // The example notes give 9993 tier B, and 9992 no tier.
+    html = renderToString(<TeamPage event={EVENT_KEY} team={9993} />)
+    for (const tier of ['S', 'A', 'B', 'C', 'D', 'F']) expect(html).toContain(`>${tier}</button>`)
+    expect(html).toMatch(/aria-pressed="true"[^>]*>B<\/button>/)
+    expect(renderToString(<TeamPage event={EVENT_KEY} team={9992} />)).toContain('Not rated')
   })
 
   it("show Match 13's numbers on a team's page, with — for a missing one, and say when there are none yet (#186)", () => {
