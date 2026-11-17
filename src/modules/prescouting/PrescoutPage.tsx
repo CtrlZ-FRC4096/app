@@ -7,7 +7,7 @@ import type { Result } from '../../core/table'
 import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../scouting/data'
 import { PRESCOUT_VIEWS, TABLE_ANSWER_LENGTH, setPrescoutView, starCount, usePrescoutView } from './data'
 import {
-  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, firstLine, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout, searchPrescout,
+  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, firstLine, hasMatch13, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout, searchPrescout,
   setPrescoutEvent, useIsStrategy, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
   type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutTeam,
 } from './data'
@@ -276,7 +276,7 @@ export function TeamCard(props: { event: string; team: OverviewTeam }) {
         <a href={open} style={{ minWidth: 0, overflowWrap: 'anywhere', color: 'inherit', textDecoration: 'none', flex: 1 }}>
           <strong className="tnum">{t.team}</strong> {t.name}
           <br />
-          <span className="note tnum">{`EPA ${formatEpa(t.epa)}`}</span>
+          <span className="note tnum">{`EPA ${formatEpa(t.epa)} · xP ${formatEpa(t.xp)}`}</span>
         </a>
       </div>
       <Stars event={props.event} team={t.team} />
@@ -300,6 +300,7 @@ export function TeamCard(props: { event: string; team: OverviewTeam }) {
   )
 }
 
+/** A Match 13 number to one decimal place, or "—" if Match 13 didn't give it. */
 function formatEpa(epa: number | null): string {
   return epa === null ? '—' : epa.toFixed(1)
 }
@@ -336,6 +337,7 @@ export function TeamPage(props: { event: string; team: number }) {
         </div>
       </Panel>
       <RobotPhotos event={event} team={team} />
+      {details && <Match13Panel team={details} />}
       <NotesForm event={event} team={team} saved={notes ?? NO_ANSWERS} />
       <TeamSeason event={event} team={team} />
     </>
@@ -368,6 +370,38 @@ function RobotPhotos(props: { event: string; team: number }) {
   )
 }
 
+
+/**
+ * Match 13's numbers for the team (#186), to compare with what scouts read
+ * and watched. "—" for a number Match 13 didn't give, and a line saying so
+ * if it hasn't rated them at all yet.
+ */
+export function Match13Panel(props: { team: PrescoutTeam }) {
+  const t = props.team
+  const numbers: [string, number | null][] = [['Auto', t.auto], ['Teleop', t.teleop], ['Endgame', t.endgame], ['EPA', t.epa], ['OPR', t.opr], ['DPR', t.dpr]]
+  return (
+    <Panel title="Match 13">
+      {hasMatch13(t) ? (
+        <>
+          <div className="stats" aria-label="Match 13 numbers">
+            <div>
+              <strong>{formatEpa(t.xp)}</strong>
+              <span>{t.xpRank ? `xP · Rank ${t.xpRank.rank} of ${t.xpRank.of}` : 'xP'}</span>
+            </div>
+            {numbers.map(([label, value]) => (
+              <div key={label}><strong>{formatEpa(value)}</strong><span>{label}</span></div>
+            ))}
+          </div>
+          <p className="panel-body note" style={{ margin: 0, paddingTop: 0 }}>
+            xP is the points they add to their alliance's score. Before the event, it's Match 13's rating of how strong they are going in; it changes once matches start.
+          </p>
+        </>
+      ) : (
+        <p className="panel-body muted" style={{ margin: 0 }}>No Match 13 numbers yet. They usually show up closer to the event.</p>
+      )}
+    </Panel>
+  )
+}
 
 /** The EPA under the team's name, or why it's not there. */
 function TeamLine(props: { list: Result<PrescoutTeam[]> | null; details: PrescoutTeam | undefined }) {

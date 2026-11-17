@@ -6,9 +6,9 @@
  * ones we care about (#118). Stars are read by the Scouting
  * module too.
  *
- * The teams come from The Blue Alliance and their EPA from Match 13, both
- * through the Scouting module's data.ts, which holds those server
- * functions. Our notes are in the prescouting_notes table.
+ * The teams come from The Blue Alliance and their EPA, xP and other numbers
+ * from Match 13 (#186), both through the Scouting module's data.ts, which
+ * holds those server functions. Our notes are in the prescouting_notes table.
  */
 import { useEffect } from 'react'
 import { DEMO_PEOPLE } from '../../core/demo'
@@ -38,8 +38,31 @@ export interface PrescoutTeam {
   name: string
   /** Statbotics' EPA, from Match 13, or null if there isn't one yet. */
   epa: number | null
+  /**
+   * Match 13's xP (#186): how many points they add to their alliance's
+   * score. Before the event it's Match 13's rating of how strong they are
+   * going in; it changes once matches start. Null if Match 13 hasn't rated them.
+   */
+  xp: number | null
+  /** Where their xP ranks among the teams at this event that Match 13 rated, like 5 of 40. Equal xP, equal rank. */
+  xpRank: { rank: number; of: number } | null
+  /** The parts of their xP: auto, teleop and endgame. */
+  auto: number | null
+  teleop: number | null
+  endgame: number | null
+  /** The Blue Alliance's OPR (points they score) and DPR (points they give up), through Match 13. */
+  opr: number | null
+  dpr: number | null
   /** Their page on The Blue Alliance. */
   tbaUrl: string
+}
+
+/** The Match 13 numbers on a team, as the prescouting page shows them. */
+export type Match13Numbers = Pick<PrescoutTeam, 'xp' | 'auto' | 'teleop' | 'endgame' | 'epa' | 'opr' | 'dpr'>
+
+/** Whether Match 13 gave any number for this team. */
+export function hasMatch13(t: Match13Numbers): boolean {
+  return [t.xp, t.auto, t.teleop, t.endgame, t.epa, t.opr, t.dpr].some((n) => n !== null)
 }
 
 /**
@@ -73,18 +96,46 @@ export function setPrescoutEvent(typed: string): Result<string> {
   return ok(key)
 }
 
-/** Put each team's EPA next to them, sorted by team number. A team Match 13 doesn't have gets null. */
+/** A number from Match 13, or null if it's missing or not a real number. */
+const numberOrNull = (n: unknown): number | null => (typeof n === 'number' && Number.isFinite(n) ? n : null)
+
+/**
+ * Put each team's Match 13 numbers next to them (#186), sorted by team
+ * number. A team Match 13 doesn't have gets null for each. Their xP rank is
+ * among the teams in this list that have an xP: 1 is the best, and teams
+ * with the same xP share a rank.
+ */
 export function prescoutList(teams: TbaTeam[], ratings: Match13Rating[], event: string): PrescoutTeam[] {
-  const epa = new Map(ratings.map((r) => [r.teamNumber, r.epa]))
+  const byTeam = new Map(ratings.map((r) => [r.teamNumber, r]))
+  const xps = teams.flatMap((t) => {
+    const xp = numberOrNull(byTeam.get(t.team_number)?.xpEnd)
+    return xp === null ? [] : [xp]
+  })
   return teams
-    .map((t) => ({ team: t.team_number, name: t.nickname, epa: epa.get(t.team_number) ?? null, tbaUrl: tbaTeamUrl(t.team_number, event) }))
+    .map((t) => {
+      const r = byTeam.get(t.team_number)
+      const xp = numberOrNull(r?.xpEnd)
+      return {
+        team: t.team_number,
+        name: t.nickname,
+        epa: numberOrNull(r?.epa),
+        xp,
+        xpRank: xp === null ? null : { rank: xps.filter((other) => other > xp).length + 1, of: xps.length },
+        auto: numberOrNull(r?.xAuto),
+        teleop: numberOrNull(r?.xTele),
+        endgame: numberOrNull(r?.xEnd),
+        opr: numberOrNull(r?.opr),
+        dpr: numberOrNull(r?.dpr),
+        tbaUrl: tbaTeamUrl(t.team_number, event),
+      }
+    })
     .sort((a, b) => a.team - b.team)
 }
 
 /**
  * The prescouting list for an event: its teams from The Blue Alliance, with
- * EPA from Match 13. If Match 13 has no ratings yet (often true before the
- * event), the teams still show, with no EPA.
+ * their xP, EPA, OPR and the rest from Match 13. If Match 13 has no ratings
+ * yet (often true before the event), the teams still show, with no numbers.
  */
 export async function loadPrescoutTeams(event: string): Promise<Result<PrescoutTeam[]>> {
   if (!isEventKey(event)) return fail(NOT_AN_EVENT_KEY)
@@ -342,7 +393,7 @@ export async function unstarTeam(starId: string): Promise<Result> {
 // ---------------------------------------------------------------------------
 // The prescouting overview (#118): every team at a glance, starred ones first.
 
-export const PRESCOUT_SORTS = ['Team number', 'EPA'] as const
+export const PRESCOUT_SORTS = ['Team number', 'EPA', 'xP'] as const
 export type PrescoutSort = (typeof PRESCOUT_SORTS)[number]
 
 /** One team in the overview: the list's details, their notes (or null), and their stars. */
@@ -356,12 +407,14 @@ export interface OverviewTeam extends PrescoutTeam {
 
 /**
  * The overview's order: team stars first, then your own stars, then
- * everyone else. Within each, by team number, or by EPA best first (teams
- * with no EPA after those with one). Ties go by number.
+ * everyone else. Within each, by team number, or by EPA or xP best first
+ * (teams with none after those with one). Ties go by number.
  */
 export function prescoutOverview(teams: PrescoutTeam[], notes: PrescoutNotes[], stars: PrescoutStar[], me: string | null, sort: PrescoutSort): OverviewTeam[] {
   const byTeam = new Map(notes.map((n) => [n.team_number, n]))
-  const byEpa = (a: OverviewTeam, b: OverviewTeam) => (a.epa === null ? 1 : 0) - (b.epa === null ? 1 : 0) || (b.epa ?? 0) - (a.epa ?? 0)
+  // Best first, with teams that have no number after those with one.
+  const best = (x: number | null, y: number | null) => (x === null ? 1 : 0) - (y === null ? 1 : 0) || (y ?? 0) - (x ?? 0)
+  const bySort = (a: OverviewTeam, b: OverviewTeam) => (sort === 'EPA' ? best(a.epa, b.epa) : sort === 'xP' ? best(a.xp, b.xp) : 0)
   const seen = visibleStars(stars, me)
   return teams
     .map((t) => {
@@ -369,7 +422,7 @@ export function prescoutOverview(teams: PrescoutTeam[], notes: PrescoutNotes[], 
       const teamStars = starsFor(seen, t.team, me)
       return { ...t, notes: n, prescouted: hasAnswers(n), stars: teamStars, group: starGroup(teamStars) }
     })
-    .sort((a, b) => STAR_GROUPS.indexOf(a.group) - STAR_GROUPS.indexOf(b.group) || (sort === 'EPA' ? byEpa(a, b) : 0) || a.team - b.team)
+    .sort((a, b) => STAR_GROUPS.indexOf(a.group) - STAR_GROUPS.indexOf(b.group) || bySort(a, b) || a.team - b.team)
 }
 
 /**
