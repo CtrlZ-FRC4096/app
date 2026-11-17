@@ -131,10 +131,16 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .menu-item[aria-current='page'] .menu-item-name, .menu-item[aria-pressed='true'] .menu-item-name { color: var(--blue); }
 .menu-head { display: grid; gap: 1px; padding: 6px 10px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
 .menu-label { padding: 6px 10px 2px; }
-/* A module with pages in a menu: its name opens and closes its pages, indented under it. */
+/*
+ * A module with pages in a menu (MenuEntry in src/App.tsx): its name opens
+ * its first page, and the arrow beside it opens and closes its pages,
+ * indented under it. The arrow is a 44px square, apart from the name, so
+ * it's easy to tap the right one on a phone.
+ */
 .menu-pages, .menu-pages-list { display: grid; gap: 2px; }
 .menu-pages-list[hidden] { display: none; }
-.menu-pages-btn { grid-template-columns: 1fr auto; align-items: center; }
+.menu-pages-row { display: grid; grid-template-columns: 1fr 44px; gap: 8px; }
+.menu-pages-btn { place-items: center; padding: 0; border: 1px solid var(--line); }
 .menu-pages-btn[aria-expanded='true'] .chev { transform: translateY(1px) rotate(225deg); }
 .menu-pages-list .menu-item { padding-left: 22px; }
 @media (max-width: 879px) {
