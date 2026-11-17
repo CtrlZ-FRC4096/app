@@ -199,46 +199,61 @@ export function plainText(text: string | null, max = 200): string | null {
   return plain.length > max ? `${plain.slice(0, max - 1).trimEnd()}…` : plain
 }
 
-// A sign-up link lives in the event's description, on a line like
-// "Sign up: https://forms.gle/abc123", so it works for events made in
-// Google Calendar. See the README.
+// Sign-up links live in the event's description, one per line, like
+// "Sign up: https://forms.gle/abc123" or, with a name, "Sign up (Hotel):
+// https://forms.gle/abc123", so they work for events made in Google
+// Calendar. See the README.
 
-const SIGN_UP = /^sign ?up:/i
+/** "Sign up:", "Signup:" or "Sign up (Hotel):", in any case. The name in brackets is optional. */
+const SIGN_UP = /^sign ?up\s*(?:\(([^()]*)\))?\s*:/i
+
+/** The most sign-up links an event can have from the form. */
+export const MAX_SIGN_UP_LINKS = 5
+/** The longest name for a sign-up link, like "Hotel". */
+export const SIGN_UP_NAME_LIMIT = 40
+
+/** One of an event's sign-up links. `name` is '' when the line has none. */
+export interface SignUpLink {
+  name: string
+  link: string
+}
 
 /** A description split into its lines. Google Calendar marks lines with <br> or <p> as well as new lines. */
 const descriptionLines = (description: string) => description.split(/<br\s*\/?>|<\/p>|<\/div>|\n/i)
 
-/** The link on one line of a description if it's a sign-up line with a safe link, or null. */
-function signUpLinkOnLine(line: string): string | null {
+/** The sign-up link on one line of a description if it's a sign-up line with a safe link, or null. */
+function signUpOnLine(line: string): SignUpLink | null {
   const text = plainText(line, Infinity)
-  if (!text || !SIGN_UP.test(text)) return null
+  const found = text ? SIGN_UP.exec(text) : null
+  if (!text || !found) return null
   // Google Calendar can wrap the link in <a href="...">, and the words shown might not be the link itself.
   const href = /href\s*=\s*["']([^"']*)["']/i.exec(line)?.[1]
-  const link = href ? plainText(href, Infinity) : text.replace(SIGN_UP, '').trim().split(' ')[0]
+  const link = href ? plainText(href, Infinity) : text.slice(found[0].length).trim().split(' ')[0]
   if (!link) return null
   try {
     const url = new URL(link)
     // Only https links, so a link like "javascript:..." can't run anything when someone taps it.
-    return url.protocol === 'https:' ? url.href : null
+    return url.protocol === 'https:' ? { name: (found[1] ?? '').trim(), link: url.href } : null
   } catch {
     return null
   }
 }
 
-/** The event's sign-up link, from a "Sign up: https://..." line in its description, or null. */
-export function signUpLink(description: string | null): string | null {
-  if (!description) return null
-  for (const line of descriptionLines(description)) {
-    const link = signUpLinkOnLine(line)
-    if (link) return link
-  }
-  return null
+/** Every sign-up link in an event's description, in order: each "Sign up: https://..." or "Sign up (Name): https://..." line. */
+export function signUpLinks(description: string | null): SignUpLink[] {
+  if (!description) return []
+  return descriptionLines(description).map(signUpOnLine).filter((found) => found !== null)
 }
 
-/** The description to show on the page: like plainText(), without the sign-up line, since that's the Sign up button. */
+/** The words on a sign-up link's button: "Sign up: Hotel", or "Sign up" when it has no name. */
+export function signUpButtonText(found: SignUpLink): string {
+  return found.name ? `Sign up: ${found.name}` : 'Sign up'
+}
+
+/** The description to show on the page: like plainText(), without the sign-up lines, since those are the Sign up buttons. */
 export function shownDescription(description: string | null, max = 200): string | null {
   if (!description) return null
-  return plainText(descriptionLines(description).filter((line) => !signUpLinkOnLine(line)).join('\n'), max)
+  return plainText(descriptionLines(description).filter((line) => !signUpOnLine(line)).join('\n'), max)
 }
 
 /** "Updated just now", "Updated 5 minutes ago", or "Updated Tue, Nov 3, 4:05 PM". */
@@ -300,19 +315,22 @@ export interface EventForm {
   location: string
   description: string
   signUps: SignUpKind
-  /** The sign-up link, when signUps is 'With a link'. */
-  link: string
+  /** The sign-up links, in order, when signUps is 'With a link'. Always at least one row, so the form has a box to fill in. */
+  links: SignUpLink[]
 }
+
+/** An empty row for a sign-up link. */
+export const blankLink = (): SignUpLink => ({ name: '', link: '' })
 
 /** An empty form, for an event today from 6 to 8 PM. */
 export function blankEventForm(now: Date = new Date()): EventForm {
   const today = chicagoDay(now)
-  return { title: '', allDay: false, day: today, lastDay: today, startClock: '18:00', endClock: '20:00', location: '', description: '', signUps: 'No sign-ups', link: '' }
+  return { title: '', allDay: false, day: today, lastDay: today, startClock: '18:00', endClock: '20:00', location: '', description: '', signUps: 'No sign-ups', links: [blankLink()] }
 }
 
-/** The form for changing an event: its sign-up line becomes the link box. */
+/** The form for changing an event: its sign-up lines become the link rows, in order. */
 export function formFromEvent(event: CalendarEvent): EventForm {
-  const link = signUpLink(event.description)
+  const links = signUpLinks(event.description)
   const firstDay = event.allDay ? event.start : chicagoDay(new Date(event.start))
   return {
     title: event.title,
@@ -322,22 +340,41 @@ export function formFromEvent(event: CalendarEvent): EventForm {
     startClock: event.allDay ? '18:00' : chicagoClock(new Date(event.start)),
     endClock: event.allDay ? '20:00' : chicagoClock(new Date(event.end)),
     location: event.location ?? '',
-    description: (event.description ?? '').split('\n').filter((line) => !signUpLinkOnLine(line)).join('\n').trim(),
-    signUps: event.signUps ? 'In the app' : link ? 'With a link' : 'No sign-ups',
-    link: link ?? '',
+    description: (event.description ?? '').split('\n').filter((line) => !signUpOnLine(line)).join('\n').trim(),
+    signUps: event.signUps ? 'In the app' : links.length > 0 ? 'With a link' : 'No sign-ups',
+    links: links.length > 0 ? links : [blankLink()],
   }
 }
 
-/** The event to save from the form, or what to fix. A sign-up link goes in the description, on its own "Sign up:" line. */
+/** The "Sign up:" lines for the form's links, or what to fix. Empty rows are skipped. */
+function signUpLines(links: SignUpLink[]): Result<string[]> {
+  const filled = links.map((row) => ({ name: row.name.trim(), link: row.link.trim() })).filter((row) => row.name || row.link)
+  if (filled.length === 0) return fail('Paste the sign-up link, like https://forms.gle/abc123.')
+  if (filled.length > MAX_SIGN_UP_LINKS) return fail(`An event can have up to ${MAX_SIGN_UP_LINKS} sign-up links. Remove one.`)
+  const lines: string[] = []
+  for (const { name, link } of filled) {
+    if (!link) return fail(`Paste the link for "${name}", like https://forms.gle/abc123, or remove its name.`)
+    if (/[()]/.test(name)) return fail(`Leave the brackets out of the link's name "${name}".`)
+    if (name.length > SIGN_UP_NAME_LIMIT) return fail(`Keep the link's name under ${SIGN_UP_NAME_LIMIT} characters, like "Hotel".`)
+    const found = signUpOnLine(`Sign up: ${link}`)
+    if (!found) {
+      const which = name ? `The "${name}" link` : 'The sign-up link'
+      return fail(`${which} has to start with https://. Copy it from the address bar of the form or Slack post.`)
+    }
+    lines.push(name ? `Sign up (${name}): ${found.link}` : `Sign up: ${found.link}`)
+  }
+  return ok(lines)
+}
+
+/** The event to save from the form, or what to fix. Each sign-up link goes in the description, on its own "Sign up:" line. */
 export function eventFromForm(form: EventForm): Result<EventInput> {
   if (!form.day || (form.allDay && !form.lastDay)) return fail(form.allDay ? 'Pick the first and last days.' : 'Pick the day.')
   if (!form.allDay && (!form.startClock || !form.endClock)) return fail('Pick when it starts and ends.')
   let description = form.description.trim()
   if (form.signUps === 'With a link') {
-    if (!form.link.trim()) return fail('Paste the sign-up link, like https://forms.gle/abc123.')
-    const link = signUpLink(`Sign up: ${form.link.trim()}`)
-    if (!link) return fail('The sign-up link has to start with https://. Copy it from the address bar of the form or Slack post.')
-    description = description ? `${description}\nSign up: ${link}` : `Sign up: ${link}`
+    const lines = signUpLines(form.links)
+    if (!lines.ok) return lines
+    description = [description, ...lines.value].filter(Boolean).join('\n')
   }
   const event: EventInput = {
     title: form.title,
@@ -399,7 +436,7 @@ export async function setSignUps(event: CalendarEvent, on: boolean): Promise<Res
  * events that take them.
  */
 export function canTakeSignUps(event: CalendarEvent, now: Date = new Date()): boolean {
-  return !event.signUps && !hasEnded(event, now) && !signUpLink(event.description)
+  return !event.signUps && !hasEnded(event, now) && signUpLinks(event.description).length === 0
 }
 
 // ---------------------------------------------------------------------------
@@ -483,7 +520,7 @@ export async function cancelSignUp(event: CalendarEvent, personId?: string): Pro
 export function useCalendarSummary(): Notice {
   const { events, loadedAt, error } = useCalendar()
   const next = nextEvent(events)
-  if (next) return { tone: 'info', text: `Next: ${nextEventText(next)}${next.signUps || signUpLink(next.description) ? ' · Sign-up open' : ''}` }
+  if (next) return { tone: 'info', text: `Next: ${nextEventText(next)}${next.signUps || signUpLinks(next.description).length > 0 ? ' · Sign-up open' : ''}` }
   if (error && !loadedAt) return { tone: 'warn', text: "Couldn't load the team calendar" }
   if (!loadedAt) return { tone: 'plain', text: 'Loading the team calendar…' }
   return { tone: 'plain', text: `Nothing in the next ${WEEKS_AHEAD} weeks` }
