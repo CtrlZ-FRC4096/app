@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   MAX_ITEM_LENGTH, PRACTICE_KEY, PRACTICE_MATCH, addPitItem, assignPitItem, belongsToSubgroup, canCheck, checkedIds, checksTable, defaultMatch, itemsTable,
   matchProgress, movePitItem, movePitItemTo, myItems, nameMatches, ourMatches, pitSummary, positionBetween, progressByPerson, progressText,
-  assignedPeople, canManagePit, clearPitChecklist, pickablePeople, takenOffText, removePitItem, renamePitItem, reorderPitItem, setPitItemCompleted, setPitItemSubgroup, setSubgroupMembers, subgroupMembersStore, uncheckAllPitItems, uncheckedByPerson,
+  assignedPeople, canManagePit, matchMembers, clearPitChecklist, pickablePeople, takenOffText, removePitItem, renamePitItem, reorderPitItem, setPitItemCompleted, setPitItemSubgroup, setSubgroupMembers, subgroupMembersStore, uncheckAllPitItems, uncheckedByPerson,
   usePitSummary, type PitCheck, type PitItem,
 } from './data'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
@@ -49,6 +49,11 @@ describe('finding someone to add', () => {
     for (const [search, found] of searches) expect(ids(pickablePeople(people, [], search)), `"${search}"`).toEqual(found)
     expect(nameMatches('Alex Rivera', 'x r')).toBe(true)
     expect(nameMatches('Alex Rivera', 'zzz')).toBe(false)
+  })
+
+  it('in the Training picker, always keeps chosen people, in their usual order, so searching never hides them', () => {
+    expect(ids(matchMembers(people, 'lee', ['c']))).toEqual(['b', 'c'])
+    expect(ids(matchMembers(people, 'zzz', ['a', 'c']))).toEqual(['a', 'c'])
   })
 
   it('leaves out people already chosen: they show above the box as name tags', () => {

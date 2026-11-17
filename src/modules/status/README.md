@@ -81,6 +81,11 @@ and changing who's on an item never unchecks it. The picker is
 form, picking a subgroup takes off anyone who isn't in it, and says so:
 "You're not in Electrical, so you were taken off." (`takenOffText()`).
 
+`MemberPicker.tsx` (a Find box above checkboxes, using `matchMembers()`) is
+the older picker. This page doesn't use it any more, but the Training
+module's "Sign people off" form does, so it stays until Training moves to
+`PeoplePicker.tsx`.
+
 **Subgroups**, a panel at the bottom of the page (`SubgroupsPanel.tsx`),
 has a row for each subgroup with its people as name tags. Tap a row to
 change them in the same picker. Taking someone out of a subgroup also takes

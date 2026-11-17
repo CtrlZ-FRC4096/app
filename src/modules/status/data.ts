@@ -54,6 +54,16 @@ export function nameMatches(name: string, search: string): boolean {
 }
 
 /**
+ * The people to show under the Training module's "Find someone" box
+ * (`MemberPicker.tsx`): everyone whose name matches the search, plus the
+ * people already chosen, in their usual order. Chosen people always stay
+ * visible, so searching never hides who is chosen.
+ */
+export function matchMembers<T extends { id: string; name: string }>(members: T[], search: string, chosenIds: string[] = []): T[] {
+  return members.filter((member) => chosenIds.includes(member.id) || nameMatches(member.name, search))
+}
+
+/**
  * The people to list under a "Find someone" box, to tap and add: everyone
  * in `pool` (who may be chosen) whose name matches the search and who isn't
  * chosen already. The chosen people are shown above the box as name tags.
