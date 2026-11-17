@@ -7,8 +7,8 @@ import { EVENT_KEY, getTeamEvents, tbaEventUrl, tbaTeamUrl, type Match13Rating, 
 import {
   PRESCOUT_QUESTIONS, prescoutAverages, prescoutMatchesTable, savePrescoutMatch, seasonMatches, prescoutFor, prescoutHref, type PrescoutMatch, type PrescoutNotes,
   MAX_PRESCOUT_ANSWER, NO_ANSWERS, cleanEventKey, firstLine, hasAnswers, isEventKey, loadPrescoutTeams, prescoutEventStore, prescoutList, prescoutOverview, searchPrescout,
-  prescoutTable, savePrescout, setPrescoutEvent, canRemoveStar, starTeam, starredFirst, starsFor, starsTable, unstarTeam, visibleStars,
-  type PrescoutStar,
+  prescoutTable, savePrescout, setPrescoutEvent, setTier, canRemoveStar, starTeam, starredFirst, starsFor, starsTable, unstarTeam, visibleStars,
+  type PrescoutStar, type Tier,
 } from './data'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 
@@ -145,6 +145,26 @@ describe('prescouting notes', () => {
     expect(await savePrescout(EVENT_KEY, 9993, NO_ANSWERS)).toMatchObject({ ok: true, value: { strengths: '', key_task: '' } })
   })
 
+  it("sets a team's tier, adds their row if they have no notes yet, changes it, clears it, and keeps their answers (#191)", async () => {
+    // 9992 has no notes yet: setting a tier adds a row with empty answers, so they're still not prescouted.
+    expect(await setTier(EVENT_KEY, 9992, 'A')).toMatchObject({ ok: true, value: { event_key: EVENT_KEY, team_number: 9992, tier: 'A', strengths: '' } })
+    expect(hasAnswers(notesFor(9992))).toBe(false)
+    const steps: [number, Tier | null][] = [[9992, 'C'], [9992, null], [9991, 'F'], [9991, null]]
+    for (const [n, tier] of steps) {
+      expect(await setTier(EVENT_KEY, n, tier)).toMatchObject({ ok: true, value: { tier } })
+      expect(prescoutTable.rows().filter((r) => r.team_number === n)).toHaveLength(1)
+    }
+    expect(notesFor(9991)).toMatchObject({ tier: null, key_task: 'Scoring fuel in teleop' })
+    // Saving answers afterwards leaves the tier alone.
+    await setTier(EVENT_KEY, 9993, 'S')
+    await savePrescout(EVENT_KEY, 9993, ANSWERS)
+    expect(notesFor(9993)?.tier).toBe('S')
+    // Wrong event, team or tier.
+    expect(await setTier('ilch', 9992, 'A')).toMatchObject({ ok: false, error: expect.stringMatching(/like 2026ilch/) })
+    expect(await setTier(EVENT_KEY, 0, 'A')).toMatchObject({ ok: false, error: expect.stringMatching(/team number looks wrong/) })
+    expect(await setTier(EVENT_KEY, 9992, 'E' as Tier)).toMatchObject({ ok: false, error: expect.stringMatching(/S to F/) })
+  })
+
   it('knows whether a team has been prescouted', () => {
     expect(hasAnswers(notesFor(9991))).toBe(true)
     expect(hasAnswers(null)).toBe(false)
@@ -256,8 +276,8 @@ describe('the prescouting overview', () => {
   const team = (n: number, epa: number | null, xp: number | null = null) => ({
     team: n, name: `Team ${n}`, epa, xp, xpRank: null, auto: null, teleop: null, endgame: null, opr: null, dpr: null, tbaUrl: tbaTeamUrl(n, EVENT_KEY),
   })
-  const note = (n: number, strengths = '') => ({
-    id: `id-${n}`, event_key: EVENT_KEY, team_number: n, ...NO_ANSWERS, strengths, created_at: '2026-11-05T19:00:00Z', created_by: null,
+  const note = (n: number, strengths = '', tier: Tier | null = null) => ({
+    id: `id-${n}`, event_key: EVENT_KEY, team_number: n, ...NO_ANSWERS, strengths, tier, created_at: '2026-11-05T19:00:00Z', created_by: null,
   })
   const TEAMS = [team(9995, 22.1), team(9991, 41.7), team(9993, null), team(9992, 35.2), team(9994, null)]
   const order = (rows: { team: number }[]) => rows.map((r) => r.team)
@@ -275,6 +295,18 @@ describe('the prescouting overview', () => {
     expect(order(prescoutOverview(TEAMS, [], [], ME, 'EPA'))).toEqual([9991, 9992, 9995, 9993, 9994])
     const stars = [at(9994, true, SOMEONE), at(9995, true, SOMEONE), at(9993, false, ME), at(9992, false, ME)]
     expect(order(prescoutOverview(TEAMS, [], stars, ME, 'EPA'))).toEqual([9995, 9994, 9992, 9993, 9991])
+  })
+
+  it('sorts by tier, S to F, then Not rated, by number within a tier, with starred teams still first (#191)', () => {
+    const teams = [9991, 9992, 9993, 9994, 9995, 9996, 9997].map((n) => team(n, null))
+    const tiers: [number, Tier | null][] = [[9991, 'F'], [9992, null], [9993, 'S'], [9994, 'B'], [9995, 'S'], [9996, 'A']]
+    const notes = tiers.map(([n, tier]) => note(n, '', tier))
+    // 9992 has notes but no tier, and 9997 has no notes at all: both Not rated.
+    const cases: { stars: PrescoutStar[]; expected: number[] }[] = [
+      { stars: [], expected: [9993, 9995, 9996, 9994, 9991, 9992, 9997] },
+      { stars: [at(9991, true, SOMEONE), at(9997, false, ME)], expected: [9991, 9997, 9993, 9995, 9996, 9994, 9992] },
+    ]
+    for (const { stars, expected } of cases) expect(order(prescoutOverview(teams, notes, stars, ME, 'Tier'))).toEqual(expected)
   })
 
   it('sorts by xP best first within each group, teams with no xP after (#186)', () => {
@@ -330,7 +362,7 @@ describe('searching the prescouting overview', () => {
 
 describe('one team’s prescouting, for the Scouting team page (#119)', () => {
   const row = (fields: Partial<PrescoutNotes>): PrescoutNotes => ({
-    id: 'p1', event_key: '2026ilch', team_number: 9991, ...NO_ANSWERS, created_at: '2026-11-05T19:00:00Z', created_by: null, ...fields,
+    id: 'p1', event_key: '2026ilch', team_number: 9991, ...NO_ANSWERS, tier: null, created_at: '2026-11-05T19:00:00Z', created_by: null, ...fields,
   })
 
   it("finds the team's notes at the event", () => {
