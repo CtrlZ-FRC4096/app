@@ -1,15 +1,32 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MAX_ITEM_LENGTH, addPitItem, assignPitItem, movePitItem, movePitItemTo, reorderPitItem, renamePitItem, setPitItemSubgroup, checklistStore, setPitItemCompleted, subgroupMembersStore, setSubgroupMembers, belongsToSubgroup, pitChecklistSummary, matchMembers, nameMatches } from './data'
+// Tests for the Pit checklist's data.ts. They run in demo mode, as Alex (a
+// student) unless a test views the app as someone else. Who may do what is
+// the database's job too: see supabase/tests/pit-checklist.test.ts.
+import { createElement } from 'react'
+import { renderToString } from 'react-dom/server'
+import { beforeEach, describe, expect, it } from 'vitest'
+import {
+  MAX_ITEM_LENGTH, PRACTICE_KEY, PRACTICE_MATCH, addPitItem, assignPitItem, belongsToSubgroup, canCheck, checkedIds, checksTable, defaultMatch, itemsTable,
+  matchMembers, matchProgress, movePitItem, movePitItemTo, myItems, nameMatches, ourMatches, pitSummary, positionBetween, progressByPerson, progressText,
+  removePitItem, renamePitItem, reorderPitItem, setPitItemCompleted, setPitItemSubgroup, setSubgroupMembers, subgroupMembersStore, uncheckedByPerson,
+  usePitSummary, type PitCheck, type PitItem,
+} from './data'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import { membersTable } from '../../core/members'
+import { scheduleStore, type MatchPrediction, type TbaMatch } from '../scouting/data'
+import { EVENT_KEY } from '../scouting/season'
+
+const QM3 = `${EVENT_KEY}_qm3`
+const texts = () => itemsTable.rows().map((item) => item.text)
+const byText = (text: string) => itemsTable.rows().find((item) => item.text === text)!
 
 beforeEach(() => {
   setDemoRole('student')
   membersTable.reset()
   subgroupMembersStore.reset()
-  checklistStore.reset()
+  itemsTable.reset()
+  checksTable.reset()
+  scheduleStore.reset()
 })
-afterEach(() => vi.unstubAllGlobals())
 
 describe('finding someone to assign', () => {
   const people = [
@@ -32,235 +49,263 @@ describe('finding someone to assign', () => {
     expect(nameMatches('Alex Rivera', 'zzz')).toBe(false)
   })
 
-  it('always keeps chosen people, in their usual order, so searching never hides an assignment, without changing the list it was given', () => {
-    const before = structuredClone(people)
+  it('always keeps chosen people, in their usual order, so searching never hides an assignment', () => {
     expect(matchMembers(people, 'lee', ['c']).map((p) => p.id)).toEqual(['b', 'c'])
     expect(matchMembers(people, 'zzz', ['a', 'c']).map((p) => p.id)).toEqual(['a', 'c'])
-    expect(people).toEqual(before)
   })
 })
 
-describe('pit checklist', () => {
-  it('adds a trimmed, unchecked item after the existing items, and rejects blank or oversized items without changing the list', () => {
-    const previous = checklistStore.get()
-    expect(addPitItem(' \n ')).toMatchObject({ ok: false, error: /Write a checklist item/ })
-    expect(addPitItem('x'.repeat(MAX_ITEM_LENGTH + 1)).ok).toBe(false)
-    expect(checklistStore.get()).toBe(previous)
-    const result = addPitItem('  Check tire wear  ')
-    expect(result.ok).toBe(true)
-    expect(checklistStore.get().slice(0, -1)).toEqual(previous)
-    expect(checklistStore.get().at(-1)).toMatchObject({ text: 'Check tire wear', completed: false })
-    const second = addPitItem('Check tire wear')
-    if (!result.ok || !second.ok) throw new Error('Expected items to be added')
-    expect(second.value.id).not.toBe(result.value.id)
-    expect(addPitItem('x'.repeat(MAX_ITEM_LENGTH)).ok).toBe(true)
-  })
-
-  it('checks and unchecks only the requested item, and reports missing items without changing the list', () => {
-    const [first, ...others] = checklistStore.get()
-    const previous = checklistStore.get()
-    expect(setPitItemCompleted('missing', true).ok).toBe(false)
-    expect(checklistStore.get()).toBe(previous)
-    expect(setPitItemCompleted(first.id, true).ok).toBe(true)
-    expect(checklistStore.get()[0].completed).toBe(true)
-    expect(checklistStore.get().slice(1)).toEqual(others)
-    expect(setPitItemCompleted(first.id, false).ok).toBe(true)
-    expect(checklistStore.get()[0]).toEqual(first)
-  })
-
-  it('allows only assignees to check and uncheck, including for mentors', () => {
-    const [first, second] = checklistStore.get()
-    const previous = checklistStore.get()
-    expect(setPitItemCompleted(second.id, true).ok).toBe(false)
-    expect(checklistStore.get()).toBe(previous)
-    expect(setPitItemCompleted(first.id, true).ok).toBe(true)
-    setDemoRole('mentor')
-    expect(setPitItemCompleted(first.id, false).ok).toBe(false)
-    expect(setPitItemCompleted(second.id, true).ok).toBe(true)
-    setDemoRole('admin')
-    expect(setPitItemCompleted(first.id, false).ok).toBe(false)
-  })
-
-  it('requires active assignees and supports multiple assigned people', () => {
-    expect(addPitItem('No one assigned', []).ok).toBe(false)
-    expect(addPitItem('Inactive', [DEMO_PEOPLE.sam]).ok).toBe(false)
-    expect(addPitItem('Unknown', ['missing']).ok).toBe(false)
-    const result = addPitItem('Shared task', [DEMO_PEOPLE.alex, DEMO_PEOPLE.pat])
-    if (!result.ok) throw new Error('Expected an item')
-    expect(setPitItemCompleted(result.value.id, true).ok).toBe(true)
-    setDemoRole('mentor')
-    expect(setPitItemCompleted(result.value.id, false).ok).toBe(true)
-  })
-
-  it('allows mentors to reassign and clears completion for the new assignee', () => {
-    const [first] = checklistStore.get()
-    setPitItemCompleted(first.id, true)
-    expect(assignPitItem(first.id, [DEMO_PEOPLE.pat]).ok).toBe(false)
-    setDemoRole('mentor')
-    expect(assignPitItem(first.id, []).ok).toBe(true)
-    expect(checklistStore.get()[0]).toMatchObject({ assigneeIds: [], completed: false })
-    expect(assignPitItem(first.id, [DEMO_PEOPLE.sam]).ok).toBe(false)
-    expect(assignPitItem('missing', [DEMO_PEOPLE.pat]).ok).toBe(false)
-    expect(assignPitItem(first.id, [DEMO_PEOPLE.pat]).ok).toBe(true)
-    expect(checklistStore.get()[0]).toMatchObject({ completed: false, assigneeIds: [DEMO_PEOPLE.pat] })
-    expect(setPitItemCompleted(first.id, true).ok).toBe(true)
-  })
-
-  it('leaves older unassigned items locked until assigned', () => {
-    checklistStore.set([{ id: 'legacy', text: 'Old item', completed: false }])
-    expect(setPitItemCompleted('legacy', true).ok).toBe(false)
-    setDemoRole('mentor')
-    expect(assignPitItem('legacy', [DEMO_PEOPLE.pat]).ok).toBe(true)
-    expect(setPitItemCompleted('legacy', true).ok).toBe(true)
-  })
-
-  it('moves items both ways and leaves boundaries and missing items unchanged', () => {
-    const original = [...checklistStore.get()]
-    expect(movePitItem(original[0].id, -1).ok).toBe(true)
-    expect(movePitItem(original.at(-1)!.id, 1).ok).toBe(true)
-    expect(movePitItem('missing', 1).ok).toBe(false)
-    expect(checklistStore.get()).toEqual(original)
-    movePitItem(original[0].id, 1)
-    expect(checklistStore.get()).toEqual([original[1], original[0], ...original.slice(2)])
-    movePitItem(original[0].id, -1)
-    expect(checklistStore.get()).toEqual(original)
-  })
-
-  it('moves an item to a typed position, and says which positions there are', () => {
-    const original = [...checklistStore.get()]
-    const last = original.length
-    expect(movePitItemTo(original[0].id, String(last))).toEqual({ ok: true, value: null })
-    expect(checklistStore.get()).toEqual([...original.slice(1), original[0]])
-    expect(movePitItemTo(original[0].id, ' 1 ').ok).toBe(true)
-    expect(checklistStore.get()).toEqual(original)
-    for (const bad of ['0', String(last + 1), '', '1.5', 'top']) {
-      expect(movePitItemTo(original[0].id, bad), bad).toEqual({ ok: false, error: expect.stringMatching(new RegExp(`position from 1 to ${last}`)) })
+describe('changing items: mentors and admins only', () => {
+  it("doesn't let a student add, rename, assign, reorder or delete, and says to ask a mentor", async () => {
+    const first = itemsTable.rows()[0]
+    for (const result of [
+      await addPitItem('Mine', [DEMO_PEOPLE.alex]),
+      await renamePitItem(first.id, 'Renamed'),
+      await assignPitItem(first.id, [DEMO_PEOPLE.pat]),
+      await setPitItemSubgroup(first.id, 'General'),
+      await reorderPitItem(first.id, itemsTable.rows()[2].id),
+      await removePitItem(first.id),
+    ]) {
+      expect(result).toEqual({ ok: false, error: expect.stringMatching(/Ask a mentor/) })
     }
-    expect(movePitItemTo('missing', '1')).toEqual({ ok: false, error: expect.stringMatching(/no longer on the checklist/) })
-    expect(checklistStore.get()).toEqual(original)
+    expect(itemsTable.rows()[0]).toEqual(first)
+    expect(itemsTable.rows()).toHaveLength(6)
   })
 
-  it('restores the starter checklist when example data is reset', () => {
-    const initial = checklistStore.get()
-    addPitItem('Extra check')
-    setPitItemCompleted(initial[0].id, true)
-    checklistStore.reset()
-    expect(checklistStore.get()).toEqual(initial)
-  })
-
-  it('drags items to any position without changing assignments or checkboxes', () => {
-    const original = [...checklistStore.get()]
-    setPitItemCompleted(original[0].id, true)
-    const checked = checklistStore.get()[0]
-    expect(reorderPitItem(original[0].id, original.at(-1)!.id).ok).toBe(true)
-    expect(checklistStore.get()).toEqual([...original.slice(1), checked])
-    reorderPitItem(original[0].id, original[1].id)
-    expect(checklistStore.get()).toEqual([checked, ...original.slice(1)])
-    const previous = checklistStore.get()
-    expect(reorderPitItem(original[0].id, original[0].id).ok).toBe(true)
-    expect(reorderPitItem('missing', original[0].id).ok).toBe(false)
-    expect(reorderPitItem(original[0].id, 'missing').ok).toBe(false)
-    expect(checklistStore.get()).toBe(previous)
-  })
-
-  it('lets mentors rename an item without changing its assignments, position or completion', () => {
-    const [first, ...others] = checklistStore.get()
-    setPitItemCompleted(first.id, true)
-    expect(renamePitItem(first.id, 'New name').ok).toBe(false)
+  it('adds a trimmed item at the bottom, and refuses blank or oversized items or nobody assigned', async () => {
     setDemoRole('mentor')
-    expect(renamePitItem(first.id, '  Inspect battery connections  ').ok).toBe(true)
-    expect(checklistStore.get()).toEqual([{ ...first, text: 'Inspect battery connections', completed: true }, ...others])
-    const previous = checklistStore.get()
-    expect(renamePitItem(first.id, '   ').ok).toBe(false)
-    expect(renamePitItem(first.id, 'x'.repeat(MAX_ITEM_LENGTH + 1)).ok).toBe(false)
-    expect(renamePitItem('missing', 'Valid name').ok).toBe(false)
-    expect(checklistStore.get()).toBe(previous)
+    expect(await addPitItem(' \n ', [DEMO_PEOPLE.alex])).toMatchObject({ ok: false, error: /Write a checklist item/ })
+    expect((await addPitItem('x'.repeat(MAX_ITEM_LENGTH + 1), [DEMO_PEOPLE.alex])).ok).toBe(false)
+    expect((await addPitItem('No one', [])).ok).toBe(false)
+    expect((await addPitItem('Inactive', [DEMO_PEOPLE.sam])).ok).toBe(false)
+    expect((await addPitItem('  Check tire wear  ', [DEMO_PEOPLE.alex, DEMO_PEOPLE.pat], 'Mechanical')).ok).toBe(false)
+    expect(await addPitItem('  Check tire wear  ', [DEMO_PEOPLE.alex], 'Mechanical')).toMatchObject({ ok: true, value: { text: 'Check tire wear', subgroup: 'Mechanical' } })
+    expect(texts().at(-1)).toBe('Check tire wear')
+  })
+
+  it('renames an item, keeping its assignments, place and checks', async () => {
     setDemoRole('admin')
-    expect(renamePitItem(first.id, 'x'.repeat(MAX_ITEM_LENGTH)).ok).toBe(true)
+    const first = itemsTable.rows()[0]
+    expect((await renamePitItem(first.id, '  Inspect battery connections  ')).ok).toBe(true)
+    expect(itemsTable.rows()[0]).toMatchObject({ ...first, text: 'Inspect battery connections' })
+    expect(checkedIds(checksTable.rows(), QM3).has(first.id)).toBe(true)
+    expect((await renamePitItem('missing', 'Valid')).ok).toBe(false)
   })
 
-  it('autosaves each assignment change, including clearing the last person', () => {
-    const [first] = checklistStore.get()
+  it('assigns people from the item’s subgroup only, and can leave an item unassigned', async () => {
     setDemoRole('mentor')
-    expect(assignPitItem(first.id, [DEMO_PEOPLE.alex, DEMO_PEOPLE.pat]).ok).toBe(true)
-    expect(checklistStore.get()[0].assigneeIds).toEqual([DEMO_PEOPLE.alex, DEMO_PEOPLE.pat])
-    expect(assignPitItem(first.id, [DEMO_PEOPLE.pat]).ok).toBe(true)
-    expect(checklistStore.get()[0].assigneeIds).toEqual([DEMO_PEOPLE.pat])
-    expect(assignPitItem(first.id, []).ok).toBe(true)
-    expect(checklistStore.get()[0].assigneeIds).toEqual([])
-    expect(setPitItemCompleted(first.id, true).ok).toBe(false)
+    const code = byText('Code deployed')
+    expect((await assignPitItem(code.id, [DEMO_PEOPLE.alex])).ok).toBe(false)
+    expect((await assignPitItem(code.id, [DEMO_PEOPLE.morgan, DEMO_PEOPLE.jordan])).ok).toBe(true)
+    expect(byText('Code deployed').assignee_ids).toEqual([DEMO_PEOPLE.morgan, DEMO_PEOPLE.jordan])
+    expect((await assignPitItem(code.id, [])).ok).toBe(true)
+    expect(byText('Code deployed').assignee_ids).toEqual([])
   })
 
-  it('saves subgroup choices and lets mentors update them without changing other fields', () => {
-    const result = addPitItem('Check wiring', [DEMO_PEOPLE.alex], 'Electrical')
-    if (!result.ok) throw new Error('Expected an item')
-    expect(result.value.subgroup).toBe('Electrical')
-    expect(setPitItemSubgroup(result.value.id, 'Electrical').ok).toBe(false)
-    setPitItemCompleted(result.value.id, true)
+  it('changes a subgroup, unassigning people who aren’t in the new one', async () => {
     setDemoRole('mentor')
-    expect(setPitItemSubgroup(result.value.id, 'Mechanical').ok).toBe(true)
-    expect(checklistStore.get().at(-1)).toEqual({ ...result.value, completed: true, subgroup: 'Mechanical' })
-    const previous = checklistStore.get()
-    expect(setPitItemSubgroup('missing', 'General').ok).toBe(false)
-    // Runtime input validation still applies to values sent outside the picker.
-    expect(setPitItemSubgroup(result.value.id, 'unknown' as 'General').ok).toBe(false)
-    expect(addPitItem('Bad group', [DEMO_PEOPLE.alex], 'unknown' as 'General').ok).toBe(false)
-    expect(checklistStore.get()).toBe(previous)
+    const code = byText('Code deployed')
+    expect((await setPitItemSubgroup(code.id, 'Electrical')).ok).toBe(true)
+    expect(byText('Code deployed')).toMatchObject({ subgroup: 'Electrical', assignee_ids: [] })
+    expect((await setPitItemSubgroup(code.id, 'unknown' as 'General')).ok).toBe(false)
   })
 
-  it('limits assignment to subgroup members and removes incompatible assignments on a tag change', () => {
-    expect(addPitItem('Code', [DEMO_PEOPLE.alex], 'Programming').ok).toBe(false)
-    const result = addPitItem('Code', [DEMO_PEOPLE.jordan], 'Programming')
-    if (!result.ok) throw new Error('Expected an item')
+  it('deletes an item and its checks', async () => {
     setDemoRole('mentor')
-    expect(assignPitItem(result.value.id, [DEMO_PEOPLE.pat]).ok).toBe(false)
-    expect(assignPitItem(result.value.id, [DEMO_PEOPLE.morgan]).ok).toBe(true)
+    const first = itemsTable.rows()[0]
+    expect((await removePitItem(first.id)).ok).toBe(true)
+    expect(itemsTable.rows().some((item) => item.id === first.id)).toBe(false)
+    expect(checksTable.rows().some((check) => check.item_id === first.id)).toBe(false)
+  })
+})
+
+describe('reordering', () => {
+  beforeEach(() => setDemoRole('mentor'))
+
+  it('puts a new position halfway between the neighbours, so only the moved item changes', () => {
+    expect(positionBetween(1, 2)).toBe(1.5)
+    expect(positionBetween(3, undefined)).toBe(4)
+    expect(positionBetween(undefined, 1)).toBe(0)
+    expect(positionBetween(undefined, undefined)).toBe(0)
+  })
+
+  it('drags an item down or up to where another one is', async () => {
+    const original = texts()
+    const [first, second, , , , last] = itemsTable.rows()
+    expect((await reorderPitItem(first.id, last.id)).ok).toBe(true)
+    expect(texts()).toEqual([...original.slice(1), original[0]])
+    expect((await reorderPitItem(first.id, second.id)).ok).toBe(true)
+    expect(texts()).toEqual(original)
+    expect((await reorderPitItem('missing', first.id)).ok).toBe(false)
+  })
+
+  it('moves one place with the keyboard, and stays put at the ends', async () => {
+    const original = texts()
+    const [first] = itemsTable.rows()
+    expect((await movePitItem(first.id, -1)).ok).toBe(true)
+    expect(texts()).toEqual(original)
+    await movePitItem(first.id, 1)
+    expect(texts()).toEqual([original[1], original[0], ...original.slice(2)])
+  })
+
+  it('moves to a typed position, and says which positions there are', async () => {
+    const original = texts()
+    const [first] = itemsTable.rows()
+    expect(await movePitItemTo(first.id, '6')).toEqual({ ok: true, value: null })
+    expect(texts()).toEqual([...original.slice(1), original[0]])
+    expect((await movePitItemTo(first.id, ' 1 ')).ok).toBe(true)
+    expect(texts()).toEqual(original)
+    for (const bad of ['0', '7', '', '1.5', 'top']) {
+      expect(await movePitItemTo(first.id, bad), bad).toEqual({ ok: false, error: expect.stringMatching(/position from 1 to 6/) })
+    }
+  })
+})
+
+describe('checking items for a match', () => {
+  it('lets a student check only their own items, and says to ask a mentor otherwise', async () => {
+    const robot = byText('Robot weighed')
+    const bumpers = byText('Both bumper colors packed')
+    expect(await setPitItemCompleted(robot.id, QM3, true)).toEqual({ ok: true, value: null })
+    expect(checkedIds(checksTable.rows(), QM3).has(robot.id)).toBe(true)
+    expect(await setPitItemCompleted(bumpers.id, QM3, true)).toEqual({ ok: false, error: expect.stringMatching(/Only people assigned/) })
+    expect(checkedIds(checksTable.rows(), QM3).has(bumpers.id)).toBe(false)
+  })
+
+  it('lets mentors and admins check any item', async () => {
+    setDemoRole('mentor')
+    expect((await setPitItemCompleted(byText('Robot weighed').id, QM3, true)).ok).toBe(true)
     setDemoRole('admin')
-    expect(setPitItemCompleted(result.value.id, true).ok).toBe(true)
-    expect(setPitItemSubgroup(result.value.id, 'Electrical').ok).toBe(true)
-    expect(checklistStore.get().at(-1)).toMatchObject({ subgroup: 'Electrical', assigneeIds: [], completed: false })
+    expect((await setPitItemCompleted(byText('Safety glasses for everyone in the pit').id, QM3, true)).ok).toBe(true)
+    expect(canCheck({ assignee_ids: [] }, { id: 'x', role: 'mentor' })).toBe(true)
+    expect(canCheck({ assignee_ids: ['x'] }, { id: 'x', role: 'student' })).toBe(true)
+    expect(canCheck({ assignee_ids: [] }, { id: 'x', role: 'student' })).toBe(false)
   })
 
-  it('lets mentors manage local subgroup membership and cleans up removed assignments', () => {
-    const result = addPitItem('Wiring', [DEMO_PEOPLE.alex], 'Electrical')
-    if (!result.ok) throw new Error('Expected an item')
-    setPitItemCompleted(result.value.id, true)
-    expect(setSubgroupMembers('Electrical', [DEMO_PEOPLE.pat]).ok).toBe(false)
+  it('keeps each match separate, so the next match starts fresh', async () => {
+    const robot = byText('Robot weighed')
+    await setPitItemCompleted(robot.id, QM3, true)
+    expect(checkedIds(checksTable.rows(), `${EVENT_KEY}_qm4`).has(robot.id)).toBe(false)
+    await setPitItemCompleted(robot.id, PRACTICE_KEY, true)
+    expect(checksTable.rows().filter((c) => c.item_id === robot.id).map((c) => c.match_key).sort()).toEqual([QM3, PRACTICE_KEY].sort())
+  })
+
+  it('unchecks, and does nothing when it is already that way', async () => {
+    const battery = byText('Batteries charged and numbered')
+    const count = checksTable.rows().length
+    expect((await setPitItemCompleted(battery.id, QM3, true)).ok).toBe(true)
+    expect(checksTable.rows()).toHaveLength(count)
+    expect((await setPitItemCompleted(battery.id, QM3, false)).ok).toBe(true)
+    expect(checkedIds(checksTable.rows(), QM3).has(battery.id)).toBe(false)
+    expect((await setPitItemCompleted(battery.id, QM3, false)).ok).toBe(true)
+  })
+})
+
+// Plain lists for the counting tests, so they don't depend on the example data.
+const item = (id: string, assignee_ids: string[]): PitItem => ({ id, text: id, subgroup: 'General', assignee_ids, position: 0, created_at: '', created_by: null })
+const check = (item_id: string, match_key = 'm1'): PitCheck => ({ id: `${item_id}-${match_key}`, item_id, match_key, created_at: '', created_by: 'a' })
+const PEOPLE = [{ id: 'a', name: 'Alex' }, { id: 'j', name: 'Jordan' }]
+
+describe('progress', () => {
+  const items = [item('1', ['a']), item('2', ['a', 'j']), item('3', ['j']), item('4', [])]
+
+  it('says Ready only when every item is checked for the match, otherwise how many are left', () => {
+    expect(progressText(matchProgress(items, [check('1')], 'm1'))).toBe('3 of 4 left')
+    expect(progressText(matchProgress(items, ['1', '2', '3', '4'].map((id) => check(id)), 'm1'))).toBe('Ready')
+    expect(progressText(matchProgress(items, ['1', '2', '3', '4'].map((id) => check(id, 'm2')), 'm1'))).toBe('4 of 4 left')
+    expect(progressText(matchProgress([], [], 'm1'))).toBe('No items yet')
+  })
+
+  it("gives each person's progress, by name, counting a shared item for both", () => {
+    expect(progressByPerson(items, [check('1'), check('2')], 'm1', PEOPLE)).toEqual([
+      { id: 'a', name: 'Alex', done: 2, total: 2 },
+      { id: 'j', name: 'Jordan', done: 1, total: 2 },
+    ])
+    expect(progressByPerson([item('1', ['gone'])], [], 'm1', PEOPLE)[0].name).toBe('Former member')
+  })
+
+  it('groups what is still to do by who it’s assigned to, with unassigned items first', () => {
+    expect(uncheckedByPerson(items, [check('1')], 'm1', PEOPLE).map((g) => [g.name, g.items.map((i) => i.id)])).toEqual([
+      ['Unassigned', ['4']],
+      ['Alex', ['2']],
+      ['Jordan', ['2', '3']],
+    ])
+    expect(uncheckedByPerson(items, ['1', '2', '3', '4'].map((id) => check(id)), 'm1', PEOPLE)).toEqual([])
+  })
+
+  it("lists a student's own items only", () => {
+    expect(myItems(items, 'j').map((i) => i.id)).toEqual(['2', '3'])
+    expect(myItems(items, 'nobody')).toEqual([])
+  })
+})
+
+describe('our matches', () => {
+  const tba = (n: number, red: number[], blue: number[], score = -1): TbaMatch => ({
+    key: `2026test_qm${n}`, comp_level: 'qm', set_number: 1, match_number: n, winning_alliance: '', predicted_time: 1773414000 + n * 480,
+    alliances: { red: { score, team_keys: red.map((t) => `frc${t}`) }, blue: { score, team_keys: blue.map((t) => `frc${t}`) } },
+  })
+  const prediction: MatchPrediction = { key: '2026test_qm3', redWinChance: 0.3, redScore: 70.4, blueScore: 84.2 }
+  const saved = {
+    event: '2026test',
+    matches: [tba(1, [4096, 1, 2], [3, 4, 5], 80), tba(2, [1, 2, 3], [4, 5, 6]), tba(3, [1, 2, 3], [4096, 5, 6]), tba(4, [4096, 1, 2], [3, 4, 5])],
+    predictions: [prediction],
+    savedAt: '2026-03-13T15:00:00Z',
+  }
+
+  it('lists our matches still to play, with our side and Match 13’s prediction, then the practice round', () => {
+    const matches = ourMatches(saved)
+    expect(matches.map((m) => [m.key, m.label, m.alliance])).toEqual([
+      ['2026test_qm3', 'Qual 3', 'Blue'],
+      ['2026test_qm4', 'Qual 4', 'Red'],
+      [PRACTICE_KEY, 'Practice / no match', null],
+    ])
+    expect(matches[0].prediction).toBe('Blue 70% · 70–84')
+    expect(matches[1].prediction).toBeNull()
+  })
+
+  it('picks our next match by default', () => {
+    expect(defaultMatch(ourMatches(saved)).label).toBe('Qual 3')
+  })
+
+  it('falls back to the practice round with no schedule, or nothing of ours left', () => {
+    expect(ourMatches(null)).toEqual([PRACTICE_MATCH])
+    expect(defaultMatch(ourMatches(null)).key).toBe(PRACTICE_KEY)
+    expect(defaultMatch(ourMatches({ ...saved, matches: [tba(1, [4096, 1, 2], [3, 4, 5], 80)] })).key).toBe(PRACTICE_KEY)
+  })
+})
+
+describe('the home page summary', () => {
+  const qm3 = { ...PRACTICE_MATCH, key: 'm1', label: 'Qual 12' }
+
+  it('says whether we are ready for the next match', () => {
+    const items = [item('1', ['a']), item('2', ['j'])]
+    expect(pitSummary(items, [check('1')], qm3)).toEqual({ tone: 'warn', text: '1 of 2 left for Qual 12' })
+    expect(pitSummary(items, [check('1'), check('2')], qm3)).toEqual({ tone: 'ok', text: 'Ready for Qual 12' })
+    expect(pitSummary(items, [], PRACTICE_MATCH)).toEqual({ tone: 'warn', text: '2 of 2 left for practice' })
+    expect(pitSummary([], [], qm3)).toEqual({ tone: 'plain', text: 'No pit checklist items yet' })
+  })
+
+  it('works on the home page with no schedule saved', () => {
+    const Tile = () => createElement('p', null, usePitSummary().text)
+    expect(renderToString(createElement(Tile))).toBe('<p>6 of 6 left for practice</p>')
+  })
+})
+
+describe('subgroup members (on this device)', () => {
+  it('lists everyone for General and for a subgroup nobody has set up', () => {
+    expect(belongsToSubgroup('anyone', 'General')).toBe(true)
+    subgroupMembersStore.set({})
+    expect(belongsToSubgroup('anyone', 'Mechanical')).toBe(true)
+    subgroupMembersStore.set({ Mechanical: [] })
+    expect(belongsToSubgroup('anyone', 'Mechanical')).toBe(false)
+  })
+
+  it('lets mentors choose members, and unassigns people taken out', async () => {
+    expect((await setSubgroupMembers('Electrical', [DEMO_PEOPLE.pat])).ok).toBe(false)
     setDemoRole('mentor')
-    expect(setSubgroupMembers('Electrical', [DEMO_PEOPLE.sam]).ok).toBe(false)
-    expect(setSubgroupMembers('General', []).ok).toBe(false)
-    expect(setSubgroupMembers('Electrical', [DEMO_PEOPLE.pat]).ok).toBe(true)
+    expect((await setSubgroupMembers('Electrical', [DEMO_PEOPLE.sam])).ok).toBe(false)
+    expect((await setSubgroupMembers('General', [])).ok).toBe(false)
+    expect((await setSubgroupMembers('Electrical', [DEMO_PEOPLE.pat])).ok).toBe(true)
     expect(belongsToSubgroup(DEMO_PEOPLE.alex, 'Electrical')).toBe(false)
-    expect(checklistStore.get().at(-1)).toMatchObject({ assigneeIds: [], completed: false })
-    expect(assignPitItem(result.value.id, [DEMO_PEOPLE.alex]).ok).toBe(false)
-    expect(assignPitItem(result.value.id, [DEMO_PEOPLE.pat]).ok).toBe(true)
-    expect(setSubgroupMembers('Electrical', []).ok).toBe(true)
-    expect(assignPitItem(result.value.id, [DEMO_PEOPLE.pat]).ok).toBe(false)
-  })
-
-  it('updates the home tile summary when checks change and handles an empty list', () => {
-    expect(pitChecklistSummary(checklistStore.get())).toEqual({ tone: 'plain', text: '0 of 6 pit checks' })
-    setPitItemCompleted(checklistStore.get()[0].id, true)
-    expect(pitChecklistSummary(checklistStore.get()).text).toBe('1 of 6 pit checks')
-    setPitItemCompleted(checklistStore.get()[0].id, false)
-    expect(pitChecklistSummary(checklistStore.get()).text).toBe('0 of 6 pit checks')
-    expect(pitChecklistSummary(checklistStore.get().map((item) => ({ ...item, completed: true })))).toEqual({ tone: 'ok', text: '6 of 6 pit checks' })
-    expect(pitChecklistSummary([])).toEqual({ tone: 'plain', text: '0 of 0 pit checks' })
-  })
-
-  it('saves additions and checkbox changes in browser storage', async () => {
-    const saved = new Map<string, string>()
-    vi.stubGlobal('localStorage', {
-      getItem: (key: string) => saved.get(key) ?? null,
-      setItem: (key: string, value: string) => saved.set(key, value),
-      removeItem: (key: string) => saved.delete(key),
-    })
-    const result = addPitItem('Saved check', [DEMO_PEOPLE.alex], 'Mechanical')
-    if (!result.ok) throw new Error('Expected an item to be added')
-    setPitItemCompleted(result.value.id, true)
-    reorderPitItem(result.value.id, checklistStore.get().at(-2)!.id)
-    vi.resetModules()
-    const reloaded = await import('./data')
-    expect(reloaded.checklistStore.get().at(-2)).toEqual({ ...result.value, completed: true })
+    expect(byText('Batteries charged and numbered').assignee_ids).toEqual([])
   })
 })
