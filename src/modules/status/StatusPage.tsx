@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { isMentor, useSession } from '../../core/session'
+import { useSession } from '../../core/session'
 import { PageHead } from '../../core/ui'
 import { keepScheduleFresh } from '../scouting/data'
-import { defaultMatch, useOurMatches } from './data'
+import { canManagePit, defaultMatch, useOurMatches } from './data'
 import { MatchPicker } from './MatchPicker'
 import { MyChecklist } from './MyChecklist'
 import { PitChecklist } from './PitChecklist'
@@ -11,7 +11,8 @@ import './status.css'
 
 // The Pit checklist (#146). The folder and id are still "status" so links and
 // other code keep working. Students see their own items for the chosen match;
-// mentors and admins see everyone's progress and the full checklist.
+// student leaders, mentors and admins see everyone's progress and the full
+// checklist, which they run.
 export default function StatusPage() {
   const { role } = useSession()
   const matches = useOurMatches()
@@ -28,7 +29,7 @@ export default function StatusPage() {
         Get the robot ready for each of our matches. Pick the match, then check off your items.
       </PageHead>
       <MatchPicker matches={matches} chosen={match} onChoose={setChosenKey} />
-      {isMentor(role) ? (
+      {canManagePit(role) ? (
         <>
           <TeamProgress match={match} />
           <PitChecklist match={match} />

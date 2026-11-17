@@ -7,10 +7,11 @@ import {
 import { useMembers } from '../../core/members'
 import { useSession } from '../../core/session'
 import { usePitDrag } from './usePitDrag'
+import { ClearList } from './ClearList'
 import { ItemPopup, type ItemPopupMode } from './ItemPopup'
 import { MemberPicker } from './MemberPicker'
 
-/** The full pit checklist, for mentors and admins: every item, checked for the chosen match. */
+/** The full pit checklist, for student leaders, mentors and admins: every item, checked for the chosen match. */
 export function PitChecklist({ match }: { match: PitMatch }) {
   const items = usePitChecklist()
   const checked = checkedIds(usePitChecks(), match.key)
@@ -75,7 +76,7 @@ export function PitChecklist({ match }: { match: PitMatch }) {
     <section className="stack" aria-labelledby="pit-checklist-title">
       <h2 id="pit-checklist-title">Full checklist</h2>
       <p className="muted">
-        Checks are for {match.label}. Drag the handle on the right to reorder items, or use Move to… in an item's three-dot menu. Assign, rename and delete items there too.
+        Checks are for {match.label}. Drag the handle on the right to reorder items, or use Move to… in an item's three-dot menu. Assign, rename and remove items there too. Clear list, under the checklist, unchecks everything for this match or removes every item.
       </p>
       <Panel title="Checklist" aside={<Pill tone={progress.ready ? 'ok' : 'plain'}>{progressText(progress)}</Pill>}>
         <div className="panel-body">
@@ -142,13 +143,13 @@ export function PitChecklist({ match }: { match: PitMatch }) {
                       </div>
                     </details>}
                     </details>
-                    {(['rename', 'delete'] as const).map((mode) => (
+                    {(['rename', 'remove'] as const).map((mode) => (
                       <button key={mode} type="button" className="pit-menu-action" onClick={(event) => {
                         const menu = event.currentTarget.closest('.pit-menu')
                         menu?.removeAttribute('open')
                         menu?.querySelector('summary')?.focus()
                         setPopup({ id: item.id, mode })
-                      }}>{mode === 'rename' ? 'Rename' : 'Delete'}</button>
+                      }}>{mode === 'rename' ? 'Rename' : 'Remove'}</button>
                     ))}
                     <div className="pit-future-tools">
                       <span>Other tools</span>
@@ -175,6 +176,7 @@ export function PitChecklist({ match }: { match: PitMatch }) {
           ))}
         </ul>
       </Panel>
+      <ClearList match={match} itemCount={items.length} checkedCount={progress.done} onDone={(message) => { setError(''); setAnnouncement(message) }} />
       {popup && popupItem && <ItemPopup key={`${popup.id}:${popup.mode}`} item={popupItem} mode={popup.mode}
         onClose={() => setPopup(null)} onSaved={(message) => { setError(''); setAnnouncement(message) }} />}
       {error && <p id="pit-item-error" role="alert">{error}</p>}

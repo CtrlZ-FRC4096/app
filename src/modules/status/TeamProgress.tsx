@@ -2,7 +2,7 @@ import { useMembers } from '../../core/members'
 import { Panel, Pill } from '../../core/ui'
 import { progressByPerson, uncheckedByPerson, usePitChecklist, usePitChecks, type PitMatch } from './data'
 
-/** For mentors: each person's progress for the chosen match, and what's still to do, by who it's assigned to. */
+/** For student leaders, mentors and admins: each person's progress for the chosen match, and what's still to do, by who it's assigned to. */
 export function TeamProgress({ match }: { match: PitMatch }) {
   const items = usePitChecklist()
   const checks = usePitChecks()
