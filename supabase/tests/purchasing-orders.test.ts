@@ -1,7 +1,8 @@
 // Permission rules for placing orders in Purchasing (#78): anyone on the
 // team asks for things and changes their priority, but only mentors and
 // purchasers place, cancel and follow up orders, and set Shipped to and
-// Ordered by. The database fills in Ordered by with whoever places an order.
+// Ordered by, Estimated arrival, Date ordered and the tracking number. The
+// database fills in Ordered by with whoever places an order.
 // Prices are for everyone to see, and anyone can change one until it's ordered.
 // Once an item is ordered, students can't change anything about it.
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -25,6 +26,8 @@ interface Item {
   ordered_by: string | null
   shipped_to: string | null
   estimated_arrival: string | null
+  ordered_on: string | null
+  tracking: string | null
   price: string | null
 }
 
@@ -144,6 +147,54 @@ describe('estimated arrival', () => {
     await setStatus(buyer, item.id, 'placed')
     await setArrival(buyer, item.id, '2026-11-12')
     expect((await db.as<Item & { notes: string }>(buyer, "update public.purchase_items set notes = 'Two boxes' where id = $1 returning *", [item.id]))[0].notes).toBe('Two boxes')
+  })
+})
+
+describe('date ordered and tracking number', () => {
+  const setDetails = (person: string, id: string, date: string | null, tracking: string | null) =>
+    db.as<Item>(person, 'update public.purchase_items set ordered_on = $2, tracking = $3 where id = $1 returning *', [id, date, tracking])
+
+  it('start empty, and are set and emptied by mentors and purchasers', async () => {
+    const item = await ask(student)
+    expect(item).toMatchObject({ ordered_on: null, tracking: null })
+    await setStatus(buyer, item.id, 'placed')
+    const [set] = await setDetails(buyer, item.id, '2026-11-10', 'EXAMPLE-TRACK-0001')
+    expect(set.ordered_on).toBeTruthy()
+    expect(set.tracking).toBe('EXAMPLE-TRACK-0001')
+    expect((await setDetails(mentor, item.id, null, null))[0]).toMatchObject({ ordered_on: null, tracking: null })
+  })
+
+  it("can't be set or changed by a student, on an order or a request", async () => {
+    const tries = [
+      ['ordered_on', '2026-11-10'],
+      ['tracking', 'EXAMPLE-TRACK-0001'],
+    ]
+    const request = await ask(student)
+    const order = await ask(student)
+    await setStatus(buyer, order.id, 'placed')
+    for (const [column, value] of tries) {
+      for (const item of [request, order]) {
+        await expect(db.as(student, `update public.purchase_items set ${column} = $2 where id = $1`, [item.id, value])).rejects.toThrow(PERMISSION_DENIED)
+      }
+      await expect(
+        db.as(student, `insert into public.purchase_items (name, vendor, type, quantity, ${column}) values ('Belt', 'Amazon', 'Drive Base', 1, $1)`, [value]),
+      ).rejects.toThrow(PERMISSION_DENIED)
+    }
+  })
+
+  it('can be seen by a student', async () => {
+    const item = await ask(student)
+    await setStatus(buyer, item.id, 'placed')
+    await setDetails(buyer, item.id, '2026-11-10', 'EXAMPLE-TRACK-0001')
+    expect((await db.as<Item>(student, 'select tracking from public.purchase_items where id = $1', [item.id]))[0].tracking).toBe('EXAMPLE-TRACK-0001')
+  })
+
+  it('refuses a tracking number over 200 characters, or an empty one (empty is saved as nothing)', async () => {
+    const item = await ask(student)
+    await setStatus(buyer, item.id, 'placed')
+    await expect(setDetails(buyer, item.id, null, 'x'.repeat(201))).rejects.toThrow('check constraint')
+    await expect(setDetails(buyer, item.id, null, '')).rejects.toThrow('check constraint')
+    expect((await setDetails(buyer, item.id, null, 'x'.repeat(200)))[0].tracking).toHaveLength(200)
   })
 })
 
