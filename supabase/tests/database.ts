@@ -18,7 +18,7 @@
  * no rules applied: use it to set things up and to check what really changed.
  */
 import { PGlite } from '@electric-sql/pglite'
-import { beforeAll, beforeEach } from 'vitest'
+import { beforeAll, beforeEach, inject } from 'vitest'
 import stub from './supabase-stub.sql?raw'
 
 const migrationFiles = import.meta.glob('../migrations/*.sql', { query: '?raw', import: 'default', eager: true })
@@ -34,9 +34,19 @@ export const TEAM_SLACK_ID = 'T0CTRLZ4096'
 export type Role = 'student' | 'leader' | 'mentor' | 'admin'
 type Params = unknown[]
 
-let template: Promise<PGlite> | undefined
+declare module 'vitest' {
+  export interface ProvidedContext {
+    /** The test database with every migration run, saved by global-setup.ts. */
+    testDatabase?: ArrayBuffer
+  }
+}
 
-async function buildTemplate(): Promise<PGlite> {
+/**
+ * A new database with the stand-in for Supabase and every migration run.
+ * global-setup.ts makes this once for the whole test run, which takes a
+ * couple of seconds, and each test file loads a copy of it.
+ */
+export async function buildTestDatabase(): Promise<PGlite> {
   const db = await PGlite.create()
   await db.exec(stub)
   for (const { file, sql } of migrations) {
@@ -53,8 +63,10 @@ async function buildTemplate(): Promise<PGlite> {
 export function setUpTestDatabase(): TestDatabase {
   const db = new TestDatabase()
   beforeAll(async () => {
-    template ??= buildTemplate()
-    db.db = (await (await template).clone()) as PGlite
+    const saved = inject('testDatabase')
+    // Loading the saved copy takes a fraction of a second. Without one (if
+    // the global setup didn't run), build it here instead.
+    db.db = saved ? await PGlite.create({ loadDataDir: new Blob([saved]) }) : await buildTestDatabase()
   })
   beforeEach(() => db.empty())
   return db
@@ -64,12 +76,41 @@ let slackUsers = 0
 
 export class TestDatabase {
   db!: PGlite
+  /** The SQL that empties the tables, worked out the first time it's needed. */
+  private emptySql: string | undefined
 
   /** Remove every account and every row in every app table, and let the test Slack workspace in. */
   async empty() {
-    const tables = await this.sql<{ name: string }>("select format('%I.%I', schemaname, tablename) as name from pg_tables where schemaname = 'public'")
-    await this.db.exec(`truncate ${['auth.users', 'private.settings', ...tables.map((t) => t.name)].join(', ')} cascade`)
+    this.emptySql ??= await this.makeEmptySql()
+    await this.db.exec(this.emptySql)
     await this.sql('insert into private.settings (key, value) values ($1, $2)', ['slack_team_id', TEAM_SLACK_ID])
+  }
+
+  /**
+   * SQL that empties the accounts, the settings, every app table and every
+   * table that points at one of them (the same tables "truncate ... cascade"
+   * reaches). It deletes the rows instead: with only a few rows, that's about
+   * 7 times faster than truncate, which matters because it runs before every
+   * test. session_replication_role = replica switches off triggers and
+   * foreign key checks while it does, so the order doesn't matter.
+   */
+  private async makeEmptySql(): Promise<string> {
+    const app = await this.sql<{ name: string }>("select format('%I.%I', schemaname, tablename) as name from pg_tables where schemaname = 'public'")
+    const tables = new Set(['auth.users', 'private.settings', ...app.map((t) => t.name)])
+    for (;;) {
+      const pointing = await this.sql<{ name: string }>(
+        `select distinct format('%I.%I', n.nspname, c.relname) as name
+         from pg_constraint k
+           join pg_class c on c.oid = k.conrelid join pg_namespace n on n.oid = c.relnamespace
+           join pg_class r on r.oid = k.confrelid join pg_namespace rn on rn.oid = r.relnamespace
+         where k.contype = 'f' and format('%I.%I', rn.nspname, r.relname) = any($1)`,
+        [[...tables]],
+      )
+      const before = tables.size
+      for (const { name } of pointing) tables.add(name)
+      if (tables.size === before) break
+    }
+    return ['set session_replication_role = replica;', ...[...tables].map((t) => `delete from ${t};`), 'set session_replication_role = default;'].join('\n')
   }
 
   /** Run SQL as the database owner. Permission rules don't apply. */

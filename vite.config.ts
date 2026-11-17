@@ -58,10 +58,12 @@ export default defineConfig({
       VITE_SUPABASE_URL: '',
       VITE_SUPABASE_PUBLISHABLE_KEY: '',
     },
-    // Each file in supabase/tests starts its own test database before its
-    // tests run. With every file starting at once on a busy computer, that
-    // can take longer than the usual 10 seconds, even though each test
-    // itself is quick (they keep the usual limit).
+    // Each file in supabase/tests loads its own copy of the test database
+    // before its tests run. With every file starting at once on a busy
+    // computer, that can take longer than the usual 10 seconds, even though
+    // each test itself is quick (they keep the usual limit).
     hookTimeout: 30_000,
+    // Builds the test database once, for every file in supabase/tests to load a copy of.
+    globalSetup: ['./supabase/tests/global-setup.ts'],
   },
 })
