@@ -21,9 +21,10 @@ The subsystem progress grid used to be here too. It moved to its own module,
 - **Students** see only the items assigned to them, checked for the chosen
   match, with "You're done for Qual 12" once they're all checked. If
   nothing is assigned to them, the page says so.
-- **Mentors and admins** see each person's progress (Alex: 4 of 5), what's
-  still to do grouped by who it's assigned to (unassigned items first, so
-  they stand out), and the full checklist, where they can check any item.
+- **Student leaders, mentors and admins** see each person's progress
+  (Alex: 4 of 5), what's still to do grouped by who it's assigned to
+  (unassigned items first, so they stand out), and the full checklist,
+  which they run: see "Who can do what" below.
 - **The home page tile** says whether we're ready for the next match:
   "Ready for Qual 12", or "3 of 14 left for Qual 12".
 
@@ -31,7 +32,23 @@ Each match starts with a fresh checklist: a check is for one item and one
 match. The checks left behind are a record of what was done before each
 match.
 
-## The full checklist (mentors and admins)
+## Who can do what
+
+| | Students | Student leaders, mentors and admins |
+|:--|:--|:--|
+| See their own items and check them | Yes | Yes |
+| See everyone's progress and the full checklist | | Yes |
+| Check or uncheck any item | | Yes |
+| Add, rename, assign, reorder and remove items | | Yes |
+| Change an item's subgroup, and who's in each subgroup | | Yes |
+| Clear list: uncheck everything, or remove every item | | Yes |
+
+A student who tries is told who to ask, like "Ask a student leader or
+mentor to rename this item." The page decides who sees what with
+`canManagePit()` in `data.ts`, which is `isLeader()`. Hiding the buttons is
+only tidiness: the database's rules below are what stop anyone else.
+
+## The full checklist (student leaders, mentors and admins)
 
 Drag the handle at the right edge of an item to reorder it with a mouse or
 touch. Keyboard users can focus the handle and press Up or Down. The
@@ -41,9 +58,21 @@ turn the transitions off. Releasing outside the list cancels the move.
 
 Each item's three-dot menu has **Move to…** (type a position and press
 **Move**; `movePitItemTo()` checks it's from 1 to the number of items),
-**Person assignment**, **Rename** and **Delete**. Escape closes the menu.
+**Person assignment**, **Rename** and **Remove**. Escape closes the menu.
 Assignments save straight away; clearing everyone leaves the item
-unassigned. Deleting asks first, and takes the item's checks with it.
+unassigned, and changing who's on an item never unchecks it. Remove asks
+first (a second tap), and takes the item's checks with it
+(`removePitItem()`).
+
+**Clear list**, under the checklist, opens a small popup with two choices.
+Each says how many items it affects and needs a second tap:
+
+- **Uncheck everything** unchecks every item for the chosen match
+  (`uncheckAllPitItems(matchKey)`). The items, their people and other
+  matches' checks stay. Each match already starts unchecked, so this is
+  mostly for the practice round, which is used again and again.
+- **Remove every item** empties the list for everyone, with every check
+  (`clearPitChecklist()`).
 
 Each item shows a subgroup tag: General, Mechanical, Electrical,
 Programming or Drive team. Click it to change the subgroup. Assignment
@@ -66,20 +95,22 @@ straight away (`supabase/migrations/..._pit_checklist.sql`):
 The database's rules, tested in `supabase/tests/pit-checklist.test.ts`:
 
 - Everyone on the team reads the items and every check.
-- Mentors and admins add, rename, assign, reorder and delete items, and
-  check or uncheck any item.
+- Student leaders, mentors and admins add, rename, assign, reorder and
+  delete items, and check or uncheck any item
+  (`..._pit_checklist_student_leaders.sql`, which swapped the mentor-only
+  rules the first migration made).
 - A student can only check or uncheck items assigned to them. The database
   refuses anything else.
 
 **Who's in each subgroup** is still saved in each browser, not the
-database: a mentor sets it on their own device (Person assignment > Edit
-subgroup members). A subgroup nobody has set up on that device lists
+database: a student leader or mentor sets it on their own device (Person
+assignment > Edit subgroup members). A subgroup nobody has set up on that device lists
 everyone. It only decides who shows in the assignment lists.
 
 **Items from the old local preview** (saved in a browser before this
 change) aren't moved over. They stay in that browser's storage, unused.
-The checklist starts from what's in the team database; a mentor adds the
-items again there.
+The checklist starts from what's in the team database; a student leader
+or mentor adds the items again there.
 
 ## How the matches work
 
@@ -95,7 +126,10 @@ no connection, and `matchesWithPredictions()` puts each match with Match
 - Tiles showing each other module's summary (low stock, short BOM lines,
   and so on), built from each module's `useSummary` hook.
 - A big-screen view for the pit TV.
-- Saving subgroup members in the team database, so mentors set them once.
+- Saving subgroup members in the team database, so they're set once.
+- People as name tags on each item, with a People popup to change them,
+  and a Subgroups panel for who's in each subgroup.
+- Select several items and give them to the same people.
 - Should the checklist show which battery is in the robot (the Batteries
   module)?
 

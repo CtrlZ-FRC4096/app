@@ -1,6 +1,6 @@
 import { createStore, useStore } from '../../core/store'
 import { createTable, fail, ok, type Result, type Row } from '../../core/table'
-import { currentUser, isMentor } from '../../core/session'
+import { currentUser, isLeader } from '../../core/session'
 import { membersTable } from '../../core/members'
 import { DEMO_PEOPLE } from '../../core/demo'
 import { isLive } from '../../core/supabase'
@@ -16,17 +16,18 @@ import { EVENT_KEY } from '../scouting/season'
 // ..._pit_checklist.sql), so everyone sees the same items and checks:
 //   pit_checklist_items   the items, with who each is assigned to
 //   pit_checklist_checks  one row per item checked for a match
-// Mentors and admins add, rename, assign, reorder and delete items, and
-// check anything. Students check only the items assigned to them. The
-// database refuses anything else; the checks here are so the page can say
-// why straight away.
+// Student leaders, mentors and admins add, rename, assign, reorder and
+// remove items, clear the list, and check anything
+// (..._pit_checklist_student_leaders.sql). Students check only the items
+// assigned to them. The database refuses anything else; the checks here are
+// so the page can say why straight away.
 
 export const PIT_SUBGROUPS = ['General', 'Mechanical', 'Electrical', 'Programming', 'Drive team'] as const
 export type PitSubgroup = typeof PIT_SUBGROUPS[number]
 
 // Who's in each subgroup, so the assignment lists show the right people.
-// Still saved in each browser, not the team database: a mentor sets it on
-// their own device. A subgroup nobody has set up yet lists everyone. The
+// Still saved in each browser, not the team database: a student leader or
+// mentor sets it on their own device. A subgroup nobody has set up yet lists everyone. The
 // made-up members only make sense in demo mode.
 const DEMO_SUBGROUP_MEMBERS: Record<string, string[]> = {
   Mechanical: [DEMO_PEOPLE.alex, DEMO_PEOPLE.jordan],
@@ -69,7 +70,7 @@ export interface PitItem extends Row {
   text: string
   /** One of PIT_SUBGROUPS. */
   subgroup: string
-  /** Members' ids. Only they (and mentors) can check the item. */
+  /** Members' ids. Only they (and student leaders, mentors and admins) can check the item. */
   assignee_ids: string[]
   /** Its place in the list: smaller is higher up. */
   position: number
@@ -125,9 +126,15 @@ export function usePitChecks(): PitCheck[] {
   return checksTable.useRows()
 }
 
-function mentorProblem(message: string): string | null {
+/** Whether someone runs the checklist: student leaders, mentors and admins. */
+export function canManagePit(role: Role): boolean {
+  return isLeader(role)
+}
+
+/** Null for someone who runs the checklist; otherwise who to ask, like "Ask a student leader or mentor to rename this item." */
+function leaderProblem(what: string): string | null {
   const user = currentUser()
-  return user && isMentor(user.role) ? null : message
+  return user && canManagePit(user.role) ? null : `Ask a student leader or mentor to ${what}.`
 }
 
 function checkAssignees(ids: string[], subgroup = 'General', allowEmpty = false): string | null {
@@ -149,18 +156,18 @@ function checkText(text: string): string | null {
 const findItem = (id: string) => itemsTable.rows().find((item) => item.id === id)
 const MISSING = 'That item is no longer on the checklist.'
 
-/** Add an item at the bottom of the list. Mentors and admins only. */
+/** Add an item at the bottom of the list. Student leaders, mentors and admins only. */
 export async function addPitItem(text: string, assigneeIds: string[], subgroup: PitSubgroup = 'General'): Promise<Result<PitItem>> {
-  const problem = mentorProblem('Ask a mentor to add checklist items.') ?? checkText(text) ??
+  const problem = leaderProblem('add checklist items') ?? checkText(text) ??
     (PIT_SUBGROUPS.includes(subgroup) ? null : 'Choose a subgroup from the list.') ?? checkAssignees(assigneeIds, subgroup)
   if (problem) return fail(problem)
   const last = itemsTable.rows().at(-1)
   return itemsTable.insert({ text: text.trim(), subgroup, assignee_ids: [...new Set(assigneeIds)], position: (last?.position ?? 0) + 1 })
 }
 
-/** Change who an item is assigned to. Clearing everyone leaves it unassigned. Mentors and admins only. */
+/** Change who an item is assigned to. Clearing everyone leaves it unassigned. Student leaders, mentors and admins only. */
 export async function assignPitItem(id: string, assigneeIds: string[]): Promise<Result> {
-  const problem = mentorProblem('Ask a mentor to change the people assigned to this item.')
+  const problem = leaderProblem('change the people assigned to this item')
   if (problem) return fail(problem)
   const item = findItem(id)
   if (!item) return fail(MISSING)
@@ -170,9 +177,9 @@ export async function assignPitItem(id: string, assigneeIds: string[]): Promise<
   return result.ok ? ok(null) : result
 }
 
-/** Change an item's subgroup. People not in the new subgroup are unassigned. Mentors and admins only. */
+/** Change an item's subgroup. People not in the new subgroup are unassigned. Student leaders, mentors and admins only. */
 export async function setPitItemSubgroup(id: string, subgroup: PitSubgroup): Promise<Result> {
-  const problem = mentorProblem('Ask a mentor to change this item’s subgroup.') ?? (PIT_SUBGROUPS.includes(subgroup) ? null : 'Choose a subgroup from the list.')
+  const problem = leaderProblem('change this item’s subgroup') ?? (PIT_SUBGROUPS.includes(subgroup) ? null : 'Choose a subgroup from the list.')
   if (problem) return fail(problem)
   const item = findItem(id)
   if (!item) return fail(MISSING)
@@ -180,18 +187,18 @@ export async function setPitItemSubgroup(id: string, subgroup: PitSubgroup): Pro
   return result.ok ? ok(null) : result
 }
 
-/** Rename an item, keeping its assignments, place and checks. Mentors and admins only. */
+/** Rename an item, keeping its assignments, place and checks. Student leaders, mentors and admins only. */
 export async function renamePitItem(id: string, text: string): Promise<Result> {
-  const problem = mentorProblem('Ask a mentor to rename this item.') ?? checkText(text)
+  const problem = leaderProblem('rename this item') ?? checkText(text)
   if (problem) return fail(problem)
   if (!findItem(id)) return fail(MISSING)
   const result = await itemsTable.update(id, { text: text.trim() })
   return result.ok ? ok(null) : result
 }
 
-/** Delete an item, and its checks with it. Mentors and admins only. */
+/** Remove an item, and its checks with it. Student leaders, mentors and admins only. */
 export async function removePitItem(id: string): Promise<Result> {
-  const problem = mentorProblem('Ask a mentor to delete checklist items.')
+  const problem = leaderProblem('remove checklist items')
   if (problem) return fail(problem)
   if (!findItem(id)) return fail(MISSING)
   const result = await itemsTable.remove(id)
@@ -202,6 +209,22 @@ export async function removePitItem(id: string): Promise<Result> {
   return result
 }
 
+/**
+ * Remove every item, and every check with them, to start the list again.
+ * Gives back how many items were removed. Student leaders, mentors and
+ * admins only.
+ */
+export async function clearPitChecklist(): Promise<Result<number>> {
+  const problem = leaderProblem('clear the checklist')
+  if (problem) return fail(problem)
+  const items = itemsTable.rows()
+  for (const item of items) {
+    const result = await removePitItem(item.id)
+    if (!result.ok) return result
+  }
+  return ok(items.length)
+}
+
 /** A position between two neighbours, so moving an item changes only that item. */
 export function positionBetween(before: number | undefined, after: number | undefined): number {
   if (before !== undefined && after !== undefined) return (before + after) / 2
@@ -210,9 +233,9 @@ export function positionBetween(before: number | undefined, after: number | unde
   return 0
 }
 
-/** Move an item to where `targetId` is now. Mentors and admins only. */
+/** Move an item to where `targetId` is now. Student leaders, mentors and admins only. */
 export async function reorderPitItem(id: string, targetId: string): Promise<Result> {
-  const problem = mentorProblem('Ask a mentor to reorder the checklist.')
+  const problem = leaderProblem('reorder the checklist')
   if (problem) return fail(problem)
   const items = itemsTable.rows()
   const from = items.findIndex((item) => item.id === id)
@@ -248,9 +271,9 @@ export async function movePitItem(id: string, direction: -1 | 1): Promise<Result
   return reorderPitItem(id, items[to].id)
 }
 
-/** Choose who's in a subgroup, on this device. Removes their assignments on that subgroup's items. Mentors and admins only. */
+/** Choose who's in a subgroup, on this device. Removes their assignments on that subgroup's items. Student leaders, mentors and admins only. */
 export async function setSubgroupMembers(subgroup: PitSubgroup, ids: string[]): Promise<Result> {
-  const problem = mentorProblem('Ask a mentor to edit subgroup members.')
+  const problem = leaderProblem('edit subgroup members')
   if (problem) return fail(problem)
   if (!PIT_SUBGROUPS.includes(subgroup) || subgroup === 'General') return fail('General includes all active team members.')
   if (ids.some((id) => !membersTable.rows().some((member) => member.id === id && member.active))) return fail('Choose active team members.')
@@ -267,9 +290,9 @@ export async function setSubgroupMembers(subgroup: PitSubgroup, ids: string[]): 
 // ---------------------------------------------------------------------------
 // Checking items, for a match.
 
-/** Whether someone may check an item: the people assigned to it, and mentors and admins. */
+/** Whether someone may check an item: the people assigned to it, and student leaders, mentors and admins. */
 export function canCheck(item: Pick<PitItem, 'assignee_ids'>, user: { id: string; role: Role }): boolean {
-  return isMentor(user.role) || item.assignee_ids.includes(user.id)
+  return canManagePit(user.role) || item.assignee_ids.includes(user.id)
 }
 
 /** Check or uncheck an item for a match. */
@@ -277,7 +300,7 @@ export async function setPitItemCompleted(id: string, matchKey: string, complete
   const item = findItem(id)
   if (!item) return fail(`${MISSING} Try another item.`)
   const user = currentUser()
-  if (!user || !canCheck(item, user)) return fail('Only people assigned to this item can check or uncheck it. Ask a mentor if it should be yours.')
+  if (!user || !canCheck(item, user)) return fail('Only people assigned to this item can check or uncheck it. Ask a student leader or mentor if it should be yours.')
   const existing = checksTable.rows().find((check) => check.item_id === id && check.match_key === matchKey)
   if (completed) {
     if (existing) return ok(null)
@@ -285,6 +308,23 @@ export async function setPitItemCompleted(id: string, matchKey: string, complete
     return result.ok ? ok(null) : result
   }
   return existing ? checksTable.remove(existing.id) : ok(null)
+}
+
+/**
+ * Uncheck every item for one match, keeping the items and their people.
+ * Each match already starts unchecked, so this is mostly for the practice
+ * round, which is used again and again. Gives back how many were unchecked.
+ * Student leaders, mentors and admins only.
+ */
+export async function uncheckAllPitItems(matchKey: string): Promise<Result<number>> {
+  const problem = leaderProblem('uncheck the whole checklist')
+  if (problem) return fail(problem)
+  const checks = checksTable.rows().filter((check) => check.match_key === matchKey)
+  for (const check of checks) {
+    const result = await checksTable.remove(check.id)
+    if (!result.ok) return result
+  }
+  return ok(checks.length)
 }
 
 /** The ids of the items checked for a match. */
@@ -352,7 +392,7 @@ export interface UncheckedGroup {
   items: PitItem[]
 }
 
-/** The items not checked yet for a match, by who they're assigned to: unassigned first, so a mentor sees them, then people by name. */
+/** The items not checked yet for a match, by who they're assigned to: unassigned first, so they stand out, then people by name. */
 export function uncheckedByPerson(items: PitItem[], checks: PitCheck[], matchKey: string, members: { id: string; name: string }[]): UncheckedGroup[] {
   const checked = checkedIds(checks, matchKey)
   const left = items.filter((item) => !checked.has(item.id))

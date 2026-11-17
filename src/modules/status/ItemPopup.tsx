@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { MAX_ITEM_LENGTH, PIT_SUBGROUPS, removePitItem, renamePitItem, setPitItemSubgroup, type PitItem } from './data'
 
-export type ItemPopupMode = 'subgroup' | 'rename' | 'delete'
+export type ItemPopupMode = 'subgroup' | 'rename' | 'remove'
 
-const TITLES: Record<ItemPopupMode, string> = { subgroup: 'Choose subgroup', rename: 'Rename item', delete: 'Delete item' }
+const TITLES: Record<ItemPopupMode, string> = { subgroup: 'Choose subgroup', rename: 'Rename item', remove: 'Remove item' }
 
 export function ItemPopup({ item, mode, onClose, onSaved }: {
   item: PitItem
@@ -67,12 +67,12 @@ export function ItemPopup({ item, mode, onClose, onSaved }: {
             <button type="submit" className="btn btn-primary pit-add" disabled={saving}>Rename</button>
           </div>
         </form>}
-        {mode === 'delete' && <>
-          <p>Delete “{item.text}”? It comes off the checklist for everyone, with its checks for every match. This can't be undone.</p>
+        {mode === 'remove' && <>
+          <p>Remove “{item.text}”? It comes off the checklist for everyone, with its checks for every match. This can't be undone.</p>
           <div className="toolbar">
             <button type="button" className="btn pit-add" autoFocus onClick={onClose}>Cancel</button>
             <button type="button" className="btn btn-primary pit-add" disabled={saving}
-              onClick={() => void save(removePitItem(item.id), 'Checklist item deleted.')}>Delete</button>
+              onClick={() => void save(removePitItem(item.id), 'Checklist item removed.')}>Remove</button>
           </div>
         </>}
         {error && <p id="pit-popup-error" role="alert">{error}</p>}

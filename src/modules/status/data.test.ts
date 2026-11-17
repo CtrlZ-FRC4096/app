@@ -7,10 +7,11 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   MAX_ITEM_LENGTH, PRACTICE_KEY, PRACTICE_MATCH, addPitItem, assignPitItem, belongsToSubgroup, canCheck, checkedIds, checksTable, defaultMatch, itemsTable,
   matchMembers, matchProgress, movePitItem, movePitItemTo, myItems, nameMatches, ourMatches, pitSummary, positionBetween, progressByPerson, progressText,
-  removePitItem, renamePitItem, reorderPitItem, setPitItemCompleted, setPitItemSubgroup, setSubgroupMembers, subgroupMembersStore, uncheckedByPerson,
+  canManagePit, clearPitChecklist, removePitItem, renamePitItem, reorderPitItem, setPitItemCompleted, setPitItemSubgroup, setSubgroupMembers, subgroupMembersStore, uncheckAllPitItems, uncheckedByPerson,
   usePitSummary, type PitCheck, type PitItem,
 } from './data'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
+import { ROLES, type Role } from '../../core/roles'
 import { membersTable } from '../../core/members'
 import { scheduleStore, type MatchPrediction, type TbaMatch } from '../scouting/data'
 import { EVENT_KEY } from '../scouting/season'
@@ -55,21 +56,51 @@ describe('finding someone to assign', () => {
   })
 })
 
-describe('changing items: mentors and admins only', () => {
-  it("doesn't let a student add, rename, assign, reorder or delete, and says to ask a mentor", async () => {
-    const first = itemsTable.rows()[0]
-    for (const result of [
-      await addPitItem('Mine', [DEMO_PEOPLE.alex]),
-      await renamePitItem(first.id, 'Renamed'),
-      await assignPitItem(first.id, [DEMO_PEOPLE.pat]),
-      await setPitItemSubgroup(first.id, 'General'),
-      await reorderPitItem(first.id, itemsTable.rows()[2].id),
-      await removePitItem(first.id),
-    ]) {
-      expect(result).toEqual({ ok: false, error: expect.stringMatching(/Ask a mentor/) })
+describe('changing items: student leaders, mentors and admins only', () => {
+  it('lets each role do what it may: students only check their own items, and are told who to ask', async () => {
+    // Everything that changes the checklist, each tried on fresh example data.
+    const first = () => itemsTable.rows()[0]
+    const changes: Record<string, () => Promise<{ ok: boolean; error?: string }>> = {
+      add: () => addPitItem('Tools packed', [DEMO_PEOPLE.pat]),
+      rename: () => renamePitItem(first().id, 'Renamed'),
+      assign: () => assignPitItem(first().id, [DEMO_PEOPLE.pat]),
+      'change the subgroup': () => setPitItemSubgroup(first().id, 'General'),
+      reorder: () => reorderPitItem(first().id, itemsTable.rows()[2].id),
+      'edit subgroup members': () => setSubgroupMembers('Electrical', [DEMO_PEOPLE.pat]),
+      remove: () => removePitItem(first().id),
+      'uncheck everything': () => uncheckAllPitItems(QM3),
+      'clear the list': () => clearPitChecklist(),
+      // Nobody is assigned to the safety glasses, so only people who run the checklist can check it.
+      "check someone else's item": () => setPitItemCompleted(byText('Safety glasses for everyone in the pit').id, QM3, true),
     }
-    expect(itemsTable.rows()[0]).toEqual(first)
-    expect(itemsTable.rows()).toHaveLength(6)
+    const may: Record<Role, boolean> = { student: false, leader: true, mentor: true, admin: true }
+    expect(Object.keys(may)).toEqual(ROLES)
+    for (const role of ROLES) {
+      expect(canManagePit(role), role).toBe(may[role])
+      for (const [what, change] of Object.entries(changes)) {
+        itemsTable.reset()
+        checksTable.reset()
+        subgroupMembersStore.reset()
+        setDemoRole(role)
+        const before = { items: itemsTable.rows(), checks: checksTable.rows() }
+        const result = await change()
+        expect(result.ok, `${role}: ${what}`).toBe(may[role])
+        if (may[role]) continue
+        expect(result.error, `${role}: ${what}`).toMatch(/student leader or mentor/)
+        expect({ items: itemsTable.rows(), checks: checksTable.rows() }, `${role}: ${what}`).toEqual(before)
+      }
+    }
+  })
+
+  it('lets a student check their own item', async () => {
+    expect((await setPitItemCompleted(byText('Robot weighed').id, QM3, true)).ok).toBe(true)
+  })
+
+  it('says who to ask, for each thing', async () => {
+    const first = itemsTable.rows()[0]
+    expect(await renamePitItem(first.id, 'Renamed')).toEqual({ ok: false, error: 'Ask a student leader or mentor to rename this item.' })
+    expect(await removePitItem(first.id)).toEqual({ ok: false, error: 'Ask a student leader or mentor to remove checklist items.' })
+    expect(await clearPitChecklist()).toEqual({ ok: false, error: 'Ask a student leader or mentor to clear the checklist.' })
   })
 
   it('adds a trimmed item at the bottom, and refuses blank or oversized items or nobody assigned', async () => {
@@ -108,6 +139,41 @@ describe('changing items: mentors and admins only', () => {
     expect((await setPitItemSubgroup(code.id, 'Electrical')).ok).toBe(true)
     expect(byText('Code deployed')).toMatchObject({ subgroup: 'Electrical', assignee_ids: [] })
     expect((await setPitItemSubgroup(code.id, 'unknown' as 'General')).ok).toBe(false)
+  })
+
+  it('keeps an item checked when the people on it change', async () => {
+    setDemoRole('leader')
+    const batteries = byText('Batteries charged and numbered')
+    expect(checkedIds(checksTable.rows(), QM3).has(batteries.id)).toBe(true)
+    expect((await assignPitItem(batteries.id, [DEMO_PEOPLE.pat])).ok).toBe(true)
+    expect((await assignPitItem(batteries.id, [])).ok).toBe(true)
+    expect(byText('Batteries charged and numbered').assignee_ids).toEqual([])
+    expect(checkedIds(checksTable.rows(), QM3).has(batteries.id)).toBe(true)
+  })
+
+  it('unchecks everything for one match, keeping the items, their people and other matches’ checks', async () => {
+    setDemoRole('leader')
+    const before = itemsTable.rows()
+    await setPitItemCompleted(before[2].id, PRACTICE_KEY, true)
+    expect(await uncheckAllPitItems(QM3)).toEqual({ ok: true, value: 2 })
+    expect(checkedIds(checksTable.rows(), QM3).size).toBe(0)
+    expect(checkedIds(checksTable.rows(), PRACTICE_KEY)).toEqual(new Set([before[2].id]))
+    expect(itemsTable.rows()).toEqual(before)
+    // Nothing left to uncheck isn't a problem.
+    expect(await uncheckAllPitItems(QM3)).toEqual({ ok: true, value: 0 })
+  })
+
+  it('clears the list: every item and every check, and says how many items went', async () => {
+    setDemoRole('leader')
+    expect(await clearPitChecklist()).toEqual({ ok: true, value: 6 })
+    expect(itemsTable.rows()).toEqual([])
+    expect(checksTable.rows()).toEqual([])
+    expect(await clearPitChecklist()).toEqual({ ok: true, value: 0 })
+  })
+
+  it('removes an item that is already gone with a message, not a crash', async () => {
+    setDemoRole('leader')
+    expect(await removePitItem('not-an-item')).toEqual({ ok: false, error: 'That item is no longer on the checklist.' })
   })
 
   it('deletes an item and its checks', async () => {
@@ -162,7 +228,7 @@ describe('reordering', () => {
 })
 
 describe('checking items for a match', () => {
-  it('lets a student check only their own items, and says to ask a mentor otherwise', async () => {
+  it('lets a student check only their own items, and says who to ask otherwise', async () => {
     const robot = byText('Robot weighed')
     const bumpers = byText('Both bumper colors packed')
     expect(await setPitItemCompleted(robot.id, QM3, true)).toEqual({ ok: true, value: null })
@@ -177,6 +243,7 @@ describe('checking items for a match', () => {
     setDemoRole('admin')
     expect((await setPitItemCompleted(byText('Safety glasses for everyone in the pit').id, QM3, true)).ok).toBe(true)
     expect(canCheck({ assignee_ids: [] }, { id: 'x', role: 'mentor' })).toBe(true)
+    expect(canCheck({ assignee_ids: [] }, { id: 'x', role: 'leader' })).toBe(true)
     expect(canCheck({ assignee_ids: ['x'] }, { id: 'x', role: 'student' })).toBe(true)
     expect(canCheck({ assignee_ids: [] }, { id: 'x', role: 'student' })).toBe(false)
   })

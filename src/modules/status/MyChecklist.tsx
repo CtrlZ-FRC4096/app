@@ -14,7 +14,7 @@ export function MyChecklist({ match }: { match: PitMatch }) {
   if (mine.length === 0) {
     return (
       <Panel title="Your items">
-        <p className="panel-body muted" style={{ margin: 0 }}>Nothing on the pit checklist is assigned to you. Ask a mentor if you should have something.</p>
+        <p className="panel-body muted" style={{ margin: 0 }}>Nothing on the pit checklist is assigned to you. Ask a student leader or mentor if you should have something.</p>
       </Panel>
     )
   }
