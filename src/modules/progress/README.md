@@ -1,33 +1,46 @@
 # Build progress
 
-**Partly built.** A grid of the robot's subsystems by stage: Design, Built,
-Wired, Programmed and Tested. Tapping a cell moves it along: Not started →
-In progress → Done → Not started.
+A grid of the robot's subsystems by stage: Design, Built, Wired,
+Programmed and Tested. Each cell is Not started, In progress or Done.
 
 It used to be at the top of Robot status, in the Competition menu. It moved
 here, under Build, in #65 (step 1). Robot status kept the pit checklist.
 
-## What works so far
+## What works
 
-- The grid, with the subsystems (`SUBSYSTEMS`) and stages (`STAGES`) from `data.ts`
-- `advanceStage()` in `data.ts` moves one cell along, with tests in `data.test.ts`
-- On a phone the grid scrolls sideways inside its box; the page doesn't
+- The grid is saved in the team database (#65, step 2), so everyone sees
+  the same grid and it's still there after a reload.
+- **Student leaders, mentors and admins** tap a cell to move it along: Not
+  started → In progress → Done → Not started. They also get **Add a
+  subsystem**, and under each subsystem's name **↑ ↓** to reorder it,
+  **Rename** and **Remove** (two presses).
+- **Students** see the grid, but the cells aren't buttons, with a note
+  saying student leaders and mentors update it.
+- On a phone the grid scrolls sideways inside its box; the page doesn't.
 
-**Not saved yet.** Changes reset when you leave or reload the page, and
-nobody else sees them.
+## How it's saved
 
-## What it needs to do (#65, step 2)
+The `build_subsystems` table (`supabase/migrations/..._build_subsystems.sql`):
+one row per subsystem, with its name, its `position` on the grid, and
+`stages`, each stage's state by name, like `{"Design": "Done"}`. A stage
+that isn't there is Not started.
 
-- Save the grid in a table (such as `build_subsystems`) so it's shared with
-  the team and survives a reload. That needs a migration, permission tests
-  and example rows for demo mode, and changes in `supabase/` need a
-  mentor's approval.
-- Anyone on the team can change a cell.
-- Mentors add, rename and remove subsystems.
+The stages are `STAGES` in `data.ts`, not columns in the table, so adding
+or renaming a stage needs no migration. (Renaming a stage in `STAGES`
+would start it again from Not started, since saved rows use the old name.)
 
-Decide these first, with a mentor:
+Who can do what is in the migration's rules: everyone on the team reads the
+grid; only `private.is_leader()` (student leaders, mentors and admins)
+adds, changes and removes. Students are refused by the database too, not
+just by the page. The rules are tested in
+`supabase/tests/build-subsystems.test.ts`; the functions in `data.ts` are
+tested in `data.test.ts`.
 
-- **Who adds subsystems:** mentors only, or anyone on the team?
+#65 first said anyone on the team could change a cell. It was decided
+that only student leaders and above change it.
+
+## Still to decide, with a mentor
+
 - **Should the grid use the BOM's systems** (Intake, Drivetrain, … in
   `bom_systems`), so the team names each system once? #23 plans progress
   dashboards for those same systems.

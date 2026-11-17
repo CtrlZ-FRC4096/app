@@ -24,6 +24,30 @@
   white-space: nowrap;
 }
 
+/* What students see: the state, shaped like the buttons, but not a button. */
+.progress-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 14px;
+}
+
+/* A leader's buttons for a subsystem, under its name. */
+.progress-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.progress-rename {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
 .progress-cell[data-state='In progress'] {
   color: var(--warn);
   background: var(--warn-bg);
