@@ -27,6 +27,7 @@ import { members } from './members'
 import { roster } from './roster'
 import { training } from './training'
 import { feedback } from './feedback'
+import { leaderboard } from './leaderboard'
 import { example } from './example'
 
-export const modules: ModuleDefinition[] = [inventory, bom, purchasing, cnc, progress, prescouting, scouting, batteries, robotLogs, status, calendar, attendance, members, roster, training, feedback, example]
+export const modules: ModuleDefinition[] = [inventory, bom, purchasing, cnc, progress, prescouting, scouting, batteries, robotLogs, status, calendar, attendance, members, roster, training, feedback, leaderboard, example]
