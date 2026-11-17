@@ -294,8 +294,9 @@ export const DRIVER_SKILLS = [1, 2, 3, 4, 5]
  * Entries saved before roles, broke_down, stop and driver_skill were added
  * don't have them, and have a defense field instead. Entries saved before
  * #162 don't have role_notes, broke_parts, broke_other, browned_out,
- * auto_side, auto_notes or ranking_points. Syncing must fill in the missing
- * ones rather than assume every entry has them.
+ * auto_side, auto_notes or ranking_points, and entries saved before #185
+ * don't have died. Syncing must fill in the missing ones rather than assume
+ * every entry has them.
  */
 export interface Entry {
   /** Made on the device, so sending an entry twice can't make two rows. */
@@ -325,7 +326,12 @@ export interface Entry {
   broke_parts: string[]
   /** Anything else that broke, typed. '' if left blank. Only when broke_down. */
   broke_other: string
-  /** The robot lost power or visibly browned out (stuttering, lights flickering). */
+  /** The robot's battery ran out: it lost power and stopped. Separate from broke_down (#185). */
+  died: boolean
+  /**
+   * The robot's power dipped for a moment (stuttering, lights flickering) and
+   * it kept going. Before #185 this tick also meant it died.
+   */
   browned_out: boolean
   stop: Stop
   /** One of DRIVER_SKILLS. */
@@ -347,7 +353,7 @@ export interface Entry {
 export type EntryFields = Pick<
   Entry,
   | 'match' | 'team' | 'counts' | 'endgame' | 'roles' | 'role_notes' | 'broke_down' | 'broke_parts' | 'broke_other'
-  | 'browned_out' | 'stop' | 'driver_skill' | 'auto_side' | 'auto_notes' | 'ranking_points' | 'notes'
+  | 'died' | 'browned_out' | 'stop' | 'driver_skill' | 'auto_side' | 'auto_notes' | 'ranking_points' | 'notes'
 >
 
 // Newest first. keepOnReset: "Reset example data" must never delete real
@@ -440,7 +446,12 @@ export interface ScoutingEntry extends Row {
   /** Any of BREAKDOWN_PARTS in season.ts. Empty for entries saved before #162. */
   broke_parts: string[]
   broke_other: string | null
-  /** False for entries saved before #162. */
+  /** Its battery ran out and it stopped. False for entries saved before #185. */
+  died: boolean
+  /**
+   * Its power dipped for a moment and it kept going. False for entries saved
+   * before #162. Before #185 this also meant it died.
+   */
   browned_out: boolean
   stop: Stop
   /** 1 to 5. Empty for entries saved before driver skill was on the form. */
@@ -460,15 +471,15 @@ export interface ScoutingEntry extends Row {
 
 // Made up, for demo mode. Team numbers in the 9990s, so nobody mistakes them for real scouting.
 const EXAMPLE_ENTRIES: ScoutingEntry[] = [
-  { id: '00000000-0000-4000-8000-0000000d0001', event_key: EVENT_KEY, match_number: 1, team_number: 9991, counts: { autoFuel: 3, teleopFuel: 12, fuelMissed: 4 }, endgame: 'Level 2', roles: ['Scorer'], role_notes: 'Quick cycles, missed a few long shots', broke_down: false, broke_parts: [], broke_other: null, browned_out: false, stop: 'None', driver_skill: 4, auto_side: 'Center', auto_notes: 'Scored preload and 2 more', ranking_points: ['Energized'], notes: 'Fast intake', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-07T15:02:00Z', created_at: '2026-11-07T15:03:00Z', created_by: DEMO_PEOPLE.jordan },
-  { id: '00000000-0000-4000-8000-0000000d0002', event_key: EVENT_KEY, match_number: 1, team_number: 9992, counts: { autoFuel: 0, teleopFuel: 5, fuelMissed: 1 }, endgame: 'None', roles: ['Defender'], role_notes: null, broke_down: true, broke_parts: ['Intake'], broke_other: null, browned_out: true, stop: 'A-stop', driver_skill: 2, auto_side: 'Left', auto_notes: null, ranking_points: [], notes: null, scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-07T15:02:30Z', created_at: '2026-11-07T15:04:00Z', created_by: DEMO_PEOPLE.alex },
+  { id: '00000000-0000-4000-8000-0000000d0001', event_key: EVENT_KEY, match_number: 1, team_number: 9991, counts: { autoFuel: 3, teleopFuel: 12, fuelMissed: 4 }, endgame: 'Level 2', roles: ['Scorer'], role_notes: 'Quick cycles, missed a few long shots', broke_down: false, broke_parts: [], broke_other: null, died: false, browned_out: false, stop: 'None', driver_skill: 4, auto_side: 'Center', auto_notes: 'Scored preload and 2 more', ranking_points: ['Energized'], notes: 'Fast intake', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-07T15:02:00Z', created_at: '2026-11-07T15:03:00Z', created_by: DEMO_PEOPLE.jordan },
+  { id: '00000000-0000-4000-8000-0000000d0002', event_key: EVENT_KEY, match_number: 1, team_number: 9992, counts: { autoFuel: 0, teleopFuel: 5, fuelMissed: 1 }, endgame: 'None', roles: ['Defender'], role_notes: null, broke_down: true, broke_parts: ['Intake'], broke_other: null, died: false, browned_out: true, stop: 'A-stop', driver_skill: 2, auto_side: 'Left', auto_notes: null, ranking_points: [], notes: null, scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-07T15:02:30Z', created_at: '2026-11-07T15:04:00Z', created_by: DEMO_PEOPLE.alex },
 ]
 
-// Version 2: the questions from #162 were added to the rows.
-export const entriesTable = createTable<ScoutingEntry>('scouting_entries', { demo: EXAMPLE_ENTRIES, sort: newestFirst, version: 2 })
+// Version 2: the questions from #162 were added to the rows. Version 3: died (#185).
+export const entriesTable = createTable<ScoutingEntry>('scouting_entries', { demo: EXAMPLE_ENTRIES, sort: newestFirst, version: 3 })
 
-/** Fields added to the form after the first entries were saved on phones: #28's, then #162's. */
-type AddedLater = 'roles' | 'broke_down' | 'stop' | 'driver_skill' | 'role_notes' | 'broke_parts' | 'broke_other' | 'browned_out' | 'auto_side' | 'auto_notes' | 'ranking_points'
+/** Fields added to the form after the first entries were saved on phones: #28's, then #162's, then #185's. */
+type AddedLater = 'roles' | 'broke_down' | 'stop' | 'driver_skill' | 'role_notes' | 'broke_parts' | 'broke_other' | 'died' | 'browned_out' | 'auto_side' | 'auto_notes' | 'ranking_points'
 
 /** An entry saved on a phone by an older version of the app, before some questions were on the form. */
 type OlderEntry = Omit<Entry, AddedLater> & Partial<Pick<Entry, AddedLater>> & { defense?: boolean }
@@ -494,6 +505,7 @@ export function toRow(saved: Entry | OlderEntry): Omit<ScoutingEntry, 'created_a
     broke_down: entry.broke_down ?? false,
     broke_parts: entry.broke_parts ?? [],
     broke_other: text(entry.broke_other),
+    died: entry.died ?? false,
     browned_out: entry.browned_out ?? false,
     stop: entry.stop ?? 'None',
     driver_skill: entry.driver_skill ?? null,
@@ -1089,7 +1101,9 @@ export interface TeamSummary {
   brokeDown: number
   /** What broke, out of the entries where it broke down. Several parts can break in one match. */
   brokeParts: Tally[]
-  /** How many entries say it died or browned out. */
+  /** How many entries say its battery ran out and it stopped. */
+  died: number
+  /** How many entries say it browned out (before #185, this also counted dying). */
   brownedOut: number
   /** Where it started its auto, out of the entries where the scout saw. */
   autoSides: Tally[]
@@ -1193,6 +1207,7 @@ export function teamSummary(team: number, entries: MatchRow[], pitEntries: PitRo
     stops: tally([...STOPS], mine.map((e) => e.stop), mine.length),
     brokeDown: broken.length,
     brokeParts: tally(BREAKDOWN_PARTS, broken.flatMap((e) => e.broke_parts), broken.length),
+    died: mine.filter((e) => e.died).length,
     brownedOut: mine.filter((e) => e.browned_out).length,
     autoSides: tally(AUTO_SIDES, autoSides, autoSides.length),
     rankingPoints: tally(RANKING_POINTS, mine.flatMap((e) => e.ranking_points), mine.length),

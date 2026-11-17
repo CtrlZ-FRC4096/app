@@ -130,6 +130,7 @@ function MatchForm() {
   const [brokeDown, setBrokeDown] = useState(false)
   const [brokeParts, setBrokeParts] = useState<string[]>([])
   const [brokeOther, setBrokeOther] = useState('')
+  const [died, setDied] = useState(false)
   const [brownedOut, setBrownedOut] = useState(false)
   const [stop, setStop] = useState<Stop>('None')
   // 0 until the scout chooses, so no button is pressed and Save asks for one.
@@ -156,6 +157,7 @@ function MatchForm() {
       broke_down: brokeDown,
       broke_parts: brokeParts,
       broke_other: brokeOther,
+      died,
       browned_out: brownedOut,
       stop,
       driver_skill: driverSkill,
@@ -178,6 +180,7 @@ function MatchForm() {
     setBrokeDown(false)
     setBrokeParts([])
     setBrokeOther('')
+    setDied(false)
     setBrownedOut(false)
     setStop('None')
     setDriverSkill(0)
@@ -236,7 +239,8 @@ function MatchForm() {
                 <ShortAnswer id="scout-broke-other" label="Anything else that broke" value={brokeOther} onChange={setBrokeOther} placeholder="Like: bumper fell off" />
               </>
             )}
-            <Tick checked={brownedOut} onChange={setBrownedOut}>Died or browned out (lost power, stuttering, lights flickering)</Tick>
+            <Tick checked={died} onChange={setDied}>Died (battery ran out: lost power and stopped)</Tick>
+            <Tick checked={brownedOut} onChange={setBrownedOut}>Browned out (stuttered or lights flickered, then kept going)</Tick>
             <div className="field">
               E-stop or A-stop
               <Pick label="E-stop or A-stop" options={[...STOPS]} value={stop} onChange={setStop} />

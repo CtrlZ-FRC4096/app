@@ -104,6 +104,7 @@ const FORM: EntryFields = {
   broke_down: true,
   broke_parts: ['Intake'],
   broke_other: '  Bumper fell off  ',
+  died: true,
   browned_out: false,
   stop: 'A-stop',
   driver_skill: 4,
@@ -217,6 +218,7 @@ describe('syncing to the team database', () => {
         broke_down: true,
         broke_parts: ['Intake'],
         broke_other: 'Bumper fell off',
+        died: true,
         browned_out: false,
         stop: 'A-stop',
         driver_skill: 4,
@@ -269,6 +271,9 @@ describe('syncing to the team database', () => {
     // Saved before #162: no role answer, nothing broke, no brownout, auto not seen, no ranking points.
     const { role_notes: _rn, broke_parts: _bp, broke_other: _bo, browned_out: _bw, auto_side: _as, auto_notes: _an, ranking_points: _rp, ...before162 } = saved.value
     expect(toRow(before162)).toMatchObject({ role_notes: null, broke_parts: [], broke_other: null, browned_out: false, auto_side: null, auto_notes: null, ranking_points: [] })
+    // Saved before #185: it didn't die.
+    const { died: _died, ...before185 } = saved.value
+    expect(toRow(before185).died).toBe(false)
     // Saved before events were recorded: the current event.
     const { event_key: _old, ...older } = saved.value
     expect(toRow(older).event_key).toBe(EVENT_KEY)
@@ -797,6 +802,7 @@ describe("the picklist page: each team's numbers and the weights", () => {
     broke_down: false,
     broke_parts: [],
     broke_other: null,
+    died: false,
     browned_out: false,
     stop: 'None',
     driver_skill: 3,
@@ -1279,6 +1285,7 @@ describe('teamSummary', () => {
     broke_down: false,
     broke_parts: [],
     broke_other: null,
+    died: false,
     browned_out: false,
     stop: 'None',
     driver_skill: 3,
@@ -1347,20 +1354,21 @@ describe('teamSummary', () => {
     expect(summary.drivetrain).toHaveLength(DRIVETRAINS.length)
   })
 
-  it("counts what broke out of the times it broke down, brownouts, where its auto started out of the times it was seen, and ranking points out of every match", () => {
+  it("counts what broke out of the times it broke down, deaths and brownouts apart, where its auto started out of the times it was seen, and ranking points out of every match", () => {
     const summary = teamSummary(
       9991,
       [
         row(1, { broke_down: true, broke_parts: ['Intake', 'Climber'], browned_out: true, auto_side: 'Left', ranking_points: ['Energized'] }),
-        row(2, { broke_down: true, broke_parts: ['Intake'], auto_side: 'Left', ranking_points: ['Energized', 'Traversal'] }),
-        row(3, { auto_side: null }),
+        row(2, { broke_down: true, broke_parts: ['Intake'], died: true, auto_side: 'Left', ranking_points: ['Energized', 'Traversal'] }),
+        row(3, { auto_side: null, died: true, browned_out: true }),
         row(4, { auto_side: 'Center' }),
       ],
       [],
     )
     expect(summary.brokeParts.find((t) => t.option === 'Intake')).toEqual({ option: 'Intake', count: 2, share: 1 })
     expect(summary.brokeParts.find((t) => t.option === 'Climber')).toEqual({ option: 'Climber', count: 1, share: 0.5 })
-    expect(summary.brownedOut).toBe(1)
+    expect(summary.died).toBe(2)
+    expect(summary.brownedOut).toBe(2)
     expect(summary.autoSides.find((t) => t.option === 'Left')).toMatchObject({ count: 2 })
     expect(summary.autoSides.find((t) => t.option === 'Left')?.share).toBeCloseTo(2 / 3)
     expect(summary.rankingPoints.find((t) => t.option === 'Energized')).toEqual({ option: 'Energized', count: 2, share: 0.5 })
@@ -1709,7 +1717,7 @@ describe('average points and the match simulator', () => {
   const scored = (team: number, match: number, fuel: number, endgame = 'None', fields: Partial<MatchRow> = {}): MatchRow => ({
     id: `aps-${++next}`, event_key: EVENT_KEY, match_number: match, team_number: team,
     counts: { autoFuel: 0, teleopFuel: fuel, fuelMissed: 5 }, endgame,
-    roles: [], role_notes: null, broke_down: false, broke_parts: [], broke_other: null, browned_out: false, stop: 'None', driver_skill: 3,
+    roles: [], role_notes: null, broke_down: false, broke_parts: [], broke_other: null, died: false, browned_out: false, stop: 'None', driver_skill: 3,
     auto_side: null, auto_notes: null, ranking_points: [], notes: null, scouted_by: null, scouted_at: '2026-11-07T15:00:00Z',
     ...fields,
   })
@@ -1844,7 +1852,7 @@ describe('the scouting overview', () => {
   const ranking = (team: number, rank: number) => ({ rank, team_key: `frc${team}`, record: { wins: 5, losses: 2, ties: 0 }, matches_played: 7, extra_stats: [15] })
   const row = (team: number): MatchRow => ({
     id: `ov-${team}`, event_key: EVENT_KEY, match_number: 1, team_number: team, counts: {}, endgame: 'None', roles: [], role_notes: null,
-    broke_down: false, broke_parts: [], broke_other: null, browned_out: false, stop: 'None', driver_skill: 3, auto_side: null, auto_notes: null,
+    broke_down: false, broke_parts: [], broke_other: null, died: false, browned_out: false, stop: 'None', driver_skill: 3, auto_side: null, auto_notes: null,
     ranking_points: [], notes: null, scouted_by: null, scouted_at: '2026-03-13T15:00:00Z',
   })
   const nothing: OverviewInput = {

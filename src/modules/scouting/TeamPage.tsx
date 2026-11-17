@@ -223,7 +223,7 @@ function HowOften(props: { summary: TeamSummary }) {
   return (
     <Panel
       title="How often"
-      aside={s.matchCount > 0 && <span className="note">{`Broke down in ${s.brokeDown} of ${s.matchCount} · Died or browned out in ${s.brownedOut} of ${s.matchCount}`}</span>}
+      aside={s.matchCount > 0 && <span className="note">{`Broke down in ${s.brokeDown} of ${s.matchCount} · Died in ${s.died} of ${s.matchCount} · Browned out in ${s.brownedOut} of ${s.matchCount}`}</span>}
     >
       <div className="panel-body">
         {s.matchCount > 0 && (

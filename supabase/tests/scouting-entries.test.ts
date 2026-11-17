@@ -123,6 +123,21 @@ describe('scouting entries', () => {
     expect(older).toMatchObject({ role_notes: null, broke_parts: [], broke_other: null, browned_out: false, auto_side: null, auto_notes: null, ranking_points: [] })
   })
 
+  // #185: died is its own answer, separate from a brownout. An entry from an older phone leaves it out.
+  it('keeps died apart from a brownout, and leaves it "no" for an older entry', async () => {
+    const insert = (columns: string, values: unknown[]) =>
+      db.as<Record<string, unknown>>(
+        scout,
+        `insert into public.scouting_entries (id, event_key, match_number, team_number, endgame, scouted_at, ${columns})
+         values ($1, '2026test', 1, 1, 'None', now()${values.map((_, i) => `, $${i + 2}`).join('')}) returning *`,
+        [crypto.randomUUID(), ...values],
+      )
+    const [died] = await insert('died, browned_out', [true, false])
+    expect(died).toMatchObject({ died: true, browned_out: false })
+    const [older] = await insert('browned_out', [true])
+    expect(older).toMatchObject({ died: false, browned_out: true })
+  })
+
   it('refuses the short answers when empty or over 300 characters, like the form', async () => {
     const insert = (column: string, value: unknown) =>
       db.as(scout, `insert into public.scouting_entries (id, event_key, match_number, team_number, endgame, scouted_at, ${column}) values ($1, '2026test', 1, 1, 'None', now(), $2)`, [crypto.randomUUID(), value])

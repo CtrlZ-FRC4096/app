@@ -244,6 +244,15 @@ describe('the match form', () => {
     expect(html).toContain('Pick your position, and the team fills in from the match number.')
   })
 
+  it('has separate Died and Browned out ticks, neither ticked (#185)', () => {
+    const html = renderToString(<ScoutingPage />)
+    for (const label of ['Died (battery ran out', 'Browned out (stuttered']) {
+      expect(html).toContain(label)
+      const tick = html.slice(0, html.indexOf(label))
+      expect(tick.slice(tick.lastIndexOf('<input'))).not.toContain('checked')
+    }
+  })
+
   it('starts with no driver skill chosen', () => {
     const html = renderToString(<ScoutingPage />)
     const driverSkill = html.slice(html.indexOf('aria-label="Driver skill"'))
