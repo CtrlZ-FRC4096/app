@@ -2,8 +2,9 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { navigate, useRoute } from '../../core/router'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
-import { DRIVER_SKILLS, STOPS, STRATEGY_ONLY, STRATEGY_PATHS, saveEntry, useEntries, useIsStrategy, type Stop } from './data'
+import { DRIVER_SKILLS, STOPS, STRATEGY_ONLY, STRATEGY_PATHS, saveEntry, useEntries, useIsStrategy, usePathDraft, type Stop } from './data'
 import EventPicker from './EventPicker'
+import FieldDrawing from './FieldDrawing'
 import FormSection from './FormSection'
 import MatchTeamFields from './MatchTeamFields'
 import MyPicklist from './MyPicklist'
@@ -138,6 +139,8 @@ function MatchForm() {
   // '' until the scout chooses: they may not have seen where it started.
   const [autoSide, setAutoSide] = useState('')
   const [autoNotes, setAutoNotes] = useState('')
+  // The auto path drawn on the field (#205). Every change goes through editPath() in data.ts.
+  const [autoDraft, editAuto, resetAuto] = usePathDraft()
   const [rankingPoints, setRankingPoints] = useState<string[]>([])
   const [notes, setNotes] = useState('')
 
@@ -163,6 +166,7 @@ function MatchForm() {
       driver_skill: driverSkill,
       auto_side: autoSide,
       auto_notes: autoNotes,
+      auto_path: autoDraft.path,
       ranking_points: rankingPoints,
       notes,
     })
@@ -186,6 +190,7 @@ function MatchForm() {
     setDriverSkill(0)
     setAutoSide('')
     setAutoNotes('')
+    resetAuto()
     setRankingPoints([])
     setNotes('')
     toast(`Saved match ${result.value.match}, team ${result.value.team}.`)
@@ -209,7 +214,8 @@ function MatchForm() {
               Where it started (tap again to clear if you didn't see)
               <Pick label="Where it started" options={AUTO_SIDES} value={autoSide} onChange={(side) => setAutoSide(side === autoSide ? '' : side)} />
             </div>
-            <ShortAnswer id="scout-auto" label="What did its auto do?" value={autoNotes} onChange={setAutoNotes} placeholder="Like: scored preload, picked up 2 from the middle" />
+            <FieldDrawing draft={autoDraft} onEdit={editAuto} />
+            <ShortAnswer id="scout-auto" label="Anything else about its auto?" value={autoNotes} onChange={setAutoNotes} placeholder="Like: scored preload, picked up 2 from the middle" />
           </FormSection>
           <FormSection title="Scoring">
             {COUNTERS.map((c) => (
