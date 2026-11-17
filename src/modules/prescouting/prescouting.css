@@ -9,7 +9,7 @@
 .prescout-tile:hover { border-color: var(--muted); }
 .prescout-tile-top { display: flex; align-items: baseline; justify-content: space-between; gap: 4px; min-width: 0; }
 .prescout-tile-number { font-family: var(--display); font-size: 22px; font-weight: 700; line-height: 1.1; }
-/* ★ / ☆ / ✓, and later the tier (#191). They wrap under the number if the tile is narrow. */
+/* The tier (#191), ★ / ☆ and ✓. They wrap under the number if the tile is narrow. */
 .prescout-tile-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px 4px; font-size: 14px; line-height: 1.2; }
 .prescout-tile-star { color: var(--orange-text); }
 .prescout-tile-done { color: var(--ok); font-weight: 700; }
@@ -20,3 +20,14 @@
 /* Not prescouted yet: an emptier look, so it's easy to see who's left. */
 .prescout-tile-todo { background: transparent; border-style: dashed; }
 .prescout-tile-todo .prescout-tile-name { color: var(--muted); }
+
+/* A team's tier (#191): a small badge on their tile and their page, S and A
+   green, B and C blue, D yellow, F red. Existing colours only. */
+.prescout-tier-badge { display: inline-block; min-width: 1.5em; padding: 0 4px; border-radius: var(--radius); font-weight: 700; text-align: center; color: var(--ok); background: var(--ok-bg); }
+.prescout-tier-badge[data-tier='B'], .prescout-tier-badge[data-tier='C'] { color: var(--blue); background: var(--blue-soft); }
+.prescout-tier-badge[data-tier='D'] { color: var(--warn); background: var(--warn-bg); }
+.prescout-tier-badge[data-tier='F'] { color: var(--crit); background: var(--crit-bg); }
+
+/* The S to F buttons on a team's page: big enough to tap, and they wrap
+   rather than scroll sideways on a narrow phone. */
+.prescout-tier .pick button { min-width: 48px; min-height: 48px; font-size: 18px; font-weight: 700; }
