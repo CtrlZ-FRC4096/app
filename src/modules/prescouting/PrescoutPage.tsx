@@ -6,12 +6,13 @@ import { PageHead, Panel, Pick } from '../../core/ui'
 import type { Result } from '../../core/table'
 import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../scouting/data'
 import {
-  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, firstLine, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout, searchPrescout,
+  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout, searchPrescout,
   setPrescoutEvent, useIsStrategy, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
   type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutTeam,
 } from './data'
 import Stars from './Stars'
 import TeamSeason from './TeamSeason'
+import './prescouting.css'
 
 // Big enough to tap, and 16px text so phones don't zoom in on the box.
 const BOX = { minHeight: 46, fontSize: 16 }
@@ -49,7 +50,7 @@ export default function PrescoutPage() {
 }
 
 // ---------------------------------------------------------------------------
-// The overview: the event box, then a card for each team.
+// The overview: the event box, then a grid of small tiles, one per team (#183).
 
 function Overview() {
   const event = usePrescoutEvent()
@@ -66,7 +67,7 @@ function Overview() {
 
   return (
     <>
-      <PageHead title="Prescouting">Every team coming to an event, to look up before it starts. Star the ones we care about to keep them at the top.</PageHead>
+      <PageHead title="Prescouting">Every team coming to an event, to look up before it starts. Tap a team to read and write their notes, or star them to keep them at the top. ✓ means they're prescouted.</PageHead>
       <EventBox event={event} />
       <Panel title={`Teams at ${event}`} aside={result?.ok ? <span className="note">{result.value.length} teams</span> : undefined}>
         {!result ? (
@@ -118,9 +119,11 @@ function Overview() {
 function TeamGroup(props: { title: string; event: string; teams: OverviewTeam[] }) {
   if (props.teams.length === 0) return null
   return (
-    <section style={{ display: 'grid', gap: 12 }} aria-label={props.title || 'Teams'}>
+    <section style={{ display: 'grid', gap: 8, minWidth: 0 }} aria-label={props.title || 'Teams'}>
       {props.title && <h3 style={{ margin: '4px 0 0', fontSize: 15 }}>{props.title} <span className="note">({props.teams.length})</span></h3>}
-      {props.teams.map((t) => <TeamCard key={t.team} event={props.event} team={t} />)}
+      <div className="prescout-grid">
+        {props.teams.map((t) => <TeamTile key={t.team} event={props.event} team={t} />)}
+      </div>
     </section>
   )
 }
@@ -179,41 +182,31 @@ function Problem(props: { error: string; retry: () => void }) {
   )
 }
 
-/** The answers the overview shows, in order. The rest are on the team's page. */
-const OVERVIEW_ANSWERS: (keyof PrescoutAnswers)[] = ['overall', 'key_task', 'strengths', 'weaknesses', 'other_notes']
-
-/** One team in the overview: a card, not a table row, so nothing scrolls sideways on a phone. */
-export function TeamCard(props: { event: string; team: OverviewTeam }) {
+/**
+ * One team in the overview (#183): a small tile in the grid, linking to their
+ * prescouting page. Only their number, name (cut short with "…"), EPA, a ✓ if
+ * they're prescouted (and an emptier, dashed look if not), and ★ for a team
+ * star or ☆ for your own. Their notes and the Star button are on their page.
+ * The classes are in prescouting.css.
+ */
+export function TeamTile(props: { event: string; team: OverviewTeam }) {
   const t = props.team
-  const open = teamHref(props.event, t.team)
-  const notes = t.prescouted ? t.notes : null
+  const star = t.stars.forTeam.length > 0 ? 'team star' : t.stars.mine ? 'your star' : ''
+  const label = [`Team ${t.team} ${t.name}`, `EPA ${formatEpa(t.epa)}`, t.prescouted ? 'prescouted' : 'not prescouted yet', star].filter(Boolean).join(', ')
   return (
-    <section style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius)', padding: 12, display: 'grid', gap: 8, minWidth: 0 }}>
-      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-        <a href={open} style={{ minWidth: 0, overflowWrap: 'anywhere', color: 'inherit', textDecoration: 'none', flex: 1 }}>
-          <strong className="tnum">{t.team}</strong> {t.name}
-          <br />
-          <span className="note tnum">{`EPA ${formatEpa(t.epa)}`}</span>
-        </a>
-      </div>
-      <Stars event={props.event} team={t.team} />
-      {notes ? (
-        <dl style={{ margin: 0, display: 'grid', gap: 4, fontSize: 14 }}>
-          {OVERVIEW_ANSWERS.map((key) => (
-            <div key={key} style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
-              <dt style={{ display: 'inline', fontWeight: 600 }}>{PRESCOUT_QUESTIONS.find((q) => q.key === key)?.label}: </dt>
-              <dd style={{ display: 'inline', margin: 0 }} className={notes[key] ? undefined : 'muted'}>{firstLine(notes[key]) || '—'}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : (
-        <p className="muted" style={{ margin: 0, fontSize: 14 }}>Not prescouted yet</p>
-      )}
-      <div className="toolbar">
-        <a className="btn" href={open}>{t.prescouted ? 'Open notes' : 'Add notes'}</a>
-        <a className="btn" href={t.tbaUrl} target="_blank" rel="noreferrer" aria-label={`Team ${t.team} on The Blue Alliance`}>TBA</a>
-      </div>
-    </section>
+    <a className={t.prescouted ? 'prescout-tile' : 'prescout-tile prescout-tile-todo'} href={teamHref(props.event, t.team)} aria-label={label} title={t.name}>
+      <span className="prescout-tile-top">
+        <strong className="prescout-tile-number tnum">{t.team}</strong>
+        <span className="prescout-tile-badges" aria-hidden="true">
+          {star && <span className="prescout-tile-star">{t.stars.forTeam.length > 0 ? '★' : '☆'}</span>}
+          {t.prescouted && <span className="prescout-tile-done">✓</span>}
+        </span>
+      </span>
+      <span className="prescout-tile-name">{t.name}</span>
+      <span className="prescout-tile-numbers" aria-hidden="true">
+        <span>{`EPA ${formatEpa(t.epa)}`}</span>
+      </span>
+    </a>
   )
 }
 
@@ -247,6 +240,7 @@ export function TeamPage(props: { event: string; team: number }) {
           Scouting team page →
         </a>
       </div>
+      {/* Starring is here, not on the overview's tiles, which are too small for a button (#183). */}
       <Panel title="Stars">
         <div className="panel-body">
           <Stars event={event} team={team} />

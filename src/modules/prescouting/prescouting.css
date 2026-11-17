@@ -1,0 +1,22 @@
+/* The overview's grid of team tiles (#183). About 3 per row on a phone, more
+   on a wider screen: each tile is at least 92px wide, and the grid fits as
+   many as it can. */
+.prescout-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+
+/* One team's tile: a link to their prescouting page. Three lines: the top
+   line (number, then the badges on the right), the name, then the numbers. */
+.prescout-tile { display: grid; align-content: start; gap: 2px; min-width: 0; min-height: 76px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); color: var(--ink); text-decoration: none; }
+.prescout-tile:hover { border-color: var(--muted); }
+.prescout-tile-top { display: flex; align-items: baseline; justify-content: space-between; gap: 4px; min-width: 0; }
+.prescout-tile-number { font-family: var(--display); font-size: 22px; font-weight: 700; line-height: 1.1; }
+/* ★ / ☆ / ✓, and later the tier (#191). They wrap under the number if the tile is narrow. */
+.prescout-tile-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px 4px; font-size: 14px; line-height: 1.2; }
+.prescout-tile-star { color: var(--orange-text); }
+.prescout-tile-done { color: var(--ok); font-weight: 700; }
+.prescout-tile-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* EPA, and later more numbers (#186): each its own <span>, wrapping onto a new line if they don't fit. */
+.prescout-tile-numbers { display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Not prescouted yet: an emptier look, so it's easy to see who's left. */
+.prescout-tile-todo { background: transparent; border-style: dashed; }
+.prescout-tile-todo .prescout-tile-name { color: var(--muted); }

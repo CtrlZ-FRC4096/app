@@ -19,7 +19,7 @@ const REMOVE_LABEL_WIDTH = 72
  * its place, pushing the rest of the team's box down to make room (#118). Team
  * stars show their reason and who starred them; your own star just for you
  * says only you see it. A red minus square after the name removes a star
- * you may remove. Used on the Prescouting cards and team pages, and on
+ * you may remove. Used on Prescouting's team pages, and on
  * Scouting's team page, so a star in either place shows in both.
  * Everything it saves goes through starTeam() and unstarTeam() in data.ts.
  */
