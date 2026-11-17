@@ -7,10 +7,13 @@ import type { Result } from '../../core/table'
 import { toast } from '../../core/toast'
 import { Callout, PageHead, Panel, Pick } from '../../core/ui'
 import {
+  MAX_SIGN_UP_LINKS,
   SIGN_UP_KINDS,
+  SIGN_UP_NAME_LIMIT,
   WEEKS_AHEAD,
   addEvent,
   blankEventForm,
+  blankLink,
   canManageSignUps,
   canTakeSignUps,
   cancelSignUp,
@@ -24,7 +27,8 @@ import {
   setSignUps,
   shownDescription,
   signUp,
-  signUpLink,
+  signUpButtonText,
+  signUpLinks,
   signUpsFor,
   timeOfDay,
   updatedText,
@@ -32,6 +36,7 @@ import {
   useSignUps,
   type EventForm,
   type SignUp,
+  type SignUpLink,
 } from './data'
 
 // The page reads the events and sign-ups with hooks (useCalendar,
@@ -124,7 +129,7 @@ function EventRow(props: { event: CalendarEvent; user: User; signUps: SignUp[]; 
   const nameOf = useMemberNames()
   const [busy, setBusy] = useState(false)
   const description = shownDescription(event.description)
-  const link = signUpLink(event.description)
+  const links = signUpLinks(event.description)
   const going = signUpsFor(props.signUps, event)
   const imGoing = going.some((s) => s.created_by === user.id)
   const open = event.signUps && !hasEnded(event)
@@ -190,11 +195,11 @@ function EventRow(props: { event: CalendarEvent; user: User; signUps: SignUp[]; 
       </span>
       {/* maxWidth lets the buttons wrap onto two lines on a phone instead of making the page scroll sideways. */}
       <span className="toolbar" style={{ marginLeft: 'auto', maxWidth: '100%' }}>
-        {link && (
-          <a className="btn btn-sm btn-primary" href={link} target="_blank" rel="noreferrer">
-            Sign up
+        {links.map((found, i) => (
+          <a key={i} className="btn btn-sm btn-primary" href={found.link} target="_blank" rel="noreferrer">
+            {signUpButtonText(found)} ↗
           </a>
-        )}
+        ))}
         {open && (
           <button type="button" className={imGoing ? 'btn btn-sm' : 'btn btn-sm btn-primary'} disabled={busy} onClick={() => void toggleSignUp()}>
             {imGoing ? 'Cancel sign-up' : 'Sign up'}
@@ -373,15 +378,45 @@ function EventFormFields(props: {
       </div>
       {form.signUps === 'In the app' && <span className="note">People tap Sign up on the event, and everyone can see who's going.</span>}
       {form.signUps === 'With a link' && (
-        <label className="field" htmlFor={id('link')}>
-          Sign-up link, to a Google Form or Slack post
-          <input id={id('link')} className="input" type="url" inputMode="url" value={form.link} onChange={(e) => set({ link: e.target.value })} placeholder="https://forms.gle/abc123" />
-        </label>
+        <SignUpLinkRows links={form.links} id={id} onChange={(links) => set({ links })} />
       )}
       <div className="toolbar">
         <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : props.saveLabel}</button>
         <button type="button" className="btn" onClick={props.onDone}>Cancel</button>
       </div>
     </form>
+  )
+}
+
+/** The sign-up links in the event form: a row for each, with an optional name like "Hotel". */
+function SignUpLinkRows(props: { links: SignUpLink[]; id: (name: string) => string; onChange: (links: SignUpLink[]) => void }) {
+  const { links } = props
+  const change = (i: number, changes: Partial<SignUpLink>) => props.onChange(links.map((row, j) => (j === i ? { ...row, ...changes } : row)))
+  // Removing the last row leaves an empty one, so there's always a box to paste into.
+  const remove = (i: number) => props.onChange(links.length > 1 ? links.filter((_, j) => j !== i) : [blankLink()])
+
+  return (
+    <div className="field">
+      Sign-up links, to a Google Form or Slack post. Name each one if there's more than one, like "Travel" and "Hotel".
+      {links.map((row, i) => (
+        // flexWrap: on a phone the name, link and Remove stack instead of making the page scroll sideways.
+        <div key={i} className="toolbar" style={{ alignItems: 'end' }}>
+          <label className="field" htmlFor={props.id(`link-name-${i}`)} style={{ flex: '1 1 8rem' }}>
+            Name (optional)
+            <input id={props.id(`link-name-${i}`)} className="input" maxLength={SIGN_UP_NAME_LIMIT} value={row.name} onChange={(e) => change(i, { name: e.target.value })} placeholder="Hotel" />
+          </label>
+          <label className="field" htmlFor={props.id(`link-${i}`)} style={{ flex: '3 1 14rem' }}>
+            Link
+            <input id={props.id(`link-${i}`)} className="input" type="url" inputMode="url" value={row.link} onChange={(e) => change(i, { link: e.target.value })} placeholder="https://forms.gle/abc123" />
+          </label>
+          <button type="button" className="btn" aria-label={`Remove sign-up link ${i + 1}`} onClick={() => remove(i)}>Remove</button>
+        </div>
+      ))}
+      {links.length < MAX_SIGN_UP_LINKS && (
+        <div className="toolbar">
+          <button type="button" className="btn btn-sm" onClick={() => props.onChange([...links, blankLink()])}>Add another link</button>
+        </div>
+      )}
+    </div>
   )
 }
