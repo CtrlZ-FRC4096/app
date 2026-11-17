@@ -12,6 +12,7 @@ import {
   changeStock,
   isLow,
   removeItem,
+  searchItems,
   useItems,
   useLowItems,
   useStockHistory,
@@ -29,7 +30,9 @@ export default function InventoryPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [stockId, setStockId] = useState<string | null>(null)
   const [lowOnly, setLowOnly] = useState(false)
-  const shown = lowOnly ? lowItems : items
+  const [search, setSearch] = useState('')
+  // Low stock only and the search work together: first the low parts (or all of them), then the ones that match.
+  const shown = searchItems(lowOnly ? lowItems : items, search)
   const editing = items.find((item) => item.id === editingId)
   const stocking = items.find((item) => item.id === stockId)
 
@@ -58,12 +61,32 @@ export default function InventoryPage() {
       >
         <div className="panel-body">
           <div className="toolbar">
-            {!adding && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>Add a part</button>}
+            {/* minWidth 0 lets the box shrink to fit a phone, so the page doesn't scroll sideways. Same as Purchasing's. */}
+            <label className="field" htmlFor="inventory-search" style={{ minWidth: 0, flex: '1 1 14rem' }}>
+              Search
+              <input
+                id="inventory-search"
+                className="input"
+                style={{ minWidth: 0, width: '100%' }}
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Name, vendor, part number or bin"
+              />
+            </label>
             <label className="check"><input type="checkbox" checked={lowOnly} onChange={(e) => setLowOnly(e.target.checked)} /> Low stock only</label>
+            {!adding && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>Add a part</button>}
           </div>
         </div>
         {items.length === 0 ? (
           <p className="panel-body muted">No parts yet. Add the first one with the Add a part button.</p>
+        ) : shown.length === 0 && search.trim() ? (
+          <div className="panel-body">
+            <p className="muted" style={{ margin: 0 }}>
+              No parts match “{search.trim()}”.{lowOnly && ' Only low parts are shown, so untick Low stock only to search them all.'}
+            </p>
+            <div className="toolbar"><button type="button" className="btn" onClick={() => setSearch('')}>Clear the search</button></div>
+          </div>
         ) : shown.length === 0 ? (
           <p className="panel-body muted">No parts are low right now.</p>
         ) : (
