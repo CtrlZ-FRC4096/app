@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
-import { Bar, Panel, Pill } from '../../core/ui'
+import { Bar, Panel, PeoplePicker, Pill } from '../../core/ui'
 import {
   MAX_ITEM_LENGTH, PIT_SUBGROUPS, type PitMatch, type PitSubgroup, addPitItem, assignedPeople, belongsToSubgroup, canCheck, checkedIds, matchProgress,
   movePitItem, movePitItemTo, progressText, setPitItemCompleted, takenOffText, usePitChecklist, usePitChecks, useSubgroupMembers,
@@ -9,7 +9,6 @@ import { useSession } from '../../core/session'
 import { usePitDrag } from './usePitDrag'
 import { ClearList } from './ClearList'
 import { ItemPopup, type ItemPopupMode } from './ItemPopup'
-import { PeoplePicker } from './PeoplePicker'
 import { SubgroupsPanel } from './SubgroupsPanel'
 
 /** The full pit checklist, for student leaders, mentors and admins: every item, checked for the chosen match. */
@@ -117,8 +116,8 @@ export function PitChecklist({ match }: { match: PitMatch }) {
                     event.currentTarget.closest('li')?.querySelector('.pit-menu')?.removeAttribute('open')
                     setPopup({ id: item.id, mode: 'people' })
                   }}>
-                  {item.assignee_ids.map((id) => <span key={id} className="pit-chip">{nameOf(id)}</span>)}
-                  {item.assignee_ids.length === 0 && <span className="pit-chip pit-chip-add">+ Add people</span>}
+                  {item.assignee_ids.map((id) => <span key={id} className="person-chip">{nameOf(id)}</span>)}
+                  {item.assignee_ids.length === 0 && <span className="person-chip pit-chip-add">+ Add people</span>}
                 </button>
               </div>
                   <details className="pit-menu" onKeyDown={(event) => {

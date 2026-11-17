@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMembers } from '../../core/members'
-import { Panel } from '../../core/ui'
+import { Panel, PeoplePicker } from '../../core/ui'
 import { PIT_SUBGROUPS, setSubgroupMembers, useSubgroupMembers, type PitSubgroup } from './data'
-import { PeoplePicker } from './PeoplePicker'
 
 /**
  * Who's in each subgroup, for student leaders, mentors and admins: one row
@@ -29,8 +28,8 @@ export function SubgroupsPanel(props: { onSaved: (message: string) => void }) {
               <button type="button" className="pit-people" aria-label={`Change who's in ${group}`} onClick={() => setEditing(group)}>
                 <span className="pit-subgroup-tag" data-subgroup={group}>{group}</span>
                 {ids === undefined && <span className="note">Everyone, until you choose</span>}
-                {ids?.length === 0 && <span className="pit-chip pit-chip-add">+ Add people</span>}
-                {ids?.map((id) => <span key={id} className="pit-chip">{nameOf(id)}</span>)}
+                {ids?.length === 0 && <span className="person-chip pit-chip-add">+ Add people</span>}
+                {ids?.map((id) => <span key={id} className="person-chip">{nameOf(id)}</span>)}
               </button>
             </li>
           )

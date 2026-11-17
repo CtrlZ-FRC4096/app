@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMembers } from '../../core/members'
+import { PeoplePicker } from '../../core/ui'
 import {
   MAX_ITEM_LENGTH, PIT_SUBGROUPS, assignPitItem, assignedPeople, belongsToSubgroup, removePitItem, renamePitItem, setPitItemSubgroup, usePitChecklist,
   type PitItem,
 } from './data'
-import { PeoplePicker } from './PeoplePicker'
 
 export type ItemPopupMode = 'subgroup' | 'rename' | 'remove' | 'people'
 

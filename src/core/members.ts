@@ -60,3 +60,25 @@ export function initials(name: string): string {
     .map((part) => part[0].toUpperCase())
     .join('')
 }
+
+/** True when the name contains the search, ignoring capitals and spaces at the ends. */
+export function nameMatches(name: string, search: string): boolean {
+  return name.toLowerCase().includes(search.trim().toLowerCase())
+}
+
+/**
+ * The people to list under PeoplePicker's "Find someone" box (src/core/ui.tsx),
+ * to tap and add: everyone in `pool` (who may be chosen) whose name matches
+ * the search and who isn't chosen already. The chosen people are shown above
+ * the box as name tags.
+ *
+ * `suggestedIds` is for when the pool is the whole team: only those people
+ * are listed until a name is typed, so the list isn't sixty names long. Once
+ * something is typed, anyone can match, suggested people first.
+ */
+export function pickablePeople<T extends { id: string; name: string }>(pool: T[], chosenIds: string[], search: string, suggestedIds?: string[]): T[] {
+  const open = pool.filter((person) => !chosenIds.includes(person.id) && nameMatches(person.name, search))
+  if (!suggestedIds) return open
+  const suggested = open.filter((person) => suggestedIds.includes(person.id))
+  return search.trim() ? [...suggested, ...open.filter((person) => !suggestedIds.includes(person.id))] : suggested
+}

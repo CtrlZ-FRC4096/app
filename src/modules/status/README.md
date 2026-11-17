@@ -73,18 +73,15 @@ popup (a mode of `ItemPopup.tsx`), with no ⋯ menu in the way:
   Tap a name to add it. Nothing is a checkbox.
 - For **General** items, where anyone can be chosen, it lists the people
   already on other items, and everyone else only once a name is typed
-  (`pickablePeople()` and `assignedPeople()` in `data.ts`).
+  (`assignedPeople()` in `data.ts`, and `pickablePeople()` in
+  `src/core/members.ts`).
 
 Changes save straight away. Clearing everyone leaves the item unassigned,
 and changing who's on an item never unchecks it. The picker is
-`PeoplePicker.tsx`, and the **Add an item** form uses the same one. In the
+`PeoplePicker` in `src/core/ui.tsx` (shared with Training's "Sign people
+off" form), and the **Add an item** form uses the same one. In the
 form, picking a subgroup takes off anyone who isn't in it, and says so:
 "You're not in Electrical, so you were taken off." (`takenOffText()`).
-
-`MemberPicker.tsx` (a Find box above checkboxes, using `matchMembers()`) is
-the older picker. This page doesn't use it any more, but the Training
-module's "Sign people off" form does, so it stays until Training moves to
-`PeoplePicker.tsx`.
 
 **Subgroups**, a panel at the bottom of the page (`SubgroupsPanel.tsx`),
 has a row for each subgroup with its people as name tags. Tap a row to
