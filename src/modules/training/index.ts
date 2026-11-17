@@ -1,5 +1,5 @@
 import type { ModuleDefinition } from '../../core/registry'
-import { useLessonSummary } from './data'
+import { useLessonSummary, useSignOffAttention } from './data'
 
 export const training: ModuleDefinition = {
   id: 'training',
@@ -8,4 +8,6 @@ export const training: ModuleDefinition = {
   group: 'team',
   load: () => import('./TrainingPage'),
   useSummary: useLessonSummary,
+  // For mentors and admins: "3 sign-offs waiting."
+  useAttention: useSignOffAttention,
 }

@@ -1,7 +1,12 @@
 import { useState } from 'react'
+import { isMentor, useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { Bar, PageHead, Panel } from '../../core/ui'
 import { COURSES, markDone, markNotDone, progress, progressText, useDoneLessons, type Lesson } from './data'
+import { EveryonesProgress } from './EveryonesProgress'
+import { SignOffRequests } from './SignOffRequests'
+import { Skills } from './Skills'
+import './training.css'
 
 // Big enough to tap on a phone. On a narrow screen the button goes under the
 // lesson's title and fills the width.
@@ -10,7 +15,15 @@ const BIG_BUTTON = { minHeight: 52, fontSize: 16, flex: '1 1 10rem' }
 // The page reads which lessons are done with a hook (useDoneLessons) and
 // changes them with functions from data.ts (markDone, markNotDone). The
 // lessons themselves are on the wiki: this page only links to them.
+//
+// The other sections are their own files in this folder:
+//   SignOffRequests    mentors: sign-offs waiting, and signing people off
+//   Skills             your hands-on skills: ask for a sign-off
+//   EveryonesProgress  mentors: how far everyone has got
+// Hiding the mentor sections from students is only tidiness: the database's
+// rules are what stop them reading or changing anyone else's.
 export default function TrainingPage() {
+  const { role } = useSession()
   const done = useDoneLessons()
   const counts = progress(done)
 
@@ -19,6 +32,7 @@ export default function TrainingPage() {
       <PageHead title="Training">
         The lessons are on the wiki. Open one, work through it, then come back and press Mark done.
       </PageHead>
+      {isMentor(role) && <SignOffRequests />}
       <Panel title="Your progress">
         <div className="panel-body">
           <strong style={{ fontSize: 20 }}>{progressText(done)}</strong>
@@ -37,6 +51,8 @@ export default function TrainingPage() {
           </Panel>
         )
       })}
+      <Skills />
+      {isMentor(role) && <EveryonesProgress />}
     </>
   )
 }
