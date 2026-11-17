@@ -36,8 +36,20 @@ describe('COURSES', () => {
 
   it('has no empty courses, and no lesson listed twice', () => {
     for (const course of COURSES) expect(course.lessons.length).toBeGreaterThan(0)
+    expect(new Set(COURSES.map((course) => course.name)).size).toBe(COURSES.length)
     expect(new Set(lessons.map((lesson) => lesson.url)).size).toBe(lessons.length)
     expect(new Set(lessons.map((lesson) => lesson.id)).size).toBe(lessons.length)
+  })
+
+  it('gives every lesson an id of lowercase words joined by dashes', () => {
+    for (const lesson of lessons) expect(lesson.id).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/)
+  })
+
+  it('keeps the ids that people have already saved progress under', () => {
+    // These were on the list before, so progress is saved under them. If one
+    // fails here, put its id back: changing an id loses everyone's progress.
+    const saved = ['code-first-button', 'code-first-sequence', 'code-first-rule', 'controls-tuning-flywheel', 'controls-tuning-elevator']
+    expect(lessons.map((lesson) => lesson.id)).toEqual(expect.arrayContaining(saved))
   })
 
   it('only has example progress for lessons on the list', () => {

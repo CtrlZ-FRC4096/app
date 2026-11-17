@@ -12,6 +12,7 @@ import {
   MAX_NAME_LENGTH,
   MAX_QUANTITY,
   MAX_RECEIPT_BYTES,
+  MAX_TRACKING_LENGTH,
   RECEIPT_ACCEPT,
   STATUSES,
   TYPES,
@@ -27,6 +28,7 @@ import {
   changeItem,
   checkItem,
   orderFieldsShown,
+  orderedText,
   pickStatus,
   checkReceipt,
   choices,
@@ -57,6 +59,7 @@ import {
   receiptLink,
   receiptText,
   receiptType,
+  receiptsSectionShown,
   receiptsTable,
   removeItem,
   removeReceipt,
@@ -248,6 +251,8 @@ describe('checkItem', () => {
       ['an https:// link', { link: 'https://example.com/part' }],
       ['a price', { price: '12.50' }],
       ['a real estimated arrival', { estimated_arrival: '2026-11-12' }],
+      ['a real date ordered', { ordered_on: '2026-11-10' }],
+      ['the longest tracking number', { tracking: 'x'.repeat(MAX_TRACKING_LENGTH) }],
     ]
     for (const [label, change] of allowed) expect(checkItem({ ...valid, ...change }), label).toBeNull()
   })
@@ -267,6 +272,8 @@ describe('checkItem', () => {
       ['a price that is not dollars and cents', { price: 'abc' }, /like 12\.50/],
       ['a day that does not exist', { estimated_arrival: '2026-02-30' }, /estimated arrival/],
       ['an arrival that is not a date', { estimated_arrival: 'next week' }, /estimated arrival/],
+      ['a date ordered that does not exist', { ordered_on: '2026-02-30' }, /date ordered/],
+      ['a tracking number too long', { tracking: 'x'.repeat(MAX_TRACKING_LENGTH + 1) }, /tracking number under 200/],
     ]
     for (const [label, change, problem] of refused) expect(checkItem({ ...valid, ...change }), label).toMatch(problem)
   })
@@ -347,7 +354,7 @@ describe('searchItems', () => {
 describe('duplicateItem', () => {
   it('fills in a new request from an item, starting as Order, not ordered or shipped yet', () => {
     const item = find('Timing belt, 60T')
-    expect(duplicateItem(item)).toEqual({ ...itemToForm(item), status: 'order', ordered_by: '', shipped_to: '', estimated_arrival: '' })
+    expect(duplicateItem(item)).toEqual({ ...itemToForm(item), status: 'order', ordered_by: '', shipped_to: '', estimated_arrival: '', ordered_on: '', tracking: '' })
   })
 
   it('makes a new item requested by you when sent, leaving the old one as it was', async () => {
@@ -386,6 +393,10 @@ describe('placing orders', () => {
       ['an order back to Order', ordered, { status: 'order' }, true],
       ['Ordered by', ordered, { ordered_by: DEMO_PEOPLE.jordan }, true],
       ['the estimated arrival', ordered, { estimated_arrival: '2026-12-20' }, true],
+      ['the date ordered', ordered, { ordered_on: '2026-11-11' }, true],
+      ['the tracking number', ordered, { tracking: 'EXAMPLE-TRACK-9999' }, true],
+      ['spaces around the tracking number', ordered, { tracking: ' EXAMPLE-TRACK-0001 ' }, false],
+      ['a tracking number on a request', asked, { tracking: 'EXAMPLE-TRACK-9999' }, true],
       ['the name of an order', ordered, { name: 'Belt' }, true],
       ['the vendor of an order', ordered, { vendor: 'Amazon' }, true],
       ['the type of an order', ordered, { type: 'Field' }, true],
@@ -620,6 +631,22 @@ describe('estimated arrival', () => {
   })
 })
 
+describe('date ordered and tracking number', () => {
+  it('says when it was ordered, or nothing without a date', () => {
+    expect(orderedText({ ordered_on: '2026-11-10' })).toBe('Ordered Nov 10')
+    expect(orderedText({ ordered_on: null })).toBeNull()
+  })
+
+  it('are saved by a mentor, with the tracking number trimmed and an empty one saved as nothing', async () => {
+    setDemoRole('mentor')
+    const item = () => find('Timing belt, 60T')
+    expect((await changeItem(item(), { ...itemToForm(item()), ordered_on: '2026-11-11', tracking: '  EXAMPLE-TRACK-9999 ' })).ok).toBe(true)
+    expect(item()).toMatchObject({ ordered_on: '2026-11-11', tracking: 'EXAMPLE-TRACK-9999' })
+    expect((await changeItem(item(), { ...itemToForm(item()), ordered_on: '', tracking: ' ' })).ok).toBe(true)
+    expect(item()).toMatchObject({ ordered_on: null, tracking: null })
+  })
+})
+
 describe('receiptAddingShown', () => {
   it('allows new receipts for every ordered status, but none of the asking statuses', () => {
     for (const status of STATUSES.filter((s) => s.ask)) expect(receiptAddingShown(status.key), status.label).toBe(false)
@@ -627,40 +654,57 @@ describe('receiptAddingShown', () => {
   })
 })
 
+describe('receiptsSectionShown', () => {
+  it('shows the Receipts section only when it has receipts to list or Add receipt to offer', () => {
+    const cases = [
+      { canManage: true, count: 0, showAdd: true, shown: true }, // ordered: Add receipt
+      { canManage: true, count: 0, showAdd: false, shown: false }, // not ordered yet: no empty heading (#230)
+      { canManage: true, count: 2, showAdd: true, shown: true },
+      { canManage: true, count: 2, showAdd: false, shown: true }, // back to asking: receipts stay visible
+      { canManage: false, count: 0, showAdd: true, shown: false }, // students never add
+      { canManage: false, count: 0, showAdd: false, shown: false },
+      { canManage: false, count: 1, showAdd: true, shown: true }, // "1 receipt added."
+      { canManage: false, count: 1, showAdd: false, shown: true },
+    ]
+    for (const { shown, ...input } of cases) expect(receiptsSectionShown(input), JSON.stringify(input)).toBe(shown)
+  })
+})
+
 describe('orderFieldsShown', () => {
-  const empty = { ordered_by: '', shipped_to: '', estimated_arrival: '' }
+  const empty = { ordered_by: '', ordered_on: '', shipped_to: '', estimated_arrival: '', tracking: '' }
 
   it('hides the order details while asking, shows them once the order is placed, and always shows one that is filled in', () => {
-    const all = (shown: boolean) => ({ ordered_by: shown, shipped_to: shown, estimated_arrival: shown })
+    const all = (shown: boolean) => ({ ordered_by: shown, ordered_on: shown, shipped_to: shown, estimated_arrival: shown, tracking: shown })
     for (const status of ['wait', 'order_low', 'order', 'order_high'] as const) expect(orderFieldsShown({ ...empty, status }), status).toEqual(all(false))
     for (const status of ['placed', 'backordered', 'received'] as const) expect(orderFieldsShown({ ...empty, status }), status).toEqual(all(true))
     // So nothing saved is hidden.
-    expect(orderFieldsShown({ ...empty, status: 'order', shipped_to: DEMO_PEOPLE.pat })).toEqual({ ordered_by: false, shipped_to: true, estimated_arrival: false })
+    expect(orderFieldsShown({ ...empty, status: 'order', shipped_to: DEMO_PEOPLE.pat, tracking: 'EXAMPLE-TRACK-0001' })).toEqual({ ...all(false), shipped_to: true, tracking: true })
   })
 })
 
 describe('pickStatus', () => {
   const asked = () => find('Compliant wheel, 2 in')
   const me = DEMO_PEOPLE.morgan
+  const on = '2026-11-16'
 
-  it('fills in Ordered by with you when you pick Order Placed', () => {
-    expect(pickStatus(itemToForm(asked()), 'placed', asked(), me)).toEqual({ status: 'placed', ordered_by: me })
+  it("fills in Ordered by with you and Date ordered with today's date when you pick Order Placed", () => {
+    expect(pickStatus(itemToForm(asked()), 'placed', asked(), me, on)).toEqual({ status: 'placed', ordered_by: me, ordered_on: on })
   })
 
-  it('keeps someone else picked in the form', () => {
-    const form = { ...itemToForm(asked()), ordered_by: DEMO_PEOPLE.pat }
-    expect(pickStatus(form, 'placed', asked(), me)).toEqual({ status: 'placed' })
+  it('keeps someone else, or another date, already picked in the form', () => {
+    const form = { ...itemToForm(asked()), ordered_by: DEMO_PEOPLE.pat, ordered_on: '2026-11-10' }
+    expect(pickStatus(form, 'placed', asked(), me, on)).toEqual({ status: 'placed' })
   })
 
   it('puts back what was saved when you move it away from Order Placed again', () => {
-    const form = { ...itemToForm(asked()), status: 'placed' as const, ordered_by: me }
-    expect(pickStatus(form, 'order_high', asked(), me)).toEqual({ status: 'order_high', ordered_by: '' })
+    const form = { ...itemToForm(asked()), status: 'placed' as const, ordered_by: me, ordered_on: on }
+    expect(pickStatus(form, 'order_high', asked(), me, on)).toEqual({ status: 'order_high', ordered_by: '', ordered_on: '' })
   })
 
   it('only changes the status otherwise', () => {
-    expect(pickStatus(itemToForm(asked()), 'order_high', asked(), me)).toEqual({ status: 'order_high' })
+    expect(pickStatus(itemToForm(asked()), 'order_high', asked(), me, on)).toEqual({ status: 'order_high' })
     const placed = find('Timing belt, 60T')
-    expect(pickStatus(itemToForm(placed), 'received', placed, me)).toEqual({ status: 'received' })
+    expect(pickStatus(itemToForm(placed), 'received', placed, me, on)).toEqual({ status: 'received' })
   })
 })
 

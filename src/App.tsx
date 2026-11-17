@@ -74,12 +74,16 @@ function Frame({ children }: { children: ReactNode }) {
 }
 
 /**
- * One module in a menu. A module with pages has a button that opens and
- * closes a list of them. Pages (or the whole module) the module hides from
+ * One module in a menu. Pages (or the whole module) the module hides from
  * this person with useHiddenPages, like Scouting's strategy-only pages,
  * aren't listed.
+ *
+ * A module with pages gets two buttons on its row (#229): its name opens
+ * the first page this person can see (Scouting's Overview for the strategy
+ * team, Match for everyone else), and the arrow beside it opens and closes
+ * the list of its pages.
  */
-function MenuEntry(props: { module: ModuleDefinition; id: string; subpage: string; pagesOpen: boolean; onTogglePages: () => void }) {
+export function MenuEntry(props: { module: ModuleDefinition; id: string; subpage: string; pagesOpen: boolean; onTogglePages: () => void }) {
   const { module: m, id, subpage } = props
   const useHidden = m.useHiddenPages ?? useNothingHidden
   const hidden = useHidden()
@@ -92,18 +96,25 @@ function MenuEntry(props: { module: ModuleDefinition; id: string; subpage: strin
       </a>
     )
   }
+  // If every page is hidden, the name goes to the module's own address, which says why.
+  const firstPage = pages[0]?.path ?? ''
   return (
     <div className="menu-pages">
-      <button
-        type="button"
-        className="menu-item menu-pages-btn"
-        aria-expanded={props.pagesOpen}
-        aria-controls={`menu-pages-${m.id}`}
-        onClick={props.onTogglePages}
-      >
-        <span className="menu-item-name">{m.name}</span>
-        <span className="chev" aria-hidden="true" />
-      </button>
+      <div className="menu-pages-row">
+        <a className="menu-item" href={href(m.id, firstPage)}>
+          <span className="menu-item-name">{m.name}</span>
+        </a>
+        <button
+          type="button"
+          className="menu-item menu-pages-btn"
+          aria-label={`${m.name}'s pages`}
+          aria-expanded={props.pagesOpen}
+          aria-controls={`menu-pages-${m.id}`}
+          onClick={props.onTogglePages}
+        >
+          <span className="chev" aria-hidden="true" />
+        </button>
+      </div>
       <div id={`menu-pages-${m.id}`} className="menu-pages-list" hidden={!props.pagesOpen}>
         {pages.map((p) => (
           <a key={p.path} className="menu-item" href={href(m.id, p.path)} aria-current={m.id === id && p.path === subpage ? 'page' : undefined}>
@@ -114,6 +125,9 @@ function MenuEntry(props: { module: ModuleDefinition; id: string; subpage: strin
     </div>
   )
 }
+
+/** For Shell's list of pages: nobody has tapped an arrow on this page. '' is never a page, so it never matches. */
+const NO_CHOICE = { id: '', page: '' }
 
 function Shell({ user }: { user: User }) {
   const { id, rest } = useRoute()
@@ -131,12 +145,14 @@ function Shell({ user }: { user: User }) {
   const openMenu = menu.page === page ? menu.name : ''
   /*
    * Which module's list of pages is open inside a menu (like Scouting's
-   * Match and Pit): a module id, or '' for none. Like the menu above, it
-   * remembers the page it opened on, so it closes when the page changes,
-   * and it closes whenever its menu closes.
+   * Match and Pit): a module id, or '' for none. Until someone taps an
+   * arrow, it's the module you're on, so on a Scouting page its list starts
+   * open with your page highlighted. A tap is remembered with the page it
+   * happened on, like the menu above, so it's forgotten when the page
+   * changes or the menu closes. NO_CHOICE forgets it.
    */
-  const [pages, setPages] = useState({ id: '', page: '' })
-  const openPages = pages.page === page ? pages.id : ''
+  const [pages, setPages] = useState(NO_CHOICE)
+  const openPages = pages.page === page ? pages.id : id
 
   /*
    * When the page changes, close every menu for good. Without this, going
@@ -149,7 +165,7 @@ function Shell({ user }: { user: User }) {
   if (lastPage !== page) {
     setLastPage(page)
     setMenu({ name: '', page })
-    setPages({ id: '', page })
+    setPages(NO_CHOICE)
   }
 
   function setOpenPages(moduleId: string) {
@@ -158,12 +174,12 @@ function Shell({ user }: { user: User }) {
 
   function toggle(name: string) {
     setMenu({ name: openMenu === name ? '' : name, page })
-    setOpenPages('')
+    setPages(NO_CHOICE)
   }
 
   function close() {
     setMenu({ name: '', page })
-    setOpenPages('')
+    setPages(NO_CHOICE)
   }
 
   // Every page starts at the top.
@@ -177,7 +193,7 @@ function Shell({ user }: { user: User }) {
     function closeIfOutside(event: Event) {
       if (!(event.target as Element | null)?.closest('.menu')) {
         setMenu({ name: '', page: '' })
-        setPages({ id: '', page: '' })
+        setPages(NO_CHOICE)
       }
     }
     document.addEventListener('pointerdown', closeIfOutside)

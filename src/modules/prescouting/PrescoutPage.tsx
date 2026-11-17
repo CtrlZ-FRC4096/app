@@ -1,16 +1,18 @@
-import { useState, type FormEvent } from 'react'
+import { Fragment, useState, type FormEvent } from 'react'
 import { href, useRoute } from '../../core/router'
 import { useSession } from '../../core/session'
 import { toast } from '../../core/toast'
 import { PageHead, Panel, Pick } from '../../core/ui'
 import type { Result } from '../../core/table'
 import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../scouting/data'
+import { PRESCOUT_VIEWS, TABLE_ANSWER_LENGTH, setPrescoutView, starCount, usePrescoutView } from './data'
 import {
-  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, firstLine, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout,
-  setPrescoutEvent, useIsStrategy, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
-  type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutTeam,
+  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, TIERS, firstLine, hasMatch13, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout, searchPrescout,
+  setPrescoutEvent, setTier, useIsStrategy, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
+  type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutTeam, type Tier,
 } from './data'
 import Stars from './Stars'
+import './prescouting.css'
 import TeamSeason from './TeamSeason'
 
 // Big enough to tap, and 16px text so phones don't zoom in on the box.
@@ -58,8 +60,12 @@ function Overview() {
   const stars = useStars(event)
   const me = useSession().id
   const [sort, setSort] = useState<PrescoutSort>('Team number')
+  const view = usePrescoutView()
   const teams = result?.ok ? prescoutOverview(result.value, notes, stars, me, sort) : []
   const starred = teams.some((t) => t.group !== 'Everyone else')
+  // What's typed in the search box. The list narrows as it's typed.
+  const [search, setSearch] = useState('')
+  const found = searchPrescout(teams, search)
 
   return (
     <>
@@ -72,13 +78,44 @@ function Overview() {
           <Problem error={result.error} retry={() => void reloadPrescoutTeams(event)} />
         ) : (
           <div className="panel-body" style={{ display: 'grid', gap: 12 }}>
-            <div className="field">
-              Sort by
-              <Pick label="Sort by" options={[...PRESCOUT_SORTS]} value={sort} onChange={setSort} />
+            <div className="toolbar" style={{ gap: '10px 20px' }}>
+              <div className="field">
+                Sort by
+                <Pick label="Sort by" options={[...PRESCOUT_SORTS]} value={sort} onChange={setSort} />
+              </div>
+              <div className="field">
+                Show as
+                <Pick label="Show as" options={[...PRESCOUT_VIEWS]} value={view} onChange={setPrescoutView} />
+              </div>
             </div>
-            {STAR_GROUPS.map((group) => (
-              <TeamGroup key={group} title={starred ? group : ''} event={event} teams={teams.filter((t) => t.group === group)} />
-            ))}
+            <label className="field" htmlFor="prescout-search">
+              Find a team
+              <input
+                id="prescout-search"
+                className="input"
+                type="search"
+                style={{ ...BOX, width: '100%' }}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Number or name"
+              />
+            </label>
+            {/* Said aloud by screen readers when the list empties, since nothing else on the page changes. */}
+            <div aria-live="polite">
+              {teams.length > 0 && found.length === 0 && (
+                <p className="muted" style={{ margin: 0, overflowWrap: 'anywhere' }}>No teams match "{search.trim()}". Check the number or name, or clear the box to see every team.</p>
+              )}
+            </div>
+            {view === 'Table' ? (
+              found.length > 0 && <TeamTable event={event} teams={found} headings={starred} />
+            ) : (
+              STAR_GROUPS.map((group) => (
+                <TeamGroup key={group} title={starred ? group : ''} event={event} teams={found.filter((t) => t.group === group)} />
+              ))
+            )}
           </div>
         )}
       </Panel>
@@ -98,6 +135,78 @@ function TeamGroup(props: { title: string; event: string; teams: OverviewTeam[] 
       {props.title && <h3 style={{ margin: '4px 0 0', fontSize: 15 }}>{props.title} <span className="note">({props.teams.length})</span></h3>}
       {props.teams.map((t) => <TeamCard key={t.team} event={props.event} team={t} />)}
     </section>
+  )
+}
+
+// One line per row, so three or more teams fit where one card did.
+const CELL = { padding: '0 10px', whiteSpace: 'nowrap' } as const
+
+/**
+ * The overview as a table: a row for each team, a column for each question
+ * in PRESCOUT_QUESTIONS (so a new question gets a column by itself). It's
+ * wider than a phone, so it scrolls sideways inside its own box, with the
+ * team column kept in place (.grid-table, like Attendance). The star groups
+ * are heading rows, so the columns stay lined up. `teams` come sorted and
+ * grouped from prescoutOverview(); `headings` is false when nobody is starred.
+ */
+export function TeamTable(props: { event: string; teams: OverviewTeam[]; headings: boolean }) {
+  return (
+    // minWidth 0 lets the box be narrower than the table, so the table scrolls and not the page.
+    <div className="table-wrap" style={{ minWidth: 0, border: '1px solid var(--line)', borderRadius: 'var(--radius)' }}>
+      <table className="grid-table">
+        <thead>
+          <tr>
+            <th scope="col" style={{ padding: '8px 10px' }}>Team</th>
+            {PRESCOUT_QUESTIONS.map((q) => <th key={q.key} scope="col" style={{ padding: '8px 10px' }}>{q.label}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {STAR_GROUPS.map((group) => {
+            const teams = props.teams.filter((t) => t.group === group)
+            if (teams.length === 0) return null
+            return (
+              <Fragment key={group}>
+                {props.headings && (
+                  <tr>
+                    {/* The words stay at the left edge while the table scrolls sideways. */}
+                    <th colSpan={PRESCOUT_QUESTIONS.length + 1} scope="rowgroup" style={{ padding: '6px 10px', background: 'var(--surface-2)' }}>
+                      <span style={{ position: 'sticky', left: 10, display: 'inline-block' }}>{group} ({teams.length})</span>
+                    </th>
+                  </tr>
+                )}
+                {teams.map((t) => <TeamRow key={t.team} event={props.event} team={t} />)}
+              </Fragment>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function TeamRow(props: { event: string; team: OverviewTeam }) {
+  const t = props.team
+  const stars = starCount(t.stars)
+  return (
+    <tr>
+      <td style={CELL}>
+        {/* As tall as the row, so the whole cell is the tap target. */}
+        <a
+          href={teamHref(props.event, t.team)}
+          title={t.name}
+          aria-label={`Team ${t.team}, ${t.name}${t.notes?.tier ? `, tier ${t.notes.tier}` : ''}${stars ? `, ${stars === 1 ? '1 star' : `${stars} stars`}` : ''}`}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 44, minWidth: 44, color: 'inherit' }}
+        >
+          <strong className="tnum">{t.team}</strong>
+          {t.notes?.tier && <TierBadge tier={t.notes.tier} />}
+          {stars > 0 && <span className="note tnum">★{stars}</span>}
+        </a>
+      </td>
+      {PRESCOUT_QUESTIONS.map((q) => {
+        const answer = firstLine(t.notes?.[q.key] ?? '', TABLE_ANSWER_LENGTH)
+        return <td key={q.key} style={CELL} className={answer ? undefined : 'muted'}>{answer || '—'}</td>
+      })}
+    </tr>
   )
 }
 
@@ -168,8 +277,9 @@ export function TeamCard(props: { event: string; team: OverviewTeam }) {
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
         <a href={open} style={{ minWidth: 0, overflowWrap: 'anywhere', color: 'inherit', textDecoration: 'none', flex: 1 }}>
           <strong className="tnum">{t.team}</strong> {t.name}
+          {t.notes?.tier && <> <TierBadge tier={t.notes.tier} long /></>}
           <br />
-          <span className="note tnum">{`EPA ${formatEpa(t.epa)}`}</span>
+          <span className="note tnum">{`EPA ${formatEpa(t.epa)} · xP ${formatEpa(t.xp)}`}</span>
         </a>
       </div>
       <Stars event={props.event} team={t.team} />
@@ -193,6 +303,38 @@ export function TeamCard(props: { event: string; team: OverviewTeam }) {
   )
 }
 
+/** A team's tier as a small badge (#191): "B", or "Tier B" when `long`. Colours in prescouting.css. */
+function TierBadge(props: { tier: Tier; long?: boolean }) {
+  return <span className="prescout-tier-badge" data-tier={props.tier} title={`Tier ${props.tier}`}>{props.long ? `Tier ${props.tier}` : props.tier}</span>
+}
+
+/**
+ * The tier list (#191): six big buttons, S to F. Tap one to choose it, and
+ * tap it again to clear it. Shared with everyone, and changes from other
+ * phones show up by themselves.
+ */
+function TierPanel(props: { event: string; team: number; tier: Tier | null }) {
+  const [saving, setSaving] = useState(false)
+
+  async function choose(tier: Tier | '') {
+    if (tier === '' || saving) return
+    setSaving(true)
+    const result = await setTier(props.event, props.team, tier === props.tier ? null : tier)
+    setSaving(false)
+    if (!result.ok) toast(result.error)
+  }
+
+  return (
+    <Panel title="Tier" aside={props.tier ? <TierBadge tier={props.tier} /> : <span className="note">Not rated</span>}>
+      <div className="panel-body prescout-tier" style={{ display: 'grid', gap: 8 }}>
+        <Pick<Tier | ''> label="Tier" options={[...TIERS]} value={props.tier ?? ''} onChange={(tier) => void choose(tier)} />
+        <p className="note" style={{ margin: 0 }}>S is best. Tap the chosen tier again to clear it.</p>
+      </div>
+    </Panel>
+  )
+}
+
+/** A Match 13 number to one decimal place, or "—" if Match 13 didn't give it. */
 function formatEpa(epa: number | null): string {
   return epa === null ? '—' : epa.toFixed(1)
 }
@@ -223,12 +365,15 @@ export function TeamPage(props: { event: string; team: number }) {
           Scouting team page →
         </a>
       </div>
+      {/* Starring and the tier are here (#191). */}
+      <TierPanel event={event} team={team} tier={notes?.tier ?? null} />
       <Panel title="Stars">
         <div className="panel-body">
           <Stars event={event} team={team} />
         </div>
       </Panel>
       <RobotPhotos event={event} team={team} />
+      {details && <Match13Panel team={details} />}
       <NotesForm event={event} team={team} saved={notes ?? NO_ANSWERS} />
       <TeamSeason event={event} team={team} />
     </>
@@ -261,6 +406,38 @@ function RobotPhotos(props: { event: string; team: number }) {
   )
 }
 
+
+/**
+ * Match 13's numbers for the team (#186), to compare with what scouts read
+ * and watched. "—" for a number Match 13 didn't give, and a line saying so
+ * if it hasn't rated them at all yet.
+ */
+export function Match13Panel(props: { team: PrescoutTeam }) {
+  const t = props.team
+  const numbers: [string, number | null][] = [['Auto', t.auto], ['Teleop', t.teleop], ['Endgame', t.endgame], ['EPA', t.epa], ['OPR', t.opr], ['DPR', t.dpr]]
+  return (
+    <Panel title="Match 13">
+      {hasMatch13(t) ? (
+        <>
+          <div className="stats" aria-label="Match 13 numbers">
+            <div>
+              <strong>{formatEpa(t.xp)}</strong>
+              <span>{t.xpRank ? `xP · Rank ${t.xpRank.rank} of ${t.xpRank.of}` : 'xP'}</span>
+            </div>
+            {numbers.map(([label, value]) => (
+              <div key={label}><strong>{formatEpa(value)}</strong><span>{label}</span></div>
+            ))}
+          </div>
+          <p className="panel-body note" style={{ margin: 0, paddingTop: 0 }}>
+            xP is the points they add to their alliance's score. Before the event, it's Match 13's rating of how strong they are going in; it changes once matches start.
+          </p>
+        </>
+      ) : (
+        <p className="panel-body muted" style={{ margin: 0 }}>No Match 13 numbers yet. They usually show up closer to the event.</p>
+      )}
+    </Panel>
+  )
+}
 
 /** The EPA under the team's name, or why it's not there. */
 function TeamLine(props: { list: Result<PrescoutTeam[]> | null; details: PrescoutTeam | undefined }) {

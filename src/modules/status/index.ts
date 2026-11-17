@@ -3,8 +3,9 @@ import { usePitSummary } from './data'
 
 export const status: ModuleDefinition = {
   id: 'status',
-  name: 'Robot status',
-  purpose: 'The pit checklist for event day.',
+  // The folder and id stay "status", so links and other code keep working.
+  name: 'Pit checklist',
+  purpose: 'Get the robot ready for each of our matches: your items, and everyone’s progress.',
   group: 'competition',
   load: () => import('./StatusPage'),
   useSummary: usePitSummary,

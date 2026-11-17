@@ -6,9 +6,9 @@
  * ones we care about (#118). Stars are read by the Scouting
  * module too.
  *
- * The teams come from The Blue Alliance and their EPA from Match 13, both
- * through the Scouting module's data.ts, which holds those server
- * functions. Our notes are in the prescouting_notes table.
+ * The teams come from The Blue Alliance and their EPA, xP and other numbers
+ * from Match 13 (#186), both through the Scouting module's data.ts, which
+ * holds those server functions. Our notes are in the prescouting_notes table.
  */
 import { useEffect } from 'react'
 import { DEMO_PEOPLE } from '../../core/demo'
@@ -38,8 +38,31 @@ export interface PrescoutTeam {
   name: string
   /** Statbotics' EPA, from Match 13, or null if there isn't one yet. */
   epa: number | null
+  /**
+   * Match 13's xP (#186): how many points they add to their alliance's
+   * score. Before the event it's Match 13's rating of how strong they are
+   * going in; it changes once matches start. Null if Match 13 hasn't rated them.
+   */
+  xp: number | null
+  /** Where their xP ranks among the teams at this event that Match 13 rated, like 5 of 40. Equal xP, equal rank. */
+  xpRank: { rank: number; of: number } | null
+  /** The parts of their xP: auto, teleop and endgame. */
+  auto: number | null
+  teleop: number | null
+  endgame: number | null
+  /** The Blue Alliance's OPR (points they score) and DPR (points they give up), through Match 13. */
+  opr: number | null
+  dpr: number | null
   /** Their page on The Blue Alliance. */
   tbaUrl: string
+}
+
+/** The Match 13 numbers on a team, as the prescouting page shows them. */
+export type Match13Numbers = Pick<PrescoutTeam, 'xp' | 'auto' | 'teleop' | 'endgame' | 'epa' | 'opr' | 'dpr'>
+
+/** Whether Match 13 gave any number for this team. */
+export function hasMatch13(t: Match13Numbers): boolean {
+  return [t.xp, t.auto, t.teleop, t.endgame, t.epa, t.opr, t.dpr].some((n) => n !== null)
 }
 
 /**
@@ -73,18 +96,46 @@ export function setPrescoutEvent(typed: string): Result<string> {
   return ok(key)
 }
 
-/** Put each team's EPA next to them, sorted by team number. A team Match 13 doesn't have gets null. */
+/** A number from Match 13, or null if it's missing or not a real number. */
+const numberOrNull = (n: unknown): number | null => (typeof n === 'number' && Number.isFinite(n) ? n : null)
+
+/**
+ * Put each team's Match 13 numbers next to them (#186), sorted by team
+ * number. A team Match 13 doesn't have gets null for each. Their xP rank is
+ * among the teams in this list that have an xP: 1 is the best, and teams
+ * with the same xP share a rank.
+ */
 export function prescoutList(teams: TbaTeam[], ratings: Match13Rating[], event: string): PrescoutTeam[] {
-  const epa = new Map(ratings.map((r) => [r.teamNumber, r.epa]))
+  const byTeam = new Map(ratings.map((r) => [r.teamNumber, r]))
+  const xps = teams.flatMap((t) => {
+    const xp = numberOrNull(byTeam.get(t.team_number)?.xpEnd)
+    return xp === null ? [] : [xp]
+  })
   return teams
-    .map((t) => ({ team: t.team_number, name: t.nickname, epa: epa.get(t.team_number) ?? null, tbaUrl: tbaTeamUrl(t.team_number, event) }))
+    .map((t) => {
+      const r = byTeam.get(t.team_number)
+      const xp = numberOrNull(r?.xpEnd)
+      return {
+        team: t.team_number,
+        name: t.nickname,
+        epa: numberOrNull(r?.epa),
+        xp,
+        xpRank: xp === null ? null : { rank: xps.filter((other) => other > xp).length + 1, of: xps.length },
+        auto: numberOrNull(r?.xAuto),
+        teleop: numberOrNull(r?.xTele),
+        endgame: numberOrNull(r?.xEnd),
+        opr: numberOrNull(r?.opr),
+        dpr: numberOrNull(r?.dpr),
+        tbaUrl: tbaTeamUrl(t.team_number, event),
+      }
+    })
     .sort((a, b) => a.team - b.team)
 }
 
 /**
  * The prescouting list for an event: its teams from The Blue Alliance, with
- * EPA from Match 13. If Match 13 has no ratings yet (often true before the
- * event), the teams still show, with no EPA.
+ * their xP, EPA, OPR and the rest from Match 13. If Match 13 has no ratings
+ * yet (often true before the event), the teams still show, with no numbers.
  */
 export async function loadPrescoutTeams(event: string): Promise<Result<PrescoutTeam[]>> {
   if (!isEventKey(event)) return fail(NOT_AN_EVENT_KEY)
@@ -140,9 +191,15 @@ export interface PrescoutNotes extends Row {
   /** How they've done this season, like their results at earlier events. */
   performance: string
   other_notes: string
+  /** Where they are on our tier list (#191), S best to F, or null if nobody's rated them yet. */
+  tier: Tier | null
   /** Who started the notes for this team. */
   created_by: string | null
 }
+
+/** The tier list (#191): S is best, then A to F. A team nobody has rated yet is "Not rated". */
+export const TIERS = ['S', 'A', 'B', 'C', 'D', 'F'] as const
+export type Tier = (typeof TIERS)[number]
 
 /** The answers to the prescouting questions. */
 export type PrescoutAnswers = Pick<PrescoutNotes, 'overall' | 'strengths' | 'weaknesses' | 'key_task' | 'auto_paths' | 'performance' | 'other_notes'>
@@ -164,12 +221,12 @@ export const NO_ANSWERS: PrescoutAnswers = { overall: '', strengths: '', weaknes
 
 // Made up, for demo mode. Team numbers in the 9990s, so nobody mistakes them for real scouting.
 const EXAMPLE_PRESCOUT: PrescoutNotes[] = [
-  { id: '00000000-0000-4000-8000-0000000e0101', event_key: EVENT_KEY, team_number: 9991, overall: 'Strong scorer, slow climb. Good first pick.', strengths: 'Fast cycles from the hub. Very consistent driver.\nNever broke down at their last event.', weaknesses: 'Slow to climb', key_task: 'Scoring fuel in teleop', auto_paths: 'Starts center, scores preload, picks up 2 from the middle', performance: 'Won their first event, semifinalist at the second', other_notes: '', created_at: '2026-11-05T19:00:00Z', created_by: DEMO_PEOPLE.jordan },
-  { id: '00000000-0000-4000-8000-0000000e0102', event_key: EVENT_KEY, team_number: 9993, overall: '', strengths: 'Strong defense', weaknesses: '', key_task: 'Playing defense', auto_paths: '', performance: '', other_notes: 'Ask them about their intake in the pits', created_at: '2026-11-05T19:20:00Z', created_by: DEMO_PEOPLE.alex },
+  { id: '00000000-0000-4000-8000-0000000e0101', event_key: EVENT_KEY, team_number: 9991, overall: 'Strong scorer, slow climb. Good first pick.', strengths: 'Fast cycles from the hub. Very consistent driver.\nNever broke down at their last event.', weaknesses: 'Slow to climb', key_task: 'Scoring fuel in teleop', auto_paths: 'Starts center, scores preload, picks up 2 from the middle', performance: 'Won their first event, semifinalist at the second', other_notes: '', tier: 'S', created_at: '2026-11-05T19:00:00Z', created_by: DEMO_PEOPLE.jordan },
+  { id: '00000000-0000-4000-8000-0000000e0102', event_key: EVENT_KEY, team_number: 9993, overall: '', strengths: 'Strong defense', weaknesses: '', key_task: 'Playing defense', auto_paths: '', performance: '', other_notes: 'Ask them about their intake in the pits', tier: 'B', created_at: '2026-11-05T19:20:00Z', created_by: DEMO_PEOPLE.alex },
 ]
 
-// Version 3: the overall summary was added to the rows (#153).
-export const prescoutTable = createTable<PrescoutNotes>('prescouting_notes', { demo: EXAMPLE_PRESCOUT, version: 3 })
+// Version 3: the overall summary was added to the rows (#153). Version 4: the tier (#191).
+export const prescoutTable = createTable<PrescoutNotes>('prescouting_notes', { demo: EXAMPLE_PRESCOUT, version: 4 })
 
 /** Every team's notes for an event. */
 export function usePrescoutNotes(event: string): PrescoutNotes[] {
@@ -219,7 +276,22 @@ export async function savePrescout(event: string, team: number, answers: Prescou
   const existing = findNotes(event, team)
   if (existing) return prescoutTable.update(existing.id, tidy)
   if (PRESCOUT_QUESTIONS.every((q) => tidy[q.key] === '')) return fail('Write at least one answer before saving.')
-  return prescoutTable.insert({ event_key: event, team_number: team, ...tidy })
+  return prescoutTable.insert({ event_key: event, team_number: team, ...tidy, tier: null })
+}
+
+/**
+ * Put a team on the tier list (#191), or take them off it with null. One
+ * tier per team per event, shared by everyone; whoever changes it last
+ * wins. A team with no notes yet gets their row, with empty answers, so
+ * they still count as not prescouted.
+ */
+export async function setTier(event: string, team: number, tier: Tier | null): Promise<Result<PrescoutNotes>> {
+  if (!isEventKey(event)) return fail(NOT_AN_EVENT_KEY)
+  if (!Number.isInteger(team) || team < 1 || team > MAX_TEAM) return fail('That team number looks wrong. Go back to the list and choose the team again.')
+  if (tier !== null && !TIERS.includes(tier)) return fail('Choose a tier from S to F.')
+  const existing = findNotes(event, team)
+  if (existing) return prescoutTable.update(existing.id, { tier })
+  return prescoutTable.insert({ event_key: event, team_number: team, ...NO_ANSWERS, tier })
 }
 
 // ---------------------------------------------------------------------------
@@ -342,7 +414,7 @@ export async function unstarTeam(starId: string): Promise<Result> {
 // ---------------------------------------------------------------------------
 // The prescouting overview (#118): every team at a glance, starred ones first.
 
-export const PRESCOUT_SORTS = ['Team number', 'EPA'] as const
+export const PRESCOUT_SORTS = ['Team number', 'EPA', 'xP', 'Tier'] as const
 export type PrescoutSort = (typeof PRESCOUT_SORTS)[number]
 
 /** One team in the overview: the list's details, their notes (or null), and their stars. */
@@ -356,12 +428,18 @@ export interface OverviewTeam extends PrescoutTeam {
 
 /**
  * The overview's order: team stars first, then your own stars, then
- * everyone else. Within each, by team number, or by EPA best first (teams
- * with no EPA after those with one). Ties go by number.
+ * everyone else. Within each, by team number, by EPA or xP best first
+ * (teams with none after those with one), or by tier, S to F, then Not
+ * rated (#191). Ties go by number.
  */
 export function prescoutOverview(teams: PrescoutTeam[], notes: PrescoutNotes[], stars: PrescoutStar[], me: string | null, sort: PrescoutSort): OverviewTeam[] {
   const byTeam = new Map(notes.map((n) => [n.team_number, n]))
-  const byEpa = (a: OverviewTeam, b: OverviewTeam) => (a.epa === null ? 1 : 0) - (b.epa === null ? 1 : 0) || (b.epa ?? 0) - (a.epa ?? 0)
+  // Best first, with teams that have no number after those with one.
+  const best = (x: number | null, y: number | null) => (x === null ? 1 : 0) - (y === null ? 1 : 0) || (y ?? 0) - (x ?? 0)
+  // S first, F last, then teams nobody has rated.
+  const tierRank = (t: OverviewTeam) => (t.notes?.tier ? TIERS.indexOf(t.notes.tier) : TIERS.length)
+  const bySort = (a: OverviewTeam, b: OverviewTeam) =>
+    sort === 'EPA' ? best(a.epa, b.epa) : sort === 'xP' ? best(a.xp, b.xp) : sort === 'Tier' ? tierRank(a) - tierRank(b) : 0
   const seen = visibleStars(stars, me)
   return teams
     .map((t) => {
@@ -369,7 +447,47 @@ export function prescoutOverview(teams: PrescoutTeam[], notes: PrescoutNotes[], 
       const teamStars = starsFor(seen, t.team, me)
       return { ...t, notes: n, prescouted: hasAnswers(n), stars: teamStars, group: starGroup(teamStars) }
     })
-    .sort((a, b) => STAR_GROUPS.indexOf(a.group) - STAR_GROUPS.indexOf(b.group) || (sort === 'EPA' ? byEpa(a, b) : 0) || a.team - b.team)
+    .sort((a, b) => STAR_GROUPS.indexOf(a.group) - STAR_GROUPS.indexOf(b.group) || bySort(a, b) || a.team - b.team)
+}
+
+/**
+ * The teams that match what's typed in the overview's search box: every
+ * word typed is in the team's number or name, ignoring capitals. So "40"
+ * finds 4096 and 1640, and "robo" finds every name with "robo" in it. An
+ * empty search matches every team. The order stays as it was.
+ */
+export function searchPrescout<T extends { team: number; name: string }>(teams: T[], text: string): T[] {
+  const words = text.toLowerCase().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return teams
+  return teams.filter((t) => {
+    const about = `${t.team} ${t.name}`.toLowerCase()
+    return words.every((word) => about.includes(word))
+  })
+}
+
+/** How the overview shows the teams: a card each, or one compact table with a row each. */
+export const PRESCOUT_VIEWS = ['Cards', 'Table'] as const
+export type PrescoutView = (typeof PRESCOUT_VIEWS)[number]
+
+/** The overview's Cards / Table choice, remembered on this device like the event. */
+export const prescoutViewStore = createStore<PrescoutView>('prescouting-view', 1, () => 'Cards', { keepOnReset: true })
+
+export function usePrescoutView(): PrescoutView {
+  const view = useStore(prescoutViewStore)
+  // Anything else saved on the phone (from an older version, say) means Cards.
+  return PRESCOUT_VIEWS.includes(view) ? view : 'Cards'
+}
+
+export function setPrescoutView(view: PrescoutView): void {
+  prescoutViewStore.set(view)
+}
+
+/** How much of an answer a table cell shows: shorter than a card, so a row stays one line. */
+export const TABLE_ANSWER_LENGTH = 40
+
+/** How many stars a team has that you can see: the team's, plus your own just for you. */
+export function starCount(stars: TeamStars): number {
+  return stars.forTeam.length + (stars.mine ? 1 : 0)
 }
 
 /** The first line of an answer, cut short with "…" if it's long, for the overview. */

@@ -8,6 +8,8 @@ Parts, where they live, and how many are left, with a record of who took or adde
 
 **Order more** (#194): every part has an **Order more** button, next to **Take / add**, for anyone on the team. It opens Purchasing's **Add new item** form filled in from the part: its name, vendor, part number and product link, with 1 needed. Nothing is saved until they press Save, so they can change anything first, like the priority and number needed. Purchasing builds the form with `requestFromInventoryItem()` in its own `data.ts`, from the address `#/purchasing/from-inventory/<part id>`. A vendor Purchasing doesn't list (like "MK Battery") is left for them to pick, with Inventory's name for it in the notes.
 
+**Search** (#224): a **Search** box at the top of the list, next to **Low stock only**, narrows it as you type to the parts whose name, vendor, part number or location contain every word typed, ignoring capitals, so "bin e2 bolt" finds the bolts in Bin E2. It works with **Low stock only**: search "bearing" with it ticked to see the bearings running low. When nothing matches, the page says so, with a **Clear the search** button. The matching is `searchItems()` in `data.ts`, which works like Purchasing's.
+
 **On a phone,** the list has three columns: each part's location, vendor, part number and product link sit under its name, and the buttons wrap onto a second line, so nothing scrolls sideways.
 
 **Taking and adding stock:** everyone has a **Take / add** button on each part. `changeStock()` in `data.ts` changes the quantity and adds a line to the part's history (the `inventory_changes` table): who, how many, when, and an optional note. It refuses to take more than are on the shelf. A mentor's Edit that changes the count adds a "Count corrected" line, so the history always adds up. Nobody can edit or delete history lines.
@@ -17,7 +19,7 @@ Parts, where they live, and how many are left, with a record of who took or adde
 - A list of parts with location, quantity and a low-stock level
 - Take and add stock, recording who did it and when
 - A low-stock flag, and a filter to show only low parts
-- Search by name, bin or vendor
+- ~~Search by name, bin or vendor~~ (done, #224)
 - A QR label for each bin that opens that part in the app
 - Copy the list as CSV, so the data can always leave the app
 
@@ -33,6 +35,7 @@ Parts, where they live, and how many are left, with a record of who took or adde
 2. ~~Show the parts in a table on the page.~~ Done.
 3. ~~Add `changeStock()` with tests: it should refuse to take more than are on the shelf.~~ Done.
 4. ~~Add the low-stock flag and filter.~~ Done.
+5. ~~Add a search box, with `searchItems()` and its test.~~ Done.
 
 Copy the pattern from the [Example module](../example/README.md): a table
 and rules in `data.ts`, tests in `data.test.ts`, and the page calling
