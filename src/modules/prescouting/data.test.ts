@@ -6,7 +6,7 @@ import { resetAllStores } from '../../core/store'
 import { EVENT_KEY, getTeamEvents, tbaEventUrl, tbaTeamUrl, type TbaMatchWithVideos } from '../scouting/data'
 import {
   PRESCOUT_QUESTIONS, prescoutAverages, prescoutMatchesTable, savePrescoutMatch, seasonMatches, prescoutFor, prescoutHref, type PrescoutMatch, type PrescoutNotes,
-  MAX_PRESCOUT_ANSWER, NO_ANSWERS, cleanEventKey, firstLine, hasAnswers, isEventKey, loadPrescoutTeams, prescoutEventStore, prescoutList, prescoutOverview,
+  MAX_PRESCOUT_ANSWER, NO_ANSWERS, cleanEventKey, firstLine, hasAnswers, isEventKey, loadPrescoutTeams, prescoutEventStore, prescoutList, prescoutOverview, searchPrescout,
   prescoutTable, savePrescout, setPrescoutEvent, canRemoveStar, starTeam, starredFirst, starsFor, starsTable, unstarTeam, visibleStars,
   type PrescoutStar,
 } from './data'
@@ -265,6 +265,35 @@ describe('the prescouting overview', () => {
     expect(firstLine('  Fast cycles\nNever broke down ')).toBe('Fast cycles …')
     expect(firstLine('x'.repeat(120))).toBe('x'.repeat(100) + '…')
     expect(firstLine('')).toBe('')
+  })
+})
+
+describe('searching the prescouting overview', () => {
+  it('finds teams by part of their number or name, ignoring capitals, and keeps their order', () => {
+    const teams = [
+      { team: 4096, name: 'Ctrl-Z' },
+      { team: 1640, name: 'Sab-BOT-age' },
+      { team: 9991, name: 'Robo Raccoons' },
+      { team: 254, name: 'The Cheesy Poofs' },
+      { team: 2540, name: 'Iron Robotics' },
+    ]
+    const searches: [string, number[]][] = [
+      ['', [4096, 1640, 9991, 254, 2540]],
+      ['   ', [4096, 1640, 9991, 254, 2540]],
+      ['40', [4096, 1640, 2540]],
+      ['4096', [4096]],
+      ['254', [254, 2540]],
+      ['robo', [9991, 2540]],
+      ['ROBO', [9991, 2540]],
+      [' ctrl ', [4096]],
+      ['cheesy poofs', [254]],
+      ['poofs cheesy', [254]],
+      ['iron 25', [2540]],
+      ['robo 99', [9991]],
+      ['zebra', []],
+      ['40 zebra', []],
+    ]
+    for (const [text, found] of searches) expect(searchPrescout(teams, text).map((t) => t.team), `"${text}"`).toEqual(found)
   })
 })
 

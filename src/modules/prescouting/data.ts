@@ -372,6 +372,21 @@ export function prescoutOverview(teams: PrescoutTeam[], notes: PrescoutNotes[], 
     .sort((a, b) => STAR_GROUPS.indexOf(a.group) - STAR_GROUPS.indexOf(b.group) || (sort === 'EPA' ? byEpa(a, b) : 0) || a.team - b.team)
 }
 
+/**
+ * The teams that match what's typed in the overview's search box: every
+ * word typed is in the team's number or name, ignoring capitals. So "40"
+ * finds 4096 and 1640, and "robo" finds every name with "robo" in it. An
+ * empty search matches every team. The order stays as it was.
+ */
+export function searchPrescout<T extends { team: number; name: string }>(teams: T[], text: string): T[] {
+  const words = text.toLowerCase().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return teams
+  return teams.filter((t) => {
+    const about = `${t.team} ${t.name}`.toLowerCase()
+    return words.every((word) => about.includes(word))
+  })
+}
+
 /** The first line of an answer, cut short with "…" if it's long, for the overview. */
 export function firstLine(text: string, max = 100): string {
   const lines = text.trim().split('\n')
