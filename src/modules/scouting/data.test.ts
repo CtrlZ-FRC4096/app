@@ -29,6 +29,11 @@ import { readFile } from './photoFiles'
 import { nexusEventUrl, eventTeams, scoutingOverview, type OverviewInput, type Entry, type PitEntry } from './data'
 import { STAT_COLUMNS, ratingComponents, sortStats, statColumns, statText, statValue } from './data'
 import { MIN_MATCHES, allianceScore, entryPoints, pointsRange, redWinChance, teamAps, teamPoints, upcomingMatches } from './data'
+import {
+  EMPTY_PATH, MAX_MARKS, MAX_PATH_POINTS, MAX_STROKES, MIN_STEP, NEW_DRAFT, allianceOf, drawnSummary, editPath, fieldFlipStore, fieldLandmarks, pointerPoint, redOnLeft, simplifyStroke,
+  strokePath, teamAutoPaths, viewPoint, type AutoPath, type PathDraft, type PathEdit, type PathPoint,
+} from './data'
+import { FIELD, type Field } from './season'
 import { chooseEvent, currentEvent, eventStore, eventWhenWhere, eventsTable, getOurEvents, latestEvent, lookupSeasons, searchEvents, type TbaEvent } from './data'
 
 // A filled-in pit form. Each test changes only the part it's about.
@@ -93,6 +98,11 @@ describe('numberOnly', () => {
   })
 })
 
+// A drawn auto path (#205): one line, and a shot where it started.
+const DROVE: AutoPath = { strokes: [[[0.25, 0.5], [0.1, 0.25]]], marks: [{ type: 'shot', x: 0.25, y: 0.5 }], didnt_move: false }
+/** A line of this many points, zigzagging across the field so none are close together. */
+const line = (points: number): PathPoint[] => Array.from({ length: points }, (_, i) => [i / points, i % 2])
+
 // A filled-in form. Each test changes only the part it's about.
 const FORM: EntryFields = {
   match: 12,
@@ -104,11 +114,13 @@ const FORM: EntryFields = {
   broke_down: true,
   broke_parts: ['Intake'],
   broke_other: '  Bumper fell off  ',
+  died: true,
   browned_out: false,
   stop: 'A-stop',
   driver_skill: 4,
   auto_side: 'Left',
   auto_notes: 'Scored preload',
+  auto_path: DROVE,
   ranking_points: ['Energized'],
   notes: '  Fast cycles  ',
 }
@@ -163,6 +175,8 @@ describe('checkEntry', () => {
       ['the longest short answers', { role_notes: 'x'.repeat(MAX_SHORT_LENGTH), broke_other: 'x'.repeat(MAX_SHORT_LENGTH), auto_notes: 'x'.repeat(MAX_SHORT_LENGTH) }],
       ['both stops', { stop: 'Both' }],
       ['no auto side seen', { auto_side: '' }],
+      ["didn't move, with a mark", { auto_path: { strokes: [], marks: DROVE.marks, didnt_move: true } }],
+      ['the biggest path', { auto_path: { strokes: Array.from({ length: MAX_STROKES }, () => line(MAX_PATH_POINTS / MAX_STROKES)), marks: Array.from({ length: MAX_MARKS }, () => DROVE.marks[0]), didnt_move: false } }],
     ]
     for (const [label, change] of allowed) expect(checkEntry({ ...FORM, ...change }), label).toBeNull()
     const refused: [string, Partial<EntryFields>, RegExp][] = [
@@ -176,6 +190,16 @@ describe('checkEntry', () => {
       ['how well it does its role too long', { role_notes: 'x'.repeat(MAX_SHORT_LENGTH + 1) }, /its role/],
       ['what else broke too long', { broke_other: 'x'.repeat(MAX_SHORT_LENGTH + 1) }, /else broke/],
       ['auto answer too long', { auto_notes: 'x'.repeat(MAX_SHORT_LENGTH + 1) }, /auto/],
+      ['no auto path drawn', { auto_path: EMPTY_PATH }, /Draw the robot's auto path.*Didn't move/],
+      ['only marks, no path', { auto_path: { ...EMPTY_PATH, marks: DROVE.marks } }, /Draw the robot's auto path/],
+      ["lines and didn't move", { auto_path: { ...DROVE, didnt_move: true } }, /Didn't move/],
+      ['too many lines', { auto_path: { ...DROVE, strokes: Array.from({ length: MAX_STROKES + 1 }, () => line(2)) } }, /lines or fewer/],
+      ['too many points', { auto_path: { ...DROVE, strokes: [line(MAX_PATH_POINTS / 2), line(MAX_PATH_POINTS / 2 + 1)] } }, /too long/],
+      ['a line of one point', { auto_path: { ...DROVE, strokes: [[[0.1, 0.1]]] } }, /at least 2 points/],
+      ['a point off the field', { auto_path: { ...DROVE, strokes: [[[0.1, 0.1], [1.2, 0.5]]] } }, /off the field/],
+      ['too many marks', { auto_path: { ...DROVE, marks: Array.from({ length: MAX_MARKS + 1 }, () => DROVE.marks[0]) } }, /marks or fewer/],
+      ['a mark the form does not know', { auto_path: { ...DROVE, marks: [{ type: 'teleported', x: 0.1, y: 0.1 }] } }, /isn't a mark/],
+      ['a mark off the field', { auto_path: { ...DROVE, marks: [{ type: 'shot', x: 0.1, y: -0.1 }] } }, /off the field/],
     ]
     for (const [label, change, problem] of refused) expect(checkEntry({ ...FORM, ...change }), label).toMatch(problem)
   })
@@ -217,11 +241,13 @@ describe('syncing to the team database', () => {
         broke_down: true,
         broke_parts: ['Intake'],
         broke_other: 'Bumper fell off',
+        died: true,
         browned_out: false,
         stop: 'A-stop',
         driver_skill: 4,
         auto_side: 'Left',
         auto_notes: 'Scored preload',
+        auto_path: DROVE,
         ranking_points: ['Energized'],
         notes: 'Fast cycles',
         scouted_by: DEMO_PEOPLE.alex,
@@ -269,6 +295,12 @@ describe('syncing to the team database', () => {
     // Saved before #162: no role answer, nothing broke, no brownout, auto not seen, no ranking points.
     const { role_notes: _rn, broke_parts: _bp, broke_other: _bo, browned_out: _bw, auto_side: _as, auto_notes: _an, ranking_points: _rp, ...before162 } = saved.value
     expect(toRow(before162)).toMatchObject({ role_notes: null, broke_parts: [], broke_other: null, browned_out: false, auto_side: null, auto_notes: null, ranking_points: [] })
+    // Saved before #185: it didn't die.
+    const { died: _died, ...before185 } = saved.value
+    expect(toRow(before185).died).toBe(false)
+    // Saved before #205: no auto path, and it still sends.
+    const { auto_path: _ap, ...before205 } = saved.value
+    expect(toRow(before205).auto_path).toBeNull()
     // Saved before events were recorded: the current event.
     const { event_key: _old, ...older } = saved.value
     expect(toRow(older).event_key).toBe(EVENT_KEY)
@@ -797,11 +829,13 @@ describe("the picklist page: each team's numbers and the weights", () => {
     broke_down: false,
     broke_parts: [],
     broke_other: null,
+    died: false,
     browned_out: false,
     stop: 'None',
     driver_skill: 3,
     auto_side: null,
     auto_notes: null,
+    auto_path: null,
     ranking_points: [],
     notes: null,
     scouted_by: DEMO_PEOPLE.alex,
@@ -1279,11 +1313,13 @@ describe('teamSummary', () => {
     broke_down: false,
     broke_parts: [],
     broke_other: null,
+    died: false,
     browned_out: false,
     stop: 'None',
     driver_skill: 3,
     auto_side: null,
     auto_notes: null,
+    auto_path: null,
     ranking_points: [],
     notes: null,
     scouted_by: DEMO_PEOPLE.alex,
@@ -1347,20 +1383,21 @@ describe('teamSummary', () => {
     expect(summary.drivetrain).toHaveLength(DRIVETRAINS.length)
   })
 
-  it("counts what broke out of the times it broke down, brownouts, where its auto started out of the times it was seen, and ranking points out of every match", () => {
+  it("counts what broke out of the times it broke down, deaths and brownouts apart, where its auto started out of the times it was seen, and ranking points out of every match", () => {
     const summary = teamSummary(
       9991,
       [
         row(1, { broke_down: true, broke_parts: ['Intake', 'Climber'], browned_out: true, auto_side: 'Left', ranking_points: ['Energized'] }),
-        row(2, { broke_down: true, broke_parts: ['Intake'], auto_side: 'Left', ranking_points: ['Energized', 'Traversal'] }),
-        row(3, { auto_side: null }),
+        row(2, { broke_down: true, broke_parts: ['Intake'], died: true, auto_side: 'Left', ranking_points: ['Energized', 'Traversal'] }),
+        row(3, { auto_side: null, died: true, browned_out: true }),
         row(4, { auto_side: 'Center' }),
       ],
       [],
     )
     expect(summary.brokeParts.find((t) => t.option === 'Intake')).toEqual({ option: 'Intake', count: 2, share: 1 })
     expect(summary.brokeParts.find((t) => t.option === 'Climber')).toEqual({ option: 'Climber', count: 1, share: 0.5 })
-    expect(summary.brownedOut).toBe(1)
+    expect(summary.died).toBe(2)
+    expect(summary.brownedOut).toBe(2)
     expect(summary.autoSides.find((t) => t.option === 'Left')).toMatchObject({ count: 2 })
     expect(summary.autoSides.find((t) => t.option === 'Left')?.share).toBeCloseTo(2 / 3)
     expect(summary.rankingPoints.find((t) => t.option === 'Energized')).toEqual({ option: 'Energized', count: 2, share: 0.5 })
@@ -1709,8 +1746,8 @@ describe('average points and the match simulator', () => {
   const scored = (team: number, match: number, fuel: number, endgame = 'None', fields: Partial<MatchRow> = {}): MatchRow => ({
     id: `aps-${++next}`, event_key: EVENT_KEY, match_number: match, team_number: team,
     counts: { autoFuel: 0, teleopFuel: fuel, fuelMissed: 5 }, endgame,
-    roles: [], role_notes: null, broke_down: false, broke_parts: [], broke_other: null, browned_out: false, stop: 'None', driver_skill: 3,
-    auto_side: null, auto_notes: null, ranking_points: [], notes: null, scouted_by: null, scouted_at: '2026-11-07T15:00:00Z',
+    roles: [], role_notes: null, broke_down: false, broke_parts: [], broke_other: null, died: false, browned_out: false, stop: 'None', driver_skill: 3,
+    auto_side: null, auto_notes: null, auto_path: null, ranking_points: [], notes: null, scouted_by: null, scouted_at: '2026-11-07T15:00:00Z',
     ...fields,
   })
   const xp = (teamNumber: number, xpEnd: number): Match13Rating => ({ teamNumber, xpStart: xpEnd, xpEnd, xAuto: null, xTele: null, xEnd: null, epa: null, opr: null, dpr: null })
@@ -1844,7 +1881,7 @@ describe('the scouting overview', () => {
   const ranking = (team: number, rank: number) => ({ rank, team_key: `frc${team}`, record: { wins: 5, losses: 2, ties: 0 }, matches_played: 7, extra_stats: [15] })
   const row = (team: number): MatchRow => ({
     id: `ov-${team}`, event_key: EVENT_KEY, match_number: 1, team_number: team, counts: {}, endgame: 'None', roles: [], role_notes: null,
-    broke_down: false, broke_parts: [], broke_other: null, browned_out: false, stop: 'None', driver_skill: 3, auto_side: null, auto_notes: null,
+    broke_down: false, broke_parts: [], broke_other: null, died: false, browned_out: false, stop: 'None', driver_skill: 3, auto_side: null, auto_notes: null, auto_path: null,
     ranking_points: [], notes: null, scouted_by: null, scouted_at: '2026-03-13T15:00:00Z',
   })
   const nothing: OverviewInput = {
@@ -2215,5 +2252,192 @@ describe('Nexus live status', () => {
     vi.unstubAllGlobals()
     const demo = await getNexusStatus(EVENT_KEY)
     expect(demo.ok && demo.value.ourNext?.label).toBe('Qualification 3')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Auto paths (#205).
+
+describe('auto paths', () => {
+  const run = (edits: PathEdit[], from: PathDraft = NEW_DRAFT) => edits.reduce(editPath, from)
+  /** A line drawn from one spot to another, as the scout would: down, a move, up. */
+  const drawLine = (from: PathPoint, to: PathPoint): PathEdit[] => [{ kind: 'start', at: from }, { kind: 'move', at: to }, { kind: 'end', at: to }]
+
+  it("knows the robot's alliance from the scout's position", () => {
+    const cases: [Parameters<typeof allianceOf>[0], ReturnType<typeof allianceOf>][] = [['Red 1', 'red'], ['Red 3', 'red'], ['Blue 2', 'blue'], ['', null]]
+    for (const [position, alliance] of cases) expect(allianceOf(position), position).toBe(alliance)
+  })
+
+  it("starts with the robot's own driver station on the left, and Flip field turns it", () => {
+    const cases: [Parameters<typeof redOnLeft>[0], boolean][] = [
+      [{ alliance: 'blue', flipped: false }, false],
+      [{ alliance: 'blue', flipped: true }, true],
+      [{ alliance: 'red', flipped: false }, true],
+      [{ alliance: 'red', flipped: true }, false],
+    ]
+    for (const [view, red] of cases) expect(redOnLeft(view), JSON.stringify(view)).toBe(red)
+  })
+
+  it('saves a spot in the blue view whichever way the field is shown, and turns it back to the same spot on screen', () => {
+    const cases: [label: string, view: Parameters<typeof viewPoint>[1], symmetry: Field['symmetry'], screen: PathPoint, saved: PathPoint][] = [
+      ['blue, as it starts', { alliance: 'blue', flipped: false }, 'rotate', [0.1, 0.2], [0.1, 0.2]],
+      ['blue, flipped', { alliance: 'blue', flipped: true }, 'rotate', [0.1, 0.2], [0.9, 0.8]],
+      // Red's own wall is on the left too, so a turned field needs no change.
+      ['red, as it starts, turned field', { alliance: 'red', flipped: false }, 'rotate', [0.1, 0.2], [0.1, 0.2]],
+      ['red, flipped, turned field', { alliance: 'red', flipped: true }, 'rotate', [0.1, 0.2], [0.9, 0.8]],
+      // A mirrored field's red half is upside down from blue's when seen from red's end.
+      ['red, as it starts, mirrored field', { alliance: 'red', flipped: false }, 'mirror', [0.1, 0.2], [0.1, 0.8]],
+      ['red, flipped, mirrored field', { alliance: 'red', flipped: true }, 'mirror', [0.1, 0.2], [0.9, 0.2]],
+      ['blue, flipped, mirrored field', { alliance: 'blue', flipped: true }, 'mirror', [0.1, 0.2], [0.9, 0.8]],
+      ['rounded to 3 decimals', { alliance: 'blue', flipped: true }, 'rotate', [0.12345, 0], [0.877, 1]],
+    ]
+    for (const [label, view, symmetry, screen, saved] of cases) {
+      expect(viewPoint(screen, view, symmetry), label).toEqual(saved)
+      expect(viewPoint(saved, view, symmetry), `${label}, back`).toEqual(screen.map((n) => Math.round(n * 1000) / 1000))
+    }
+  })
+
+  it("finds where a finger is on the drawing, from 0 to 1, with spots past the edge on it", () => {
+    // As if the drawing's getBoundingClientRect() said this.
+    const box = { left: 10, top: 20, width: 200, height: 100 }
+    const cases: [x: number, y: number, spot: PathPoint][] = [
+      [110, 70, [0.5, 0.5]],
+      [10, 20, [0, 0]],
+      [210, 120, [1, 1]],
+      [0, 200, [0, 1]],
+      [76.6667, 20, [0.333, 0]],
+    ]
+    for (const [x, y, spot] of cases) expect(pointerPoint(x, y, box), `${x}, ${y}`).toEqual(spot)
+    expect(pointerPoint(50, 50, { left: 0, top: 0, width: 0, height: 0 })).toEqual([0, 0])
+  })
+
+  it('leaves out points too close to the one before, but keeps the first and last', () => {
+    // Across the field, MIN_STEP metres is this much of its length.
+    const step = MIN_STEP / FIELD.length
+    const cases: [label: string, points: PathPoint[], kept: PathPoint[]][] = [
+      ['a close one dropped', [[0, 0], [step / 2, 0], [step * 1.5, 0], [0.5, 0]], [[0, 0], [step * 1.5, 0], [0.5, 0]]],
+      ['two points stay, however close', [[0, 0], [step / 10, 0]], [[0, 0], [step / 10, 0]]],
+      ['the last stays, even close to the one before', [[0, 0], [0.1, 0], [0.1 + step / 10, 0]], [[0, 0], [0.1, 0], [0.1 + step / 10, 0]]],
+      ['nothing drawn', [], []],
+    ]
+    for (const [label, points, kept] of cases) expect(simplifyStroke(points), label).toEqual(kept)
+  })
+
+  it('draws a line where the finger goes, from down to up, leaving out points too close together', () => {
+    const drawn = run([
+      { kind: 'move', at: [0.05, 0.5] }, // Not drawing yet: ignored.
+      { kind: 'start', at: [0.1, 0.5] },
+      { kind: 'move', at: [0.102, 0.5] }, // About 3 cm on: too close.
+      { kind: 'move', at: [0.2, 0.5] },
+      { kind: 'end', at: [0.3, 0.4] },
+      { kind: 'move', at: [0.6, 0.6] }, // Finger up: ignored.
+    ])
+    expect(drawn.path).toEqual({ strokes: [[[0.1, 0.5], [0.2, 0.5], [0.3, 0.4]]], marks: [], didnt_move: false })
+    expect(drawn.drawing).toBe(false)
+  })
+
+  it("drops a tap that doesn't draw a line", () => {
+    expect(run([{ kind: 'start', at: [0.1, 0.5] }, { kind: 'end', at: [0.101, 0.5] }])).toEqual(NEW_DRAFT)
+    const oneLine = run(drawLine([0.1, 0.1], [0.4, 0.4]))
+    expect(run([{ kind: 'start', at: [0.6, 0.6] }, { kind: 'end', at: [0.6, 0.6] }], oneLine)).toEqual(oneLine)
+  })
+
+  it('places marks, and Undo takes back one change at a time, Clear included', () => {
+    const steps = run([...drawLine([0.1, 0.1], [0.4, 0.4]), { kind: 'mark', type: 'shot', at: [0.4, 0.4] }])
+    expect(steps.path.marks).toEqual([{ type: 'shot', x: 0.4, y: 0.4 }])
+    const cleared = run([{ kind: 'clear' }], steps)
+    expect(cleared.path).toEqual(EMPTY_PATH)
+    const undone: AutoPath[] = []
+    let draft = cleared
+    for (let i = 0; i < 4; i++) {
+      draft = editPath(draft, { kind: 'undo' })
+      undone.push(draft.path)
+    }
+    expect(undone.map((p) => [p.strokes.length, p.marks.length])).toEqual([[1, 1], [1, 0], [0, 0], [0, 0]])
+    // Clear with nothing drawn does nothing, so Undo has nothing new to go back to.
+    expect(editPath(NEW_DRAFT, { kind: 'clear' })).toBe(NEW_DRAFT)
+  })
+
+  it("takes the lines away for Didn't move but keeps the marks, and drawing a line again means it moved", () => {
+    const still = run([...drawLine([0.1, 0.1], [0.4, 0.4]), { kind: 'mark', type: 'shot', at: [0.1, 0.1] }, { kind: 'didntMove' }])
+    expect(still.path).toEqual({ strokes: [], marks: [{ type: 'shot', x: 0.1, y: 0.1 }], didnt_move: true })
+    expect(run([{ kind: 'didntMove' }], still).path.didnt_move).toBe(false)
+    expect(run(drawLine([0.2, 0.2], [0.5, 0.5]), still).path).toMatchObject({ strokes: [[[0.2, 0.2], [0.5, 0.5]]], didnt_move: false })
+  })
+
+  it('adds nothing past the limits', () => {
+    const full = (path: Partial<AutoPath>): PathDraft => ({ ...NEW_DRAFT, path: { ...EMPTY_PATH, ...path } })
+    const lines = full({ strokes: Array.from({ length: MAX_STROKES }, () => line(2)) })
+    expect(editPath(lines, { kind: 'start', at: [0.5, 0.5] }), 'lines').toBe(lines)
+    const marks = full({ marks: Array.from({ length: MAX_MARKS }, () => DROVE.marks[0]) })
+    expect(editPath(marks, { kind: 'mark', type: 'shot', at: [0.5, 0.5] }), 'marks').toBe(marks)
+    // One line one point short of the most, being drawn: the next point goes in, then no more.
+    const almost: PathDraft = { ...full({ strokes: [line(MAX_PATH_POINTS - 1)] }), drawing: true }
+    const last = run([{ kind: 'move', at: [0.9, 0.9] }, { kind: 'move', at: [0.1, 0.9] }, { kind: 'end', at: [0.1, 0.1] }], almost)
+    expect(last.path.strokes[0]).toHaveLength(MAX_PATH_POINTS)
+    expect(last.path.strokes[0].at(-1)).toEqual([0.9, 0.9])
+  })
+
+  it("says what's drawn so far", () => {
+    const cases: [AutoPath, string][] = [
+      [EMPTY_PATH, 'Nothing drawn yet.'],
+      [{ ...EMPTY_PATH, marks: DROVE.marks }, 'Nothing drawn yet, 1 mark.'],
+      [DROVE, '1 line, 1 mark.'],
+      [{ ...DROVE, strokes: [line(2), line(2)], marks: [] }, '2 lines.'],
+      [{ strokes: [], marks: [...DROVE.marks, ...DROVE.marks], didnt_move: true }, "Didn't move, 2 marks."],
+    ]
+    for (const [path, text] of cases) expect(drawnSummary(path)).toBe(text)
+  })
+
+  it('draws a line as an SVG path in metres', () => {
+    const field = { length: 10, width: 5 }
+    const cases: [PathPoint[], string][] = [
+      [[[0, 0], [0.5, 1]], 'M 0 0 L 5 5'],
+      [[[0.123, 0.5], [0.2, 0.25], [1, 0]], 'M 1.23 2.5 L 2 1.25 L 10 0'],
+      [[], ''],
+    ]
+    for (const [points, d] of cases) expect(strokePath(points, field)).toBe(d)
+  })
+
+  it("puts red's landmarks where the field's symmetry says, once for shared ones, and turns them all for red on the left", () => {
+    const field = (symmetry: Field['symmetry']): Field => ({
+      length: 10, width: 4, symmetry,
+      landmarks: [
+        { label: 'Hub', x: 1, y: 0.5, width: 2, height: 1, look: 'solid' },
+        { x: 5, y: 0, width: 0, height: 4, look: 'line', shared: true },
+      ],
+    })
+    const where = (turned: boolean, symmetry: Field['symmetry']) => fieldLandmarks(turned, field(symmetry)).map((l) => [l.alliance, l.x, l.y])
+    const cases: [label: string, turned: boolean, symmetry: Field['symmetry'], placed: unknown[]][] = [
+      ['turned field', false, 'rotate', [['blue', 1, 0.5], ['red', 7, 2.5], [null, 5, 0]]],
+      ['mirrored field', false, 'mirror', [['blue', 1, 0.5], ['red', 7, 0.5], [null, 5, 0]]],
+      ['red on the left', true, 'rotate', [['blue', 7, 2.5], ['red', 1, 0.5], [null, 5, 0]]],
+    ]
+    for (const [label, turned, symmetry, placed] of cases) expect(where(turned, symmetry), label).toEqual(placed)
+  })
+
+  it("gives a team's auto paths at this event in match order, leaving out entries with none", () => {
+    const row = (id: string, match: number, path: AutoPath | null, fields: Partial<MatchRow> = {}): MatchRow => ({
+      ...toRow({ ...FORM, id, match, created_at: '2026-11-07T15:00:00Z', event_key: EVENT_KEY, scouted_by: null, synced: true }),
+      auto_path: path,
+      ...fields,
+    })
+    const still: AutoPath = { strokes: [], marks: [], didnt_move: true }
+    const rows = [
+      row('a', 7, DROVE),
+      row('b', 3, still),
+      row('c', 5, null), // Saved before #205.
+      row('d', 2, DROVE, { team_number: 9992 }),
+      row('e', 1, DROVE, { event_key: '2026other' }),
+    ]
+    expect(teamAutoPaths(9991, rows)).toEqual([{ id: 'b', match: 3, path: still }, { id: 'a', match: 7, path: DROVE }])
+    expect(teamAutoPaths(1234, rows)).toEqual([])
+  })
+
+  it('remembers Flip field on this phone, even when the example data is reset', () => {
+    fieldFlipStore.set(true)
+    resetAllStores()
+    expect(fieldFlipStore.get()).toBe(true)
+    fieldFlipStore.set(false)
   })
 })

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { useMemberNames } from '../../core/members'
-import { useSession } from '../../core/session'
-import { toast } from '../../core/toast'
+import { useMemberNames } from '../../../core/members'
+import { useSession } from '../../../core/session'
+import { toast } from '../../../core/toast'
 import { MAX_STAR_REASON, canRemoveStar, starTeam, starsFor, unstarTeam, useStars, type PrescoutStar } from './data'
 
 // Big enough to tap, and 16px text so phones don't zoom in on the box.

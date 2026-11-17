@@ -40,7 +40,7 @@ import { supabase } from '../../core/supabase'
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row, type Table } from '../../core/table'
 import { toCsv } from '../attendance/data'
 import { forgetFile, keepFile, readFile } from './photoFiles'
-import { AUTO_SIDES, BREAKDOWN_PARTS, COUNTERS, DRIVETRAINS, ENDGAME, ENDGAME_POINTS, EVENT_KEY, RANKING_POINTS, ROLES, type Counter } from './season'
+import { AUTO_MARKS, AUTO_SIDES, BREAKDOWN_PARTS, COUNTERS, DRIVETRAINS, ENDGAME, ENDGAME_POINTS, EVENT_KEY, FIELD, RANKING_POINTS, ROLES, type Counter, type Field, type Landmark } from './season'
 
 /** The event we're at until someone picks one in the app, from season.ts, for other modules. */
 export { EVENT_KEY }
@@ -210,9 +210,9 @@ function demoEvents(year: number): (TbaEvent & { ours: boolean })[] {
 // people and mentors see the analysis. Like purchasers, being on it is an
 // extra permission on top of someone's role; mentors and admins always count.
 //
-// Strategy only: the overview, team pages, the picklists, the simulator,
-// stats and Prescouting. Everyone: the match and pit forms, the schedule and
-// the rankings, so any scout can do their job. Hiding pages is only
+// Strategy only: the overview, team pages, the picklists, the simulator
+// and stats. Everyone: Prescouting (#184), the match and pit forms, the
+// schedule and the rankings, so any scout can do their job. Hiding pages is only
 // tidiness: the read rules in supabase/migrations/..._scouting_strategy_team.sql
 // (and the strategy tables' own migrations) keep the data safe.
 
@@ -294,8 +294,10 @@ export const DRIVER_SKILLS = [1, 2, 3, 4, 5]
  * Entries saved before roles, broke_down, stop and driver_skill were added
  * don't have them, and have a defense field instead. Entries saved before
  * #162 don't have role_notes, broke_parts, broke_other, browned_out,
- * auto_side, auto_notes or ranking_points. Syncing must fill in the missing
- * ones rather than assume every entry has them.
+ * auto_side, auto_notes or ranking_points, entries saved before #185
+ * don't have died, and entries saved before #205 don't have auto_path.
+ * Syncing must fill in the missing ones rather than assume every entry has
+ * them.
  */
 export interface Entry {
   /** Made on the device, so sending an entry twice can't make two rows. */
@@ -325,7 +327,12 @@ export interface Entry {
   broke_parts: string[]
   /** Anything else that broke, typed. '' if left blank. Only when broke_down. */
   broke_other: string
-  /** The robot lost power or visibly browned out (stuttering, lights flickering). */
+  /** The robot's battery ran out: it lost power and stopped. Separate from broke_down (#185). */
+  died: boolean
+  /**
+   * The robot's power dipped for a moment (stuttering, lights flickering) and
+   * it kept going. Before #185 this tick also meant it died.
+   */
   browned_out: boolean
   stop: Stop
   /** One of DRIVER_SKILLS. */
@@ -334,6 +341,8 @@ export interface Entry {
   auto_side: string
   /** What its auto did. '' if left blank. */
   auto_notes: string
+  /** The auto path the scout drew on the field, in the blue view (#205). See AutoPath. */
+  auto_path: AutoPath
   /** Any of RANKING_POINTS in season.ts: the bonus ranking points its alliance earned. */
   ranking_points: string[]
   notes: string
@@ -347,7 +356,7 @@ export interface Entry {
 export type EntryFields = Pick<
   Entry,
   | 'match' | 'team' | 'counts' | 'endgame' | 'roles' | 'role_notes' | 'broke_down' | 'broke_parts' | 'broke_other'
-  | 'browned_out' | 'stop' | 'driver_skill' | 'auto_side' | 'auto_notes' | 'ranking_points' | 'notes'
+  | 'died' | 'browned_out' | 'stop' | 'driver_skill' | 'auto_side' | 'auto_notes' | 'auto_path' | 'ranking_points' | 'notes'
 >
 
 // Newest first. keepOnReset: "Reset example data" must never delete real
@@ -389,6 +398,10 @@ export function checkEntry(fields: EntryFields): string | null {
   if (!isCount(fields.match)) return 'Enter the match number first.'
   if (fields.match > MAX_MATCH) return `Check the match number: ${fields.match} is too big.`
   if (!DRIVER_SKILLS.includes(fields.driver_skill)) return 'Choose a driver skill first.'
+  // Only new entries come through here: entries saved before #205 sync with no path.
+  if (!isDrawn(fields.auto_path)) return "Draw the robot's auto path on the field, or tap Didn't move."
+  const path = checkAutoPath(fields.auto_path)
+  if (path) return path
   for (const [name, text] of [['how well it does its role', fields.role_notes], ['what else broke', fields.broke_other], ['auto answer', fields.auto_notes]] as const) {
     const length = text.trim().length
     if (length > MAX_SHORT_LENGTH) return `Keep ${name} under ${MAX_SHORT_LENGTH} characters. It's ${length}.`
@@ -423,6 +436,279 @@ export function saveEntry(fields: EntryFields): Result<Entry> {
 }
 
 // ---------------------------------------------------------------------------
+// Auto paths (#205): the scout draws where the robot drove in auto on a
+// picture of the field (FieldDrawing.tsx), and can place marks like "picked
+// up" or "shot" (AUTO_MARKS in season.ts). The field's size and landmarks are
+// FIELD in season.ts.
+//
+// The scout sees the field from whichever end they choose (Flip field), but
+// a path is always saved in the blue view: as if the robot were on the blue
+// alliance, with its own driver station wall on the left. So red and blue
+// robots' paths can be drawn on top of each other on the team page.
+
+/**
+ * A spot on the field, each from 0 to 1, rounded to 3 decimals. In the blue
+ * view: x from the robot's own driver station wall (0) to the far one (1), y
+ * from the top of the picture (0) to the bottom (1).
+ */
+export type PathPoint = [x: number, y: number]
+
+/** A mark placed on the field: one of AUTO_MARKS's keys, and where. */
+export interface AutoMark {
+  type: string
+  x: number
+  y: number
+}
+
+/**
+ * What the scout drew: lines the robot drove (each a list of points, in
+ * order), the marks they placed, and whether they tapped Didn't move instead
+ * of drawing. Saved like this, as jsonb, in scouting_entries.auto_path.
+ */
+export interface AutoPath {
+  strokes: PathPoint[][]
+  marks: AutoMark[]
+  didnt_move: boolean
+}
+
+export const EMPTY_PATH: AutoPath = { strokes: [], marks: [], didnt_move: false }
+
+// The same limits as the team database (private.is_auto_path() in
+// ..._scouting_entries_auto_path.sql), so a path can't get an entry stuck Waiting.
+export const MAX_STROKES = 10
+/** Points in every line together. */
+export const MAX_PATH_POINTS = 300
+export const MAX_MARKS = 20
+/** The longest a mark's key can be. */
+export const MAX_MARK_KEY = 30
+/** While drawing, a point closer than this to the one before (in metres) is left out. */
+export const MIN_STEP = 0.15
+
+export type Alliance = 'red' | 'blue'
+
+/** The alliance of a scout's position, or null before they pick one. */
+export function allianceOf(position: Position | ''): Alliance | null {
+  if (!position) return null
+  return position.startsWith('Red') ? 'red' : 'blue'
+}
+
+const round3 = (n: number) => Math.round(n * 1000) / 1000
+const clamp01 = (n: number) => Math.min(1, Math.max(0, n))
+
+/** Which way the field is turned on screen. */
+export interface FieldView {
+  /** The robot's alliance. */
+  alliance: Alliance
+  /** True if the scout tapped Flip field. */
+  flipped: boolean
+}
+
+/**
+ * Whether the field is turned round on screen, with red's wall on the left.
+ * It starts with the robot's own wall on the left, and Flip field turns it.
+ */
+export function redOnLeft(view: FieldView): boolean {
+  return (view.alliance === 'red') !== view.flipped
+}
+
+/**
+ * Turns a spot on screen into how it's saved (the blue view), or a saved
+ * spot back into where it goes on screen: the same steps undo themselves.
+ * First the screen is turned back so blue's wall is on the left, then a red
+ * robot's spot is moved to the matching spot on blue's half (turned or
+ * mirrored, by the field's symmetry).
+ */
+export function viewPoint([x, y]: PathPoint, view: FieldView, symmetry: Field['symmetry'] = FIELD.symmetry): PathPoint {
+  let [px, py] = [x, y]
+  if (redOnLeft(view)) [px, py] = [1 - px, 1 - py]
+  if (view.alliance === 'red') [px, py] = symmetry === 'rotate' ? [1 - px, 1 - py] : [1 - px, py]
+  return [round3(px), round3(py)]
+}
+
+/**
+ * Where a finger or mouse is on the drawing, from 0 to 1 across and down.
+ * `box` is the drawing's getBoundingClientRect(). Spots just outside the
+ * edge count as on it.
+ */
+export function pointerPoint(clientX: number, clientY: number, box: { left: number; top: number; width: number; height: number }): PathPoint {
+  if (box.width <= 0 || box.height <= 0) return [0, 0]
+  return [round3(clamp01((clientX - box.left) / box.width)), round3(clamp01((clientY - box.top) / box.height))]
+}
+
+/** Metres between two spots on the field. */
+function metres(a: PathPoint, b: PathPoint, field: Field = FIELD): number {
+  return Math.hypot((a[0] - b[0]) * field.length, (a[1] - b[1]) * field.width)
+}
+
+/** A line with points closer than MIN_STEP to the one before left out. Its first and last points always stay. */
+export function simplifyStroke(points: PathPoint[], minStep = MIN_STEP): PathPoint[] {
+  if (points.length <= 2) return points
+  const kept = [points[0]]
+  for (const point of points.slice(1, -1)) if (metres(kept[kept.length - 1], point) >= minStep) kept.push(point)
+  return [...kept, points[points.length - 1]]
+}
+
+const pointCount = (path: AutoPath) => path.strokes.reduce((sum, stroke) => sum + stroke.length, 0)
+
+/** True once the scout drew a line or tapped Didn't move. A new entry needs one or the other. */
+export function isDrawn(path: AutoPath): boolean {
+  return path.didnt_move || path.strokes.length > 0
+}
+
+/** What the drawing is doing: the path so far, whether a line is being drawn, and the paths before each change, for Undo. */
+export interface PathDraft {
+  path: AutoPath
+  drawing: boolean
+  earlier: AutoPath[]
+}
+
+export const NEW_DRAFT: PathDraft = { path: EMPTY_PATH, drawing: false, earlier: [] }
+
+/** Something the scout does on the drawing. Spots are in the blue view (see viewPoint()). */
+export type PathEdit =
+  | { kind: 'start'; at: PathPoint }
+  | { kind: 'move'; at: PathPoint }
+  | { kind: 'end'; at: PathPoint }
+  | { kind: 'mark'; type: string; at: PathPoint }
+  | { kind: 'undo' }
+  | { kind: 'clear' }
+  | { kind: 'didntMove' }
+
+/**
+ * The drawing after one thing the scout did. Past the limits, nothing more
+ * is added. A tap that doesn't move (under MIN_STEP) isn't a line, so it's
+ * dropped. Undo goes back one change, including a Clear.
+ */
+export function editPath(draft: PathDraft, edit: PathEdit): PathDraft {
+  const { path } = draft
+  const remember = (next: AutoPath, drawing = false): PathDraft => ({ path: next, drawing, earlier: [...draft.earlier, path] })
+  switch (edit.kind) {
+    case 'start':
+      if (path.strokes.length >= MAX_STROKES || pointCount(path) >= MAX_PATH_POINTS) return draft
+      // Drawing a line means it moved.
+      return remember({ ...path, strokes: [...path.strokes, [edit.at]], didnt_move: false }, true)
+    case 'move':
+    case 'end': {
+      if (!draft.drawing) return draft
+      const line = path.strokes[path.strokes.length - 1]
+      const last = line[line.length - 1]
+      const room = pointCount(path) < MAX_PATH_POINTS
+      let next = line
+      if (edit.kind === 'move') {
+        if (room && metres(last, edit.at) >= MIN_STEP) next = [...line, edit.at]
+      } else {
+        next = simplifyStroke(room && (last[0] !== edit.at[0] || last[1] !== edit.at[1]) ? [...line, edit.at] : line)
+        // A tap, not a line: go back to how it was before.
+        if (next.every((p) => metres(next[0], p) < MIN_STEP)) {
+          return { path: draft.earlier[draft.earlier.length - 1] ?? EMPTY_PATH, drawing: false, earlier: draft.earlier.slice(0, -1) }
+        }
+      }
+      return { ...draft, drawing: edit.kind === 'move', path: { ...path, strokes: [...path.strokes.slice(0, -1), next] } }
+    }
+    case 'mark':
+      if (path.marks.length >= MAX_MARKS) return draft
+      return remember({ ...path, marks: [...path.marks, { type: edit.type, x: edit.at[0], y: edit.at[1] }] })
+    case 'undo':
+      if (draft.earlier.length === 0) return draft
+      return { path: draft.earlier[draft.earlier.length - 1], drawing: false, earlier: draft.earlier.slice(0, -1) }
+    case 'clear':
+      if (path.strokes.length === 0 && path.marks.length === 0 && !path.didnt_move) return draft
+      return remember(EMPTY_PATH)
+    case 'didntMove':
+      // It didn't drive, so no lines; marks stay (it may have shot from where it started).
+      return remember({ ...path, strokes: [], didnt_move: !path.didnt_move })
+  }
+}
+
+/** A note of what's drawn so far, for the scout and screen readers. */
+export function drawnSummary(path: AutoPath): string {
+  const marks = path.marks.length === 0 ? '' : `, ${path.marks.length} ${path.marks.length === 1 ? 'mark' : 'marks'}`
+  if (path.didnt_move) return `Didn't move${marks}.`
+  if (path.strokes.length === 0) return `Nothing drawn yet${marks}.`
+  return `${path.strokes.length} ${path.strokes.length === 1 ? 'line' : 'lines'}${marks}.`
+}
+
+/** The form's drawing state, with each change going through editPath(). */
+export function usePathDraft(): [PathDraft, (edit: PathEdit) => void, () => void] {
+  const [draft, setDraft] = useState<PathDraft>(NEW_DRAFT)
+  return [draft, (edit) => setDraft((now) => editPath(now, edit)), () => setDraft(NEW_DRAFT)]
+}
+
+/** Why a drawn path can't be saved, or null if it can. The same rules as the team database. */
+export function checkAutoPath(path: AutoPath): string | null {
+  const onField = (n: unknown) => typeof n === 'number' && n >= 0 && n <= 1
+  if (path.didnt_move && path.strokes.length > 0) return "Clear the lines, or untick Didn't move."
+  if (path.strokes.length > MAX_STROKES) return `Draw the path in ${MAX_STROKES} lines or fewer. Tap Undo to take some away.`
+  if (pointCount(path) > MAX_PATH_POINTS) return 'The path is too long to save. Tap Undo and draw it more simply.'
+  if (path.strokes.some((line) => line.length < 2)) return 'A line needs at least 2 points. Tap Undo and draw it again.'
+  if (path.strokes.some((line) => line.some((p) => p.length !== 2 || !p.every(onField)))) return 'A line goes off the field. Tap Clear and draw it again.'
+  if (path.marks.length > MAX_MARKS) return `Place ${MAX_MARKS} marks or fewer. Tap Undo to take some away.`
+  for (const mark of path.marks) {
+    if (!AUTO_MARKS.some((m) => m.key === mark.type) || mark.type.length > MAX_MARK_KEY) return `"${mark.type}" isn't a mark the form knows. Tap Clear and place it again.`
+    if (!onField(mark.x) || !onField(mark.y)) return 'A mark is off the field. Tap Clear and place it again.'
+  }
+  return null
+}
+
+/** One line as an SVG path, like "M 1.23 4.56 L 2.34 5.67", in metres, for a drawing whose viewBox is the field. */
+export function strokePath(points: PathPoint[], field: Pick<Field, 'length' | 'width'> = FIELD): string {
+  const at = ([x, y]: PathPoint) => `${Number((x * field.length).toFixed(2))} ${Number((y * field.width).toFixed(2))}`
+  return points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${at(p)}`).join(' ')
+}
+
+/** A landmark, placed where it goes on screen, and which alliance it belongs to (null for the centre line). */
+export interface PlacedLandmark extends Landmark {
+  alliance: Alliance | null
+}
+
+/**
+ * Every landmark on the whole field, in metres, as it shows on screen:
+ * blue's from season.ts, red's made from them by the field's symmetry, and
+ * all of them turned round when red's wall is on the left.
+ */
+export function fieldLandmarks(turned: boolean, field: Field = FIELD): PlacedLandmark[] {
+  const { length: L, width: W } = field
+  const turn = (l: Landmark) => ({ x: L - l.x - l.width, y: W - l.y - l.height })
+  const red = (l: Landmark): Landmark => ({ ...l, ...(field.symmetry === 'rotate' ? turn(l) : { x: L - l.x - l.width }) })
+  const all = field.landmarks.flatMap((l): PlacedLandmark[] =>
+    l.shared ? [{ ...l, alliance: null }] : [{ ...l, alliance: 'blue' as const }, { ...red(l), alliance: 'red' as const }],
+  )
+  return turned ? all.map((l) => ({ ...l, ...turn(l) })) : all
+}
+
+/** This phone's Flip field choice (#205): true to turn the field round from how it starts. */
+export const fieldFlipStore = createStore<boolean>('scouting-field-flipped', 1, () => false, { keepOnReset: true })
+
+export function useFieldFlipped(): boolean {
+  return useStore(fieldFlipStore)
+}
+
+export function setFieldFlipped(flipped: boolean) {
+  fieldFlipStore.set(flipped)
+}
+
+/** One match's auto path, for the team page. */
+export interface TeamAutoPath {
+  id: string
+  match: number
+  path: AutoPath
+}
+
+/** A team's auto paths at the current event, in match order. Entries saved before #205 have none, so they're left out. */
+export function teamAutoPaths(team: number, entries: MatchRow[]): TeamAutoPath[] {
+  return thisEvent(entries)
+    .filter((e) => e.team_number === team)
+    .sort((a, b) => a.match_number - b.match_number || a.scouted_at.localeCompare(b.scouted_at))
+    .flatMap((e) => (e.auto_path ? [{ id: e.id, match: e.match_number, path: e.auto_path }] : []))
+}
+
+/** One team's auto paths, for the team page. */
+export function useTeamAutoPaths(team: number): TeamAutoPath[] {
+  const { entries } = useScoutingRows()
+  return useMemo(() => teamAutoPaths(team, entries), [team, entries])
+}
+
+// ---------------------------------------------------------------------------
 // Syncing entries to the team database.
 
 /** One row of the scouting_entries table: an entry that reached the team database. */
@@ -440,7 +726,12 @@ export interface ScoutingEntry extends Row {
   /** Any of BREAKDOWN_PARTS in season.ts. Empty for entries saved before #162. */
   broke_parts: string[]
   broke_other: string | null
-  /** False for entries saved before #162. */
+  /** Its battery ran out and it stopped. False for entries saved before #185. */
+  died: boolean
+  /**
+   * Its power dipped for a moment and it kept going. False for entries saved
+   * before #162. Before #185 this also meant it died.
+   */
   browned_out: boolean
   stop: Stop
   /** 1 to 5. Empty for entries saved before driver skill was on the form. */
@@ -448,6 +739,8 @@ export interface ScoutingEntry extends Row {
   /** One of AUTO_SIDES in season.ts. Empty if the scout didn't see, or saved before #162. */
   auto_side: string | null
   auto_notes: string | null
+  /** The auto path drawn on the field, in the blue view. Empty for entries saved before #205. */
+  auto_path: AutoPath | null
   /** Any of RANKING_POINTS in season.ts. Empty for entries saved before #162. */
   ranking_points: string[]
   notes: string | null
@@ -460,15 +753,15 @@ export interface ScoutingEntry extends Row {
 
 // Made up, for demo mode. Team numbers in the 9990s, so nobody mistakes them for real scouting.
 const EXAMPLE_ENTRIES: ScoutingEntry[] = [
-  { id: '00000000-0000-4000-8000-0000000d0001', event_key: EVENT_KEY, match_number: 1, team_number: 9991, counts: { autoFuel: 3, teleopFuel: 12, fuelMissed: 4 }, endgame: 'Level 2', roles: ['Scorer'], role_notes: 'Quick cycles, missed a few long shots', broke_down: false, broke_parts: [], broke_other: null, browned_out: false, stop: 'None', driver_skill: 4, auto_side: 'Center', auto_notes: 'Scored preload and 2 more', ranking_points: ['Energized'], notes: 'Fast intake', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-07T15:02:00Z', created_at: '2026-11-07T15:03:00Z', created_by: DEMO_PEOPLE.jordan },
-  { id: '00000000-0000-4000-8000-0000000d0002', event_key: EVENT_KEY, match_number: 1, team_number: 9992, counts: { autoFuel: 0, teleopFuel: 5, fuelMissed: 1 }, endgame: 'None', roles: ['Defender'], role_notes: null, broke_down: true, broke_parts: ['Intake'], broke_other: null, browned_out: true, stop: 'A-stop', driver_skill: 2, auto_side: 'Left', auto_notes: null, ranking_points: [], notes: null, scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-07T15:02:30Z', created_at: '2026-11-07T15:04:00Z', created_by: DEMO_PEOPLE.alex },
+  { id: '00000000-0000-4000-8000-0000000d0001', event_key: EVENT_KEY, match_number: 1, team_number: 9991, counts: { autoFuel: 3, teleopFuel: 12, fuelMissed: 4 }, endgame: 'Level 2', roles: ['Scorer'], role_notes: 'Quick cycles, missed a few long shots', broke_down: false, broke_parts: [], broke_other: null, died: false, browned_out: false, stop: 'None', driver_skill: 4, auto_side: 'Center', auto_notes: 'Scored preload and 2 more', auto_path: { strokes: [[[0.25, 0.5], [0.22, 0.38], [0.15, 0.25], [0.04, 0.24]]], marks: [{ type: 'shot', x: 0.25, y: 0.5 }, { type: 'pickup', x: 0.04, y: 0.24 }], didnt_move: false }, ranking_points: ['Energized'], notes: 'Fast intake', scouted_by: DEMO_PEOPLE.jordan, scouted_at: '2026-11-07T15:02:00Z', created_at: '2026-11-07T15:03:00Z', created_by: DEMO_PEOPLE.jordan },
+  { id: '00000000-0000-4000-8000-0000000d0002', event_key: EVENT_KEY, match_number: 1, team_number: 9992, counts: { autoFuel: 0, teleopFuel: 5, fuelMissed: 1 }, endgame: 'None', roles: ['Defender'], role_notes: null, broke_down: true, broke_parts: ['Intake'], broke_other: null, died: false, browned_out: true, stop: 'A-stop', driver_skill: 2, auto_side: 'Left', auto_notes: null, auto_path: null, ranking_points: [], notes: null, scouted_by: DEMO_PEOPLE.alex, scouted_at: '2026-11-07T15:02:30Z', created_at: '2026-11-07T15:04:00Z', created_by: DEMO_PEOPLE.alex },
 ]
 
-// Version 2: the questions from #162 were added to the rows.
-export const entriesTable = createTable<ScoutingEntry>('scouting_entries', { demo: EXAMPLE_ENTRIES, sort: newestFirst, version: 2 })
+// Version 2: the questions from #162 were added to the rows. Version 3: died (#185). Version 4: auto_path (#205).
+export const entriesTable = createTable<ScoutingEntry>('scouting_entries', { demo: EXAMPLE_ENTRIES, sort: newestFirst, version: 4 })
 
-/** Fields added to the form after the first entries were saved on phones: #28's, then #162's. */
-type AddedLater = 'roles' | 'broke_down' | 'stop' | 'driver_skill' | 'role_notes' | 'broke_parts' | 'broke_other' | 'browned_out' | 'auto_side' | 'auto_notes' | 'ranking_points'
+/** Fields added to the form after the first entries were saved on phones: #28's, then #162's, then #185's, then #205's. */
+type AddedLater = 'roles' | 'broke_down' | 'stop' | 'driver_skill' | 'role_notes' | 'broke_parts' | 'broke_other' | 'died' | 'browned_out' | 'auto_side' | 'auto_notes' | 'auto_path' | 'ranking_points'
 
 /** An entry saved on a phone by an older version of the app, before some questions were on the form. */
 type OlderEntry = Omit<Entry, AddedLater> & Partial<Pick<Entry, AddedLater>> & { defense?: boolean }
@@ -477,7 +770,8 @@ type OlderEntry = Omit<Entry, AddedLater> & Partial<Pick<Entry, AddedLater>> & {
  * An entry from this device, as a row for the team database. Entries saved
  * before #28 have "played defense" instead of roles: it becomes the
  * Defender role, the way the form treats it now. Fields an older entry
- * doesn't have are left at "no", "None" and empty.
+ * doesn't have are left at "no", "None" and empty (an entry saved before
+ * #205 has no auto path).
  */
 export function toRow(saved: Entry | OlderEntry): Omit<ScoutingEntry, 'created_at' | 'created_by'> {
   const entry = saved as OlderEntry
@@ -494,11 +788,13 @@ export function toRow(saved: Entry | OlderEntry): Omit<ScoutingEntry, 'created_a
     broke_down: entry.broke_down ?? false,
     broke_parts: entry.broke_parts ?? [],
     broke_other: text(entry.broke_other),
+    died: entry.died ?? false,
     browned_out: entry.browned_out ?? false,
     stop: entry.stop ?? 'None',
     driver_skill: entry.driver_skill ?? null,
     auto_side: text(entry.auto_side),
     auto_notes: text(entry.auto_notes),
+    auto_path: entry.auto_path ?? null,
     ranking_points: entry.ranking_points ?? [],
     notes: entry.notes.trim() || null,
     scouted_by: entry.scouted_by,
@@ -1089,7 +1385,9 @@ export interface TeamSummary {
   brokeDown: number
   /** What broke, out of the entries where it broke down. Several parts can break in one match. */
   brokeParts: Tally[]
-  /** How many entries say it died or browned out. */
+  /** How many entries say its battery ran out and it stopped. */
+  died: number
+  /** How many entries say it browned out (before #185, this also counted dying). */
   brownedOut: number
   /** Where it started its auto, out of the entries where the scout saw. */
   autoSides: Tally[]
@@ -1193,6 +1491,7 @@ export function teamSummary(team: number, entries: MatchRow[], pitEntries: PitRo
     stops: tally([...STOPS], mine.map((e) => e.stop), mine.length),
     brokeDown: broken.length,
     brokeParts: tally(BREAKDOWN_PARTS, broken.flatMap((e) => e.broke_parts), broken.length),
+    died: mine.filter((e) => e.died).length,
     brownedOut: mine.filter((e) => e.browned_out).length,
     autoSides: tally(AUTO_SIDES, autoSides, autoSides.length),
     rankingPoints: tally(RANKING_POINTS, mine.flatMap((e) => e.ranking_points), mine.length),

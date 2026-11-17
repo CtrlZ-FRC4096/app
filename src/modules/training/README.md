@@ -1,7 +1,7 @@
 # Training
 
 The lessons live in the wiki. This keeps track of who has done them, and
-(later) lets mentors sign off hands-on skills.
+lets mentors sign off hands-on skills.
 
 ## What works
 
@@ -17,20 +17,72 @@ The lessons live in the wiki. This keeps track of who has done them, and
   press a button.
 - **The home page tile:** "2 of 5 lessons done", green once every lesson is
   done.
+- **Hands-on skills.** Tools a mentor has to watch you use before you use
+  them on your own (`SKILLS` in `data.ts`). Each shows **Ask for a
+  sign-off**, **Waiting for a mentor** (with **Cancel**), or **Signed off by
+  Pat Chen, Nov 12**.
+
+Mentors and admins also see:
+
+- **Waiting for sign-off**, at the top: each request's person, skill and how
+  long it's waited, oldest first, with **Sign off** and **Not yet** (which
+  deletes the request, so they can ask again later). Below it, **Sign people
+  off without a request**: pick a skill and the people, such as everyone at
+  a shop safety session. The home page's "Needs attention" says "2 sign-offs
+  waiting."
+- **Everyone's progress**, at the bottom: every student and student leader
+  whose access is on, least done first so whoever needs a nudge is on top,
+  with "3 of 5" and their count for each course and for skills. People with
+  nothing done yet are listed too, as 0. **Find someone** searches by name.
+  Tap a person to see which lessons they've done and their skills, with
+  **Take back** on any sign-off made by mistake.
+
+Try it in demo mode: View as Student is Alex, who is signed off on shop
+safety and waiting for the drill press. View as Mentor to sign people off.
 
 To add a lesson, add it to its course in `COURSES` at the top of `data.ts`
 (the comment there says how). Never change a lesson's id: progress is saved
-under it.
+under it. Skills are the same: add one to `SKILLS` with a new id, and never
+change an id. A mentor decides the list of skills. Neither needs a database
+change.
 
-## The table
+## Files
+
+| File | What it does |
+|:--|:--|
+| `data.ts` | The lessons, the skills, both tables, and every rule. |
+| `data.test.ts` | Tests for `data.ts`. |
+| `TrainingPage.tsx` | The page: your progress and the lessons, with the sections below. |
+| `Skills.tsx` | Your hands-on skills: ask for a sign-off, or cancel. |
+| `SignOffRequests.tsx` | Mentors: the requests waiting, and signing people off. |
+| `EveryonesProgress.tsx` | Mentors: everyone's lessons and skills. |
+| `training.css` | Layout for those three sections, using the app's colours. |
+
+## The tables
 
 - `training_progress` (`supabase/migrations/..._training_progress.sql`): one
   row for each lesson a person has finished. Marking a lesson not done
   deletes the row. People add and remove only their own rows. Everyone sees
   their own progress, and mentors and admins see everyone's.
+- `training_signoffs` (`supabase/migrations/..._training_signoffs.sql` and
+  `..._training_signoffs_mentors.sql`): one row per person per skill, either
+  `requested` or `signed_off`. Who can do what:
 
-Tests: `data.test.ts`, and the rules in
-`supabase/tests/training-progress.test.ts`.
+  | | Students and student leaders | Mentors and admins |
+  |:--|:--|:--|
+  | See sign-offs | Their own | Everyone's |
+  | Ask for a sign-off, for themselves | Yes | Yes |
+  | Cancel their own request while it's waiting | Yes | Yes |
+  | Sign anyone off, with or without a request | **No** | Yes |
+  | Turn down a request, or take back a sign-off | **No** | Yes |
+
+  The database fills in who signed off and when (`signed_off_by`,
+  `signed_off_at`), so neither can be faked.
+
+Hiding buttons on the page only keeps it tidy: these rules are what keep the
+data safe. Tests: `data.test.ts`, and the rules in
+`supabase/tests/training-progress.test.ts` and
+`supabase/tests/training-signoffs.test.ts`.
 
 ## Rules
 
@@ -39,11 +91,9 @@ Tests: `data.test.ts`, and the rules in
 
 ## Still to build
 
-- Hands-on skills (shop safety, drill press, crimping) that a mentor signs
-  off in person
-- Students request a sign-off; mentors see the requests and sign off, with
-  tests for who may sign off
-- Mentors see everyone's progress
+- A Slack message to mentors when someone asks for a sign-off
+  (`src/core/slack.ts`).
+- Robot status showing how many sign-offs are waiting.
 
 Copy the pattern from the [Example module](../example/README.md): a table
 and rules in `data.ts`, tests in `data.test.ts`, and the page calling

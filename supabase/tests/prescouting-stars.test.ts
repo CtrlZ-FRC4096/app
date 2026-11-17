@@ -1,8 +1,8 @@
-// Permission rules for the Prescouting module's stars (#118): a star just
-// for you is seen only by you; team stars are seen by the whole strategy
-// team (#167) and need a reason; the strategy team stars as themselves; you
-// remove your own stars, and student leaders, mentors and admins remove any
-// team star. Someone off the strategy team sees and adds none.
+// Permission rules for prescouting stars (#118): a star just for you is
+// seen only by you; team stars are seen by every scout (any signed-in member
+// whose access is on, #184) and need a reason; members star as themselves;
+// you remove your own stars, and student leaders, mentors and admins remove
+// any team star.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
@@ -17,9 +17,6 @@ beforeEach(async () => {
   other = await db.member('Casey Lee')
   mentor = await db.member('Pat Mentor', 'mentor')
   leader = await db.member('Jordan Leader', 'leader')
-  // Prescouting is strategy only (#167): these two are on the strategy team.
-  await db.strategy(student)
-  await db.strategy(other)
 })
 
 interface StarRow {
@@ -128,10 +125,10 @@ describe('prescouting notes after stars', () => {
     expect(columns.map((c) => c.name)).not.toContain('marked')
   })
 
-  it("doesn't let someone off the strategy team see or add stars (#167)", async () => {
-    const outsider = await db.member('Jamie Scout')
-    await star(student, true, 'Fast auto')
-    expect(await db.as(outsider, 'select * from public.prescouting_stars')).toEqual([])
-    await expect(star(outsider, false)).rejects.toThrow(PERMISSION_DENIED)
+  it('lets a scout off the strategy team see team stars and add their own (#184)', async () => {
+    const scout = await db.member('Jamie Scout')
+    const [row] = await star(student, true, 'Fast auto')
+    expect(await seenBy(scout)).toEqual([row.id])
+    expect(await star(scout, false)).toHaveLength(1)
   })
 })
