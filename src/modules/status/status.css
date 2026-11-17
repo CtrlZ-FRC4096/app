@@ -1,4 +1,16 @@
 /* Pit checklist */
+/* Our matches: big buttons, wrapping onto more lines on a phone. */
+.pit-matches { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 13rem), 1fr)); gap: 8px; padding: 12px 16px 16px; }
+.pit-match { display: grid; gap: 4px; justify-items: start; text-align: left; min-height: 64px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); cursor: pointer; font: inherit; }
+.pit-match[aria-pressed='true'] { border-color: var(--blue); background: var(--blue-soft); }
+.pit-match-name { display: flex; align-items: center; gap: 8px; }
+/* Unassigned items stand out, so a mentor assigns them. */
+.pit-unassigned { color: var(--warn); font-weight: 600; }
+.pit-left { display: grid; gap: 12px; }
+.pit-left ul { margin: 4px 0 0; padding-left: 18px; }
+.pit-unassigned-group { border-left: 3px solid var(--warn); padding-left: 10px; }
+.pit-my-list li { grid-template-columns: minmax(0, 1fr); }
+.pit-my-list .pit-item { align-items: center; flex-wrap: wrap; }
 .pit-checklist { list-style: none; margin: 0; padding: 0; }
 .pit-checklist li { border-top: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr) 44px 44px; position: relative; background: var(--surface); transition: transform 180ms cubic-bezier(.2, .8, .2, 1), box-shadow 180ms ease; }
 .pit-checklist .pit-dragging { background: var(--blue-soft); box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 20%, transparent); will-change: transform; border-radius: var(--radius); }

@@ -100,9 +100,9 @@ describe('the schedule', () => {
 })
 
 describe('the Prescouting tab (#184)', () => {
-  it('comes right after Overview in the switch, and is not on the page until chosen', () => {
+  it('comes first in the switch, before Overview, and is not on the page until chosen', () => {
     const html = renderToString(<ScoutingPage />)
-    expect(html).toContain('aria-pressed="true">Overview</button><button type="button" aria-pressed="false">Prescouting</button>')
+    expect(html).toContain('aria-pressed="false">Prescouting</button><button type="button" aria-pressed="true">Overview</button>')
     expect(html).not.toContain('id="prescout-event"')
   })
 

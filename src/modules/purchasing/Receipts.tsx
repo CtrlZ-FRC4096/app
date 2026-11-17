@@ -9,6 +9,7 @@ import {
   receiptCountText,
   receiptLink,
   receiptText,
+  receiptsSectionShown,
   removeReceipt,
   sizeText,
   useCanOrder,
@@ -121,8 +122,10 @@ export function Receipts(props: { item: PurchaseItem; showAdd: boolean }) {
     toast(result.ok ? 'Receipt deleted.' : result.error)
   }
 
-  // Nothing to see or do here for a student, on an item with no receipts.
-  if (!canManage && receipts.length === 0) return null
+  // Hidden when there are no receipts and Add receipt isn't offered: for a
+  // student, or before the item is ordered. Any photo waiting for review sits
+  // under Add receipt, so it's never hidden by this.
+  if (!receiptsSectionShown({ canManage, count: receipts.length, showAdd: props.showAdd })) return null
 
   return (
     <div style={{ minWidth: 0, display: 'grid', gap: 14 }}>

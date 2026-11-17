@@ -1,13 +1,15 @@
 // Tests for the prescouting pages, drawn in demo mode with the example notes.
 // In demo mode you're Alex, a student who isn't on the strategy team: every
 // scout can use Prescouting (#184).
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import { EVENT_KEY, tbaTeamUrl } from '../data'
-import { PRESCOUT_QUESTIONS } from './data'
-import PrescoutPage, { TeamCard, TeamPage } from './PrescoutPage'
+import { NO_ANSWERS, NO_FACTS, PRESCOUT_QUESTIONS, prescoutViewStore, reloadPrescoutTeams, setPrescoutView } from './data'
+import PrescoutPage, { Match13Panel, TeamCard, TeamPage, TeamTable } from './PrescoutPage'
 
 describe('the prescouting pages', () => {
+  afterEach(() => { prescoutViewStore.reset() })
+
   it("start on this season's event, and say the teams are loading, for any scout (#184)", () => {
     const html = renderToString(<PrescoutPage />)
     expect(html).not.toContain('Only the strategy team')
@@ -39,11 +41,72 @@ describe('the prescouting pages', () => {
   })
 
   it('say a team with no notes is not prescouted yet, and link to their page in the Prescouting tab', () => {
-    const team = { team: 9995, name: 'Mock Mechanics', epa: null, tbaUrl: tbaTeamUrl(9995, EVENT_KEY), notes: null, prescouted: false, stars: { forTeam: [], mine: null }, group: 'Everyone else' as const }
+    const team = { team: 9995, name: 'Mock Mechanics', epa: null, xp: null, xpRank: null, auto: null, teleop: null, endgame: null, opr: null, dpr: null, tbaUrl: tbaTeamUrl(9995, EVENT_KEY), notes: null, prescouted: false, stars: { forTeam: [], mine: null }, group: 'Everyone else' as const }
     const html = renderToString(<TeamCard event={EVENT_KEY} team={team} />)
     expect(html).toContain('Not prescouted yet')
     expect(html).toContain(`href="#/scouting/prescouting/${EVENT_KEY}/9995"`)
-    expect(html).toContain('EPA —')
+    expect(html).toContain('EPA — · xP —')
     expect(html).toContain('☆ Star')
+  })
+
+  it('show the teams as cards until Table is chosen, then as a table with a column for each question', async () => {
+    await reloadPrescoutTeams(EVENT_KEY)
+    const cards = renderToString(<PrescoutPage />)
+    expect(cards).toMatch(/aria-pressed="true"[^>]*>Cards</)
+    expect(cards).not.toContain('<table')
+
+    setPrescoutView('Table')
+    const html = renderToString(<PrescoutPage />)
+    expect(html).toMatch(/aria-pressed="true"[^>]*>Table</)
+    // Sideways scrolling stays inside the table's box, with the team column kept in place.
+    expect(html).toMatch(/class="table-wrap"[^>]*><table class="grid-table"/)
+    const headings = [...html.matchAll(/<th scope="col"[^>]*>([^<]*)<\/th>/g)].map((m) => m[1])
+    expect(headings).toEqual(['Team', ...PRESCOUT_QUESTIONS.map((q) => q.label)])
+    // Every example team has a row, with its number linking to its prescouting page.
+    for (const team of [4096, 9991, 9992, 9993, 9994, 9995]) {
+      expect(html).toMatch(new RegExp(`<a href="#/scouting/prescouting/${EVENT_KEY}/${team}"[^>]*><strong class="tnum">${team}</strong>`))
+    }
+    // The star groups are heading rows, and the search box is still there.
+    expect(html).toContain('Team stars')
+    expect(html).toContain('Everyone else')
+    expect(html).toContain('id="prescout-search"')
+  })
+
+  it('give a team with no notes a table row with a dash in every answer, and show how many stars a team has', () => {
+    const base = { name: 'Mock Mechanics', epa: null, xp: null, xpRank: null, auto: null, teleop: null, endgame: null, opr: null, dpr: null, tbaUrl: tbaTeamUrl(9995, EVENT_KEY), notes: null, prescouted: false, group: 'Everyone else' as const }
+    const star = { id: 's', event_key: EVENT_KEY, team_number: 9994, for_team: true, reason: 'Fast', created_at: '', created_by: null }
+    const teams = [{ ...base, team: 9995, stars: { forTeam: [], mine: null } }, { ...base, team: 9994, stars: { forTeam: [star, star], mine: star } }]
+    const html = renderToString(<TeamTable event={EVENT_KEY} teams={teams} headings={false} />)
+    expect(html.match(/<td[^>]*class="muted"[^>]*>—<\/td>/g)).toHaveLength(2 * PRESCOUT_QUESTIONS.length)
+    expect(html.match(/★/g)).toHaveLength(1)
+    expect(html).toContain('★<!-- -->3')
+    expect(html).not.toContain('Everyone else')
+  })
+
+  it("show a team's tier on their card, their table row and their page, with S to F buttons to choose it (#191)", () => {
+    const notes = { id: 'n1', event_key: EVENT_KEY, team_number: 9993, ...NO_ANSWERS, ...NO_FACTS, tier: 'B' as const, created_at: '2026-11-05T19:00:00Z', created_by: null }
+    const team = { team: 9993, name: 'Example Robotics', epa: null, xp: null, xpRank: null, auto: null, teleop: null, endgame: null, opr: null, dpr: null, tbaUrl: tbaTeamUrl(9993, EVENT_KEY), notes, prescouted: false, stars: { forTeam: [], mine: null }, group: 'Everyone else' as const }
+    let html = renderToString(<TeamCard event={EVENT_KEY} team={team} />)
+    expect(html).toMatch(/data-tier="B"[^>]*>Tier B</)
+    expect(renderToString(<TeamCard event={EVENT_KEY} team={{ ...team, notes: null }} />)).not.toContain('data-tier')
+    html = renderToString(<TeamTable event={EVENT_KEY} teams={[team]} headings={false} />)
+    expect(html).toMatch(/data-tier="B"[^>]*>B</)
+    expect(html).toContain('tier B')
+    // The example notes give 9993 tier B, and 9992 no tier.
+    html = renderToString(<TeamPage event={EVENT_KEY} team={9993} />)
+    for (const tier of ['S', 'A', 'B', 'C', 'D', 'F']) expect(html).toContain(`>${tier}</button>`)
+    expect(html).toMatch(/aria-pressed="true"[^>]*>B<\/button>/)
+    expect(renderToString(<TeamPage event={EVENT_KEY} team={9992} />)).toContain('Not rated')
+  })
+
+  it("show Match 13's numbers on a team's page, with — for a missing one, and say when there are none yet (#186)", () => {
+    const base = { team: 9991, name: 'Example Robotics', tbaUrl: tbaTeamUrl(9991, EVENT_KEY) }
+    const rated = { ...base, xp: 40.25, xpRank: { rank: 5, of: 40 }, auto: 10, teleop: 24.5, endgame: null, epa: 31.5, opr: 42.1, dpr: 12.3 }
+    let html = renderToString(<Match13Panel team={rated} />)
+    for (const text of ['Rank 5 of 40', '10.0', '24.5', '—', '31.5', '42.1', '12.3', 'Before the event']) expect(html).toContain(text)
+    const unrated = { ...base, xp: null, xpRank: null, auto: null, teleop: null, endgame: null, epa: null, opr: null, dpr: null }
+    html = renderToString(<Match13Panel team={unrated} />)
+    expect(html).toContain('No Match 13 numbers yet')
+    expect(html).not.toContain('Rank')
   })
 })

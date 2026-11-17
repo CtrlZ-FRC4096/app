@@ -57,7 +57,7 @@ const PATHS: Record<string, string> = {
   Simulator: 'simulate', Stats: 'stats',
 }
 /** The switch at the top. The four picklists are one choice, with their own switch below it (#151). */
-const SWITCH = ['Overview', 'Prescouting', 'Match', 'Pit', 'Schedule', 'Rankings', 'Picklists', 'Simulator', 'Stats']
+const SWITCH = ['Prescouting', 'Overview', 'Match', 'Pit', 'Schedule', 'Rankings', 'Picklists', 'Simulator', 'Stats']
 /** The Picklists switch: what each choice is called, and which page it opens. */
 const PICKLISTS: Record<string, string> = { Ranked: 'Picklist', Mine: 'My picklist', Team: 'Team picklist', Final: 'Final picklist' }
 

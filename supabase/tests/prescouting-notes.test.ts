@@ -66,6 +66,17 @@ describe('prescouting notes', () => {
     await expect(db.as(other, 'update public.prescouting_notes set created_by = $2 where id = $1', [row.id, other])).rejects.toThrow(PERMISSION_DENIED)
   })
 
+  it('lets a strategy member put a team on the tier list, change it and clear it, but only as S to F (#191)', async () => {
+    const [row] = await add(student)
+    expect(row).toMatchObject({ tier: null })
+    const setTier = (tier: string | null) => db.as<{ tier: string | null }>(other, 'update public.prescouting_notes set tier = $2 where id = $1 returning tier', [row.id, tier])
+    expect(await setTier('S')).toEqual([{ tier: 'S' }])
+    expect(await setTier('F')).toEqual([{ tier: 'F' }])
+    expect(await setTier(null)).toEqual([{ tier: null }])
+    await expect(setTier('E')).rejects.toThrow('check constraint')
+    await expect(setTier('s')).rejects.toThrow('check constraint')
+  })
+
   it('refuses an answer over 2,000 characters', async () => {
     await expect(add(student, 9991, 'x'.repeat(2001))).rejects.toThrow('check constraint')
   })

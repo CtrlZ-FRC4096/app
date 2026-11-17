@@ -1,6 +1,6 @@
 # Prescouting (moved)
 
-Prescouting is now a tab in Scouting (#184), right after Overview: see
+Prescouting is now the first tab in Scouting (#184), before Overview: see
 [Scouting's Prescouting README](../scouting/prescouting/README.md).
 
 This module is only here so old links and bookmarks keep working. It's
