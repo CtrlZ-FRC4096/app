@@ -6,7 +6,7 @@ import { PageHead, Panel, Pick } from '../../core/ui'
 import type { Result } from '../../core/table'
 import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../scouting/data'
 import {
-  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, firstLine, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout,
+  NO_ANSWERS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, STRATEGY_ONLY, firstLine, isEventKey, prescoutHref, prescoutOverview, reloadPrescoutTeams, savePrescout, searchPrescout,
   setPrescoutEvent, useIsStrategy, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
   type OverviewTeam, type PrescoutAnswers, type PrescoutSort, type PrescoutTeam,
 } from './data'
@@ -60,6 +60,9 @@ function Overview() {
   const [sort, setSort] = useState<PrescoutSort>('Team number')
   const teams = result?.ok ? prescoutOverview(result.value, notes, stars, me, sort) : []
   const starred = teams.some((t) => t.group !== 'Everyone else')
+  // What's typed in the search box. The list narrows as it's typed.
+  const [search, setSearch] = useState('')
+  const found = searchPrescout(teams, search)
 
   return (
     <>
@@ -76,8 +79,29 @@ function Overview() {
               Sort by
               <Pick label="Sort by" options={[...PRESCOUT_SORTS]} value={sort} onChange={setSort} />
             </div>
+            <label className="field" htmlFor="prescout-search">
+              Find a team
+              <input
+                id="prescout-search"
+                className="input"
+                type="search"
+                style={{ ...BOX, width: '100%' }}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Number or name"
+              />
+            </label>
+            {/* Said aloud by screen readers when the list empties, since nothing else on the page changes. */}
+            <div aria-live="polite">
+              {teams.length > 0 && found.length === 0 && (
+                <p className="muted" style={{ margin: 0, overflowWrap: 'anywhere' }}>No teams match "{search.trim()}". Check the number or name, or clear the box to see every team.</p>
+              )}
+            </div>
             {STAR_GROUPS.map((group) => (
-              <TeamGroup key={group} title={starred ? group : ''} event={event} teams={teams.filter((t) => t.group === group)} />
+              <TeamGroup key={group} title={starred ? group : ''} event={event} teams={found.filter((t) => t.group === group)} />
             ))}
           </div>
         )}
