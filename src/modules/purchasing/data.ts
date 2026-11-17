@@ -21,8 +21,7 @@
  * or after), only mentors and purchasers change anything about it, its price
  * included. See ..._purchase_items_price.sql.
  *
- * Dates, tracking and importing the Slack list come in later steps: see
- * issue #66.
+ * Importing the Slack list comes in a later step: see issue #66.
  */
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
@@ -48,13 +47,13 @@ import { compressReceiptImage, type ImageEncoder } from './receipt-image'
  *   - People asking for something pick one of the `ask` statuses: its priority.
  */
 export const STATUSES = [
-  { key: 'wait', label: 'Wait to Order', hint: "Don't order yet", tone: 'plain', current: false, ask: true },
-  { key: 'order_low', label: 'Order Low Priority', hint: 'Place with the next order', tone: 'info', current: true, ask: true },
+  { key: 'wait', label: 'Wait to Order', hint: "Don't order yet", tone: 'warn', current: false, ask: true },
+  { key: 'order_low', label: 'Order Low Priority', hint: 'Place with the next order', tone: 'warn', current: true, ask: true },
   { key: 'order', label: 'Order', hint: 'Place the order now', tone: 'warn', current: true, ask: true },
   { key: 'order_high', label: 'Order High Priority', hint: 'Place the order now, with priority shipping', tone: 'crit', current: true, ask: true },
   { key: 'placed', label: 'Order Placed', hint: 'Ordered, on the way', tone: 'info', current: true, ask: false },
   { key: 'out_of_stock', label: 'Out of Stock', hint: "The vendor doesn't have it", tone: 'crit', current: true, ask: false },
-  { key: 'backordered', label: 'Backordered', hint: "Ordered, but the vendor is waiting for more", tone: 'warn', current: true, ask: false },
+  { key: 'backordered', label: 'Backordered', hint: "Ordered, but the vendor is waiting for more", tone: 'info', current: true, ask: false },
   { key: 'received', label: 'Received', hint: 'Delivered, not in the shop yet', tone: 'ok', current: true, ask: false },
   { key: 'in_shop', label: 'In Shop', hint: 'Put away in the shop', tone: 'ok', current: false, ask: false },
   { key: 'cancelled', label: 'Cancel Item', hint: 'Not buying it', tone: 'plain', current: false, ask: false },
@@ -145,6 +144,10 @@ export interface PurchaseItem extends Row {
   shipped_to: string | null
   /** When the order should arrive, like "2026-11-12": set by whoever places it (mentors and purchasers). */
   estimated_arrival: string | null
+  /** The date it was ordered, like "2026-11-10". Empty until it's ordered. Set by mentors and purchasers. */
+  ordered_on: string | null
+  /** The shipping company's tracking number, if there is one. Set by mentors and purchasers. */
+  tracking: string | null
   /** The BOM part it's for, when it was asked for from the BOM page. */
   bom_part_id: string | null
   /** Who added it to the app. */
@@ -158,11 +161,12 @@ export const MAX_PRICE = 99999.99
 export const MAX_PART_NUMBER_LENGTH = 100
 export const MAX_LINK_LENGTH = 2000
 export const MAX_NOTES_LENGTH = 1000
+export const MAX_TRACKING_LENGTH = 200
 
 let exampleCount = 0
 function example(
-  fields: Omit<PurchaseItem, 'id' | 'created_at' | 'created_by' | 'link' | 'notes' | 'price' | 'ordered_by' | 'shipped_to' | 'estimated_arrival' | 'bom_part_id'> &
-    Partial<Pick<PurchaseItem, 'price' | 'ordered_by' | 'shipped_to' | 'estimated_arrival' | 'bom_part_id'>> & { notes?: string },
+  fields: Omit<PurchaseItem, 'id' | 'created_at' | 'created_by' | 'link' | 'notes' | 'price' | 'ordered_by' | 'shipped_to' | 'estimated_arrival' | 'ordered_on' | 'tracking' | 'bom_part_id'> &
+    Partial<Pick<PurchaseItem, 'price' | 'ordered_by' | 'shipped_to' | 'estimated_arrival' | 'ordered_on' | 'tracking' | 'bom_part_id'>> & { notes?: string },
   created_at: string,
 ): PurchaseItem {
   exampleCount += 1
@@ -174,6 +178,8 @@ function example(
     ordered_by: null,
     shipped_to: null,
     estimated_arrival: null,
+    ordered_on: null,
+    tracking: null,
     bom_part_id: null,
     ...fields,
     created_at,
@@ -194,17 +200,17 @@ const EXAMPLE_ITEMS: PurchaseItem[] = [
   example({ name: 'Brushless motor', status: 'order_high', vendor: 'REV Robotics', type: 'Intake', part_number: 'EXAMPLE-NEO-01', quantity: 2, price: 95, requested_by: DEMO_PEOPLE.sam, notes: 'Needed before Saturday build day.', bom_part_id: BOM_BRUSHLESS_MOTOR }, '2026-10-30T22:00:00Z'),
   example({ name: 'Zip ties, 8 in (pack of 100)', status: 'order_low', vendor: 'Amazon', type: 'Miscellaneous', part_number: null, quantity: 2, price: 7.25, requested_by: DEMO_PEOPLE.jordan }, '2026-10-30T19:45:00Z'),
   example({ name: 'Ethernet cables, 5 ft (10 pack)', status: 'wait', vendor: 'Amazon', type: 'Electrical', part_number: null, quantity: 1, requested_by: DEMO_PEOPLE.jordan }, '2026-10-29T18:20:00Z'),
-  example({ name: 'Timing belt, 60T', status: 'placed', vendor: 'West Coast Products', type: 'Drive Base', part_number: 'EXAMPLE-TB-60', quantity: 4, price: 18.75, requested_by: DEMO_PEOPLE.sam, ...ORDERED, estimated_arrival: '2026-12-15' }, '2026-10-24T20:00:00Z'),
-  example({ name: 'Hex bearing, 1/2 in', status: 'backordered', vendor: 'Andy Mark', type: 'Hardware', part_number: 'EXAMPLE-HB-12', quantity: 12, price: 3.2, requested_by: DEMO_PEOPLE.alex, ...ORDERED, estimated_arrival: '2026-11-01' }, '2026-10-22T23:15:00Z'),
-  example({ name: 'Motor controller', status: 'received', vendor: 'CTRE', type: 'Electrical', part_number: 'EXAMPLE-MC-1', quantity: 1, price: 120, requested_by: DEMO_PEOPLE.pat, ...ORDERED }, '2026-10-21T17:00:00Z'),
+  example({ name: 'Timing belt, 60T', status: 'placed', vendor: 'West Coast Products', type: 'Drive Base', part_number: 'EXAMPLE-TB-60', quantity: 4, price: 18.75, requested_by: DEMO_PEOPLE.sam, ...ORDERED, estimated_arrival: '2026-12-15', ordered_on: '2026-11-10', tracking: 'EXAMPLE-TRACK-0001' }, '2026-10-24T20:00:00Z'),
+  example({ name: 'Hex bearing, 1/2 in', status: 'backordered', vendor: 'Andy Mark', type: 'Hardware', part_number: 'EXAMPLE-HB-12', quantity: 12, price: 3.2, requested_by: DEMO_PEOPLE.alex, ...ORDERED, estimated_arrival: '2026-11-01', ordered_on: '2026-10-23' }, '2026-10-22T23:15:00Z'),
+  example({ name: 'Motor controller', status: 'received', vendor: 'CTRE', type: 'Electrical', part_number: 'EXAMPLE-MC-1', quantity: 1, price: 120, requested_by: DEMO_PEOPLE.pat, ...ORDERED, ordered_on: '2026-10-21', tracking: 'EXAMPLE-TRACK-0002' }, '2026-10-21T17:00:00Z'),
   example({ name: 'Polycarbonate sheet, 1/8 in', status: 'in_shop', vendor: 'McMaster', type: 'Mechanical', part_number: 'EXAMPLE-PC-18', quantity: 1, price: 42.5, requested_by: DEMO_PEOPLE.jordan, ...ORDERED }, '2026-10-20T18:30:00Z'),
   // In the shop already, so the BOM's Drivetrain shows a part that arrived.
   example({ name: 'Absolute encoder', status: 'in_shop', vendor: 'CTRE', type: 'Drive Base', part_number: 'EXAMPLE-ENC-1', quantity: 4, price: 39, requested_by: DEMO_PEOPLE.sam, ...ORDERED, bom_part_id: BOM_ABSOLUTE_ENCODER }, '2026-10-19T17:30:00Z'),
   example({ name: 'Field tape, 2 in', status: 'cancelled', vendor: 'Other', type: 'Field', part_number: null, quantity: 3, requested_by: DEMO_PEOPLE.alex, notes: 'Found some in the storage room.' }, '2026-10-18T16:00:00Z'),
 ]
 
-// Version 4: items have a price.
-export const itemsTable = createTable<PurchaseItem>('purchase_items', { demo: EXAMPLE_ITEMS, sort: newestFirst, version: 4 })
+// Version 5: items have a date ordered and a tracking number.
+export const itemsTable = createTable<PurchaseItem>('purchase_items', { demo: EXAMPLE_ITEMS, sort: newestFirst, version: 5 })
 
 /** Every item, newest first. */
 export function useItems(): PurchaseItem[] {
@@ -253,7 +259,8 @@ const ORDER_LOCKED_FIELDS = ['name', 'vendor', 'type', 'link', 'part_number', 'q
 /**
  * Whether saving `changes` needs a mentor or purchaser: it moves an item
  * into or out of an order status (Order Placed and after), sets who ordered
- * it, who it ships to or when it arrives, or changes anything about an item
+ * it, who it ships to, when it arrives, when it was ordered or its tracking
+ * number, or changes anything about an item
  * that's already ordered. Changing between the asking statuses doesn't, and
  * neither does changing anything else about a request.
  */
@@ -261,11 +268,15 @@ export function isOrderChange(item: PurchaseItem | null, changes: NewItem): bool
   const orderedBy = changes.ordered_by || null
   const shippedTo = changes.shipped_to || null
   const arrival = changes.estimated_arrival || null
-  if (!item) return !isAsking(changes.status) || orderedBy !== null || shippedTo !== null || arrival !== null
+  const orderedOn = changes.ordered_on || null
+  const tracking = changes.tracking.trim() || null
+  if (!item) return !isAsking(changes.status) || [orderedBy, shippedTo, arrival, orderedOn, tracking].some((detail) => detail !== null)
   const statusMoved = changes.status !== item.status && (!isAsking(item.status) || !isAsking(changes.status))
   const fields = itemFields(changes)
   const orderEdited = !isAsking(item.status) && ORDER_LOCKED_FIELDS.some((field) => fields[field] !== item[field])
-  return statusMoved || orderEdited || orderedBy !== item.ordered_by || shippedTo !== item.shipped_to || arrival !== item.estimated_arrival
+  const detailsEdited = orderedBy !== item.ordered_by || shippedTo !== item.shipped_to || arrival !== item.estimated_arrival
+    || orderedOn !== item.ordered_on || tracking !== item.tracking
+  return statusMoved || orderEdited || detailsEdited
 }
 
 // ---------------------------------------------------------------------------
@@ -307,7 +318,7 @@ export function formPriceText(form: Pick<NewItem, 'price' | 'quantity'>): string
 }
 
 // ---------------------------------------------------------------------------
-// Estimated arrival.
+// Dates: when it was ordered, and its estimated arrival.
 
 /** Today's date where the app is used, like "2026-11-05". */
 export function today(now: Date = new Date()): string {
@@ -334,6 +345,11 @@ export function isLate(item: PurchaseItem, on: string = today()): boolean {
 /** "Arrives Nov 12" while it's on its way, or nothing. */
 export function arrivalText(item: PurchaseItem): string | null {
   return isOnItsWay(item) && item.estimated_arrival ? `Arrives ${dayText(item.estimated_arrival)}` : null
+}
+
+/** "Ordered Nov 10", or nothing if there's no date ordered. */
+export function orderedText(item: Pick<PurchaseItem, 'ordered_on'>): string | null {
+  return item.ordered_on ? `Ordered ${dayText(item.ordered_on)}` : null
 }
 
 const NOT_A_BUYER = 'Only mentors and purchasers place and change orders. Ask a mentor.'
@@ -631,7 +647,7 @@ export function usePurchasingSummary(): Notice {
 // ---------------------------------------------------------------------------
 // Adding, changing and deleting items.
 
-/** What someone types in. The link, part number, price, notes, Ordered by and Shipped to can be left empty. */
+/** What someone types in. The link, part number, price, notes and order details can be left empty. */
 export interface NewItem {
   name: string
   status: StatusKey
@@ -648,28 +664,30 @@ export interface NewItem {
   shipped_to: string
   /** A date like "2026-11-12", or empty. Mentors and purchasers only. */
   estimated_arrival: string
+  /** The date it was ordered, like "2026-11-10", or empty. Mentors and purchasers only. */
+  ordered_on: string
+  /** The tracking number, or empty. Mentors and purchasers only. */
+  tracking: string
 }
 
 export const EMPTY_ITEM: NewItem = {
-  name: '', status: FIRST_STATUS, vendor: '', type: '', link: '', part_number: '', quantity: 1, price: '', notes: '', ordered_by: '', shipped_to: '', estimated_arrival: '',
+  name: '', status: FIRST_STATUS, vendor: '', type: '', link: '', part_number: '', quantity: 1, price: '', notes: '', ordered_by: '', shipped_to: '', estimated_arrival: '', ordered_on: '', tracking: '',
 }
+
+/** The order details, in the order the form shows them. */
+const ORDER_FIELDS = ['ordered_by', 'ordered_on', 'shipped_to', 'estimated_arrival', 'tracking'] as const
+export type OrderField = (typeof ORDER_FIELDS)[number]
 
 /**
  * Which order details the form shows: all of them once the order is placed
  * (any status past the asking ones, like Order Placed or Backordered), and
  * before that only the ones already filled in, so nothing saved is hidden.
  */
-export function orderFieldsShown(form: Pick<NewItem, 'status' | 'ordered_by' | 'shipped_to' | 'estimated_arrival'>): {
-  ordered_by: boolean
-  shipped_to: boolean
-  estimated_arrival: boolean
-} {
+export function orderFieldsShown(form: Pick<NewItem, 'status' | OrderField>): Record<OrderField, boolean> {
   const placed = !isAsking(form.status)
-  return {
-    ordered_by: placed || !!form.ordered_by,
-    shipped_to: placed || !!form.shipped_to,
-    estimated_arrival: placed || !!form.estimated_arrival,
-  }
+  const shown = {} as Record<OrderField, boolean>
+  for (const field of ORDER_FIELDS) shown[field] = placed || !!form[field]
+  return shown
 }
 
 /** Whether to offer a new receipt: only once the item has been ordered. Existing receipts stay visible at any status. */
@@ -689,15 +707,21 @@ export function receiptsSectionShown(props: { canManage: boolean; count: number;
 /**
  * The form's changes when someone picks a new status. Moving an order to
  * Order Placed fills in Ordered by with them, as saving does (the database
- * does the same), unless someone else was already picked in the form.
- * Moving it away again puts back what was saved.
+ * does the same), unless someone else was already picked in the form. It
+ * also fills in Date ordered with today (`on`), unless there's a date
+ * already. Moving it away again puts back what was saved.
  */
-export function pickStatus(form: NewItem, status: StatusKey, item: PurchaseItem | null, me: string): Partial<NewItem> {
-  const saved = item?.ordered_by ?? ''
+export function pickStatus(form: NewItem, status: StatusKey, item: PurchaseItem | null, me: string, on: string = today()): Partial<NewItem> {
+  const savedBy = item?.ordered_by ?? ''
+  const savedOn = item?.ordered_on ?? ''
   const placing = status === 'placed' && item?.status !== 'placed'
-  if (placing && form.ordered_by === saved) return { status, ordered_by: me }
-  if (!placing && form.status === 'placed' && item?.status !== 'placed' && form.ordered_by === me) return { status, ordered_by: saved }
-  return { status }
+  const undoing = !placing && form.status === 'placed' && item?.status !== 'placed'
+  const changes: Partial<NewItem> = { status }
+  if (placing && form.ordered_by === savedBy) changes.ordered_by = me
+  if (placing && !form.ordered_on) changes.ordered_on = on
+  if (undoing && form.ordered_by === me) changes.ordered_by = savedBy
+  if (undoing && form.ordered_on === on) changes.ordered_on = savedOn
+  return changes
 }
 
 /** An item's fields, to fill in the form for changing it. */
@@ -715,6 +739,8 @@ export function itemToForm(item: PurchaseItem): NewItem {
     ordered_by: item.ordered_by ?? '',
     shipped_to: item.shipped_to ?? '',
     estimated_arrival: item.estimated_arrival ?? '',
+    ordered_on: item.ordered_on ?? '',
+    tracking: item.tracking ?? '',
   }
 }
 
@@ -723,7 +749,7 @@ export function itemToForm(item: PurchaseItem): NewItem {
  * Order, and whoever sends it is who asked for it, like any new request.
  */
 export function duplicateItem(item: PurchaseItem): NewItem {
-  return { ...itemToForm(item), status: FIRST_STATUS, ordered_by: '', shipped_to: '', estimated_arrival: '' }
+  return { ...itemToForm(item), status: FIRST_STATUS, ordered_by: '', shipped_to: '', estimated_arrival: '', ordered_on: '', tracking: '' }
 }
 
 /** A real calendar date written like "2026-11-12". */
@@ -755,6 +781,9 @@ export function checkItem(item: NewItem): string | null {
   const notes = item.notes.trim()
   if (notes.length > MAX_NOTES_LENGTH) return `Keep the notes under ${MAX_NOTES_LENGTH} characters. These are ${notes.length}.`
   if (item.estimated_arrival && !isDate(item.estimated_arrival)) return 'Pick the estimated arrival from the calendar, or leave it empty.'
+  if (item.ordered_on && !isDate(item.ordered_on)) return 'Pick the date ordered from the calendar, or leave it empty.'
+  const tracking = item.tracking.trim()
+  if (tracking.length > MAX_TRACKING_LENGTH) return `Keep the tracking number under ${MAX_TRACKING_LENGTH} characters. This one is ${tracking.length}.`
   return null
 }
 
@@ -772,6 +801,8 @@ const itemFields = (item: NewItem) => ({
   ordered_by: item.ordered_by || null,
   shipped_to: item.shipped_to || null,
   estimated_arrival: item.estimated_arrival || null,
+  ordered_on: item.ordered_on || null,
+  tracking: item.tracking.trim() || null,
 })
 
 /**

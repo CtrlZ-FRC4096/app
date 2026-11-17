@@ -23,6 +23,7 @@ import {
   groupItems,
   isAsking,
   orderFieldsShown,
+  orderedText,
   pickStatus,
   isLate,
   itemToForm,
@@ -220,10 +221,21 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
   const order = [
     item.ordered_by && `Ordered by ${nameOf(item.ordered_by)}`,
     item.shipped_to && `Shipped to ${nameOf(item.shipped_to)}`,
+    orderedText(item),
     arrivalText(item),
   ].filter(Boolean)
   const receipts = receiptCountText(useReceipts(item.id).length)
   const price = priceText(item)
+
+  async function copyTracking() {
+    if (!item.tracking) return
+    try {
+      await navigator.clipboard.writeText(item.tracking)
+      toast('Tracking number copied.')
+    } catch {
+      toast(`Couldn't copy it. The tracking number is ${item.tracking}.`)
+    }
+  }
 
   function open(event: MouseEvent) {
     if ((event.target as HTMLElement).closest('a, button')) return
@@ -249,6 +261,7 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
       </span>
       <span className="toolbar">
         <button type="button" className="btn btn-sm" onClick={props.onDuplicate}>Duplicate</button>
+        {item.tracking && <button type="button" className="btn btn-sm" onClick={() => void copyTracking()}>Copy tracking</button>}
         {item.link && (
           <a className="btn btn-sm" href={item.link} target="_blank" rel="noopener noreferrer">Open link</a>
         )}
@@ -398,8 +411,8 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
 }
 
 /**
- * The bottom of an item's form: who ordered it, who it ships to and when it
- * should arrive. Mentors and purchasers fill these in; everyone else sees
+ * The bottom of an item's form: who ordered it and when, who it ships to,
+ * when it should arrive and its tracking number. Mentors and purchasers fill these in; everyone else sees
  * them as text.
  */
 function OrderDetails(props: {
@@ -416,18 +429,20 @@ function OrderDetails(props: {
   const known = [
     item.ordered_by && `Ordered by ${nameOf(item.ordered_by)}`,
     item.shipped_to && `Shipped to ${nameOf(item.shipped_to)}`,
+    orderedText(item),
     arrivalText(item),
+    item.tracking && `Tracking number ${item.tracking}`,
   ].filter(Boolean)
   // Mentors and purchasers get the fields once it's ordered (see orderFieldsShown).
   const shown = orderFieldsShown(form)
   if (!props.canOrder && known.length === 0) return null
-  if (props.canOrder && !shown.ordered_by && !shown.shipped_to && !shown.estimated_arrival) return null
+  if (props.canOrder && !Object.values(shown).some(Boolean)) return null
 
   return (
     <div style={{ display: 'grid', gap: 14, minWidth: 0, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
       <strong>Order details</strong>
       {!props.canOrder ? (
-        <p className="note" style={{ margin: 0 }}>{known.join(' · ')}</p>
+        <p className="note" style={{ margin: 0, overflowWrap: 'anywhere' }}>{known.join(' · ')}</p>
       ) : (
         <>
           {shown.ordered_by && (
@@ -438,6 +453,13 @@ function OrderDetails(props: {
                 {props.orderers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
               </select>
               <span className="note">Marking it Order Placed fills this in with you. Pick someone else if they placed it.</span>
+            </label>
+          )}
+          {shown.ordered_on && (
+            <label className="field" style={FIELD} htmlFor={id('ordered-on')}>
+              Date ordered
+              <input id={id('ordered-on')} className="input" style={BOX} type="date" value={form.ordered_on} onChange={(e) => set({ ordered_on: e.target.value })} />
+              <span className="note">Marking it Order Placed fills this in with today. Change it if it was ordered another day.</span>
             </label>
           )}
           {shown.shipped_to && (
@@ -461,6 +483,12 @@ function OrderDetails(props: {
                 onChange={(e) => set({ estimated_arrival: e.target.value })}
               />
               <span className="note">When it should arrive. Leave it empty if you don't know yet.</span>
+            </label>
+          )}
+          {shown.tracking && (
+            <label className="field" style={FIELD} htmlFor={id('tracking')}>
+              Tracking number (if there is one)
+              <input id={id('tracking')} className="input" style={BOX} value={form.tracking} onChange={(e) => set({ tracking: e.target.value })} />
             </label>
           )}
         </>
