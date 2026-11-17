@@ -138,6 +138,50 @@ describe('scouting entries', () => {
     expect(older).toMatchObject({ died: false, browned_out: true })
   })
 
+  // #205: the auto path drawn on the field. An entry from an older phone has none.
+  describe('auto path', () => {
+    const insert = (path: unknown) =>
+      db.as<{ auto_path: unknown }>(
+        scout,
+        `insert into public.scouting_entries (id, event_key, match_number, team_number, endgame, scouted_at, auto_path)
+         values ($1, '2026test', 1, 1, 'None', now(), $2) returning auto_path`,
+        [crypto.randomUUID(), path === undefined ? null : JSON.stringify(path)],
+      )
+    const line = (spots: number) => Array.from({ length: spots }, (_, i) => [i / spots, 0.5])
+    const drove = { strokes: [[[0.25, 0.5], [0.1, 0.25]]], marks: [{ type: 'shot', x: 0.25, y: 0.5 }], didnt_move: false }
+
+    it("keeps a drawn path or a Didn't move, and leaves an older entry's empty", async () => {
+      expect(await insert(drove)).toEqual([{ auto_path: drove }])
+      const still = { strokes: [], marks: [{ type: 'shot', x: 0.25, y: 0.5 }], didnt_move: true }
+      expect(await insert(still)).toEqual([{ auto_path: still }])
+      expect(await insert(undefined)).toEqual([{ auto_path: null }])
+      // The biggest the form allows: 10 lines, 300 spots, 20 marks.
+      const biggest = { strokes: Array.from({ length: 10 }, () => line(30)), marks: Array.from({ length: 20 }, () => drove.marks[0]), didnt_move: false }
+      expect(await insert(biggest)).toHaveLength(1)
+    })
+
+    it('refuses a path the form would never save, or one too big', async () => {
+      const refused: [string, unknown][] = [
+        ['not an object', [1, 2]],
+        ['nothing drawn and it moved', { strokes: [], marks: [], didnt_move: false }],
+        ["lines and Didn't move", { ...drove, didnt_move: true }],
+        ['no didnt_move', { strokes: drove.strokes, marks: [] }],
+        ['something extra', { ...drove, colour: 'red' }],
+        ['a line of one spot', { ...drove, strokes: [[[0.1, 0.1]]] }],
+        ['a spot off the field', { ...drove, strokes: [[[0.1, 0.1], [1.2, 0.5]]] }],
+        ['a spot that is not two numbers', { ...drove, strokes: [[[0.1, 0.1], ['a', 0.5]]] }],
+        ['a line that is not a list', { ...drove, strokes: [{ x: 1 }] }],
+        ['11 lines', { ...drove, strokes: Array.from({ length: 11 }, () => line(2)) }],
+        ['301 spots', { ...drove, strokes: [line(150), line(151)] }],
+        ['21 marks', { ...drove, marks: Array.from({ length: 21 }, () => drove.marks[0]) }],
+        ['a mark with no type', { ...drove, marks: [{ type: '', x: 0.1, y: 0.1 }] }],
+        ['a mark type too long', { ...drove, marks: [{ type: 'x'.repeat(31), x: 0.1, y: 0.1 }] }],
+        ['a mark off the field', { ...drove, marks: [{ type: 'shot', x: -0.1, y: 0.1 }] }],
+      ]
+      for (const [label, path] of refused) await expect(insert(path), label).rejects.toThrow('check constraint')
+    })
+  })
+
   it('refuses the short answers when empty or over 300 characters, like the form', async () => {
     const insert = (column: string, value: unknown) =>
       db.as(scout, `insert into public.scouting_entries (id, event_key, match_number, team_number, endgame, scouted_at, ${column}) values ($1, '2026test', 1, 1, 'None', now(), $2)`, [crypto.randomUUID(), value])

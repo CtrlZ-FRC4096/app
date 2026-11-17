@@ -12,7 +12,10 @@ import { rankingsStore, refreshRankings } from './data'
 import Schedule from './Schedule'
 import SharedPicklist from './SharedPicklist'
 import TeamPage, { TeamLink } from './TeamPage'
-import { AUTO_SIDES, COUNTERS, DRIVETRAINS, EVENT_KEY, ROLES } from './season'
+import { AUTO_MARKS, AUTO_SIDES, COUNTERS, DRIVETRAINS, EVENT_KEY, ROLES } from './season'
+import FieldDrawing from './FieldDrawing'
+import { AutoPathsPanel } from './TeamAutoPaths'
+import { EMPTY_PATH, NEW_DRAFT, editPath, entryStore, fieldFlipStore, positionStore, saveEntry, setFieldFlipped, setPosition, type EntryFields, type PathEdit } from './data'
 
 // Strategy-only pages (#167): these tests look at them as a student leader,
 // who always counts as strategy. Alex, the demo student, isn't on the
@@ -39,6 +42,16 @@ describe('the team page', () => {
     const html = renderToString(<TeamPage team={1234} />)
     expect(html).toContain('Nothing scouted for team 1234 yet.')
     expect(html).not.toContain('Numbers')
+  })
+
+  // #205: 9991's example entry has an auto path; 9992's was saved before #205.
+  it('shows the auto paths panel, with a chip for each match, only for a team with paths', () => {
+    const html = renderToString(<TeamPage team={9991} />)
+    expect(html).toContain('Auto paths')
+    expect(html).toContain('aria-pressed="false">Q1</button>')
+    expect(html).toContain('Hide marks')
+    expect(renderToString(<TeamPage team={9992} />)).not.toContain('Auto paths')
+    expect(renderToString(<AutoPathsPanel paths={[]} />)).toBe('')
   })
 
   it('links to every scouted team', () => {
@@ -257,6 +270,70 @@ describe('the match form', () => {
     const html = renderToString(<ScoutingPage />)
     const driverSkill = html.slice(html.indexOf('aria-label="Driver skill"'))
     expect(driverSkill.slice(0, driverSkill.indexOf('</div>'))).not.toContain('aria-pressed="true"')
+  })
+  // #205. Tests run without a browser, so they can't press a finger on the
+  // drawing: the drawing's steps (where a finger is, given the drawing's
+  // getBoundingClientRect(), and what each press, move and lift does) are
+  // tested in data.test.ts ("auto paths"), and saving a path in saveEntry's tests.
+  describe('auto path (#205)', () => {
+    afterEach(() => {
+      positionStore.reset()
+      fieldFlipStore.reset()
+    })
+
+    it("has the field to draw on, with Undo and Clear (nothing to undo yet), Didn't move, Flip field and Hide marks", () => {
+      setPosition('Blue 2')
+      const html = renderToString(<FieldDrawing draft={NEW_DRAFT} onEdit={() => {}} />)
+      expect(html).toContain('aria-label="The field, to draw the robot&#x27;s auto path on"')
+      expect(html).toContain('touch-action:none')
+      expect(html).toMatch(/disabled="">Undo<\/button>/)
+      expect(html).toMatch(/disabled="">Clear<\/button>/)
+      expect(html).toContain('aria-pressed="false">Didn&#x27;t move</button>')
+      expect(html).toContain('aria-pressed="false">Flip field</button>')
+      expect(html).toContain('aria-pressed="true">Hide marks</button>')
+      expect(html).toContain('Nothing drawn yet.')
+      for (const mark of AUTO_MARKS) expect(html).toContain(`>${mark.label}</button>`)
+      // Blue's own wall is on the left to start with, and Flip field turns it.
+      expect(html).toContain('(blue) is on the left')
+      setFieldFlipped(true)
+      expect(renderToString(<FieldDrawing draft={NEW_DRAFT} onEdit={() => {}} />)).toContain('(blue) is on the right')
+    })
+
+    it("starts with a red robot's own wall on the left too", () => {
+      setPosition('Red 1')
+      expect(renderToString(<FieldDrawing draft={NEW_DRAFT} onEdit={() => {}} />)).toContain('(red) is on the left')
+    })
+
+    it('asks for the position before drawing, and lets the page scroll over the field until then', () => {
+      const html = renderToString(<FieldDrawing draft={NEW_DRAFT} onEdit={() => {}} />)
+      expect(html).toContain('Pick your position above')
+      expect(html).not.toContain('touch-action:none')
+    })
+
+    it("shows what's drawn, with Undo and Clear ready and Didn't move pressed", () => {
+      setPosition('Blue 1')
+      const drawn = editPath(editPath(NEW_DRAFT, { kind: 'didntMove' }), { kind: 'mark', type: 'shot', at: [0.2, 0.5] })
+      const html = renderToString(<FieldDrawing draft={drawn} onEdit={() => {}} />)
+      expect(html).toContain('Didn&#x27;t move, 1 mark.')
+      expect(html).toContain('aria-pressed="true">Didn&#x27;t move</button>')
+      expect(html).not.toMatch(/disabled="">(Undo|Clear)<\/button>/)
+      expect(html).toContain('>S</text>')
+    })
+
+    it("is on the match form, and Save asks for it, until it's drawn or Didn't move is pressed", () => {
+      expect(renderToString(<ScoutingPage />)).toContain('Trace where it drove with your finger (required)')
+      const form: EntryFields = {
+        match: 4, team: 9991, counts: {}, endgame: 'None', roles: [], role_notes: '', broke_down: false, broke_parts: [], broke_other: '', died: false,
+        browned_out: false, stop: 'None', driver_skill: 3, auto_side: '', auto_notes: '', auto_path: EMPTY_PATH, ranking_points: [], notes: '',
+      }
+      expect(saveEntry(form)).toEqual({ ok: false, error: expect.stringMatching(/auto path.*Didn't move/) })
+      const drawLine: PathEdit[] = [{ kind: 'start', at: [0.1, 0.5] }, { kind: 'move', at: [0.3, 0.4] }, { kind: 'end', at: [0.3, 0.4] }]
+      for (const draft of [editPath(NEW_DRAFT, { kind: 'didntMove' }), drawLine.reduce(editPath, NEW_DRAFT)]) {
+        const saved = saveEntry({ ...form, auto_path: draft.path })
+        expect(saved.ok && saved.value.auto_path).toEqual(draft.path)
+      }
+      entryStore.reset()
+    })
   })
 })
 

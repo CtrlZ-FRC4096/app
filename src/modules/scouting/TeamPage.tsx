@@ -7,6 +7,7 @@ import { toast } from '../../core/toast'
 import { Bar, PageHead, Panel, Pill } from '../../core/ui'
 import { MIN_MATCHES, pointsRange, useCurrentEvent, useIsStrategy, useScoutedTeams, useTeamPoints, useTeamSummary, type Tally, type TeamSummary } from './data'
 import { PRESCOUT_QUESTIONS, prescoutHref, usePrescoutFor } from '../prescouting/data'
+import TeamAutoPaths from './TeamAutoPaths'
 import TeamPhotos from './TeamPhotos'
 // Stars belong to the Prescouting module (#118), and are the same here and
 // there: starring a team in either place shows in both.
@@ -133,6 +134,7 @@ function TeamDetails(props: { team: number }) {
       <TeamPhotos team={props.team} />
       <AveragePoints team={props.team} />
       {summary.matchCount > 0 && <Numbers summary={summary} />}
+      <TeamAutoPaths team={props.team} />
       <TeamRatings team={props.team} />
       {summary.matchCount + summary.pitCount > 0 && <HowOften summary={summary} />}
       {summary.written.length > 0 && <WrittenAnswers summary={summary} />}

@@ -1,7 +1,7 @@
 // Tests for season.ts. Run them with `npm test`.
 // The form and saved entries use each counter's key, so keys must be unique.
 import { describe, expect, it } from 'vitest'
-import { AUTO_SIDES, COUNTERS, DRIVETRAINS, ENDGAME, ROLES } from './season'
+import { AUTO_MARKS, AUTO_SIDES, COUNTERS, DRIVETRAINS, ENDGAME, FIELD, ROLES } from './season'
 
 describe('season settings', () => {
   it('gives every counter its own key and a label', () => {
@@ -36,6 +36,26 @@ describe('season settings', () => {
       expect(list.length).toBeGreaterThan(0)
       expect(new Set(list).size).toBe(list.length)
       for (const choice of list) expect(choice.trim()).not.toBe('')
+    }
+  })
+
+  // #205: the auto path's marks are saved by key, and the database only takes keys up to 30 characters.
+  it('gives every auto mark its own short key, a label and one letter', () => {
+    const keys = AUTO_MARKS.map((m) => m.key)
+    expect(new Set(keys).size).toBe(keys.length)
+    for (const mark of AUTO_MARKS) {
+      expect(mark.key.length, mark.key).toBeGreaterThan(0)
+      expect(mark.key.length, mark.key).toBeLessThanOrEqual(30)
+      expect(mark.label.trim(), mark.key).not.toBe('')
+      expect(mark.letter, mark.key).toHaveLength(1)
+    }
+  })
+
+  it('keeps every field landmark inside the field', () => {
+    for (const l of FIELD.landmarks) {
+      const where = l.label ?? `${l.look} at ${l.x}, ${l.y}`
+      expect(l.x >= 0 && l.y >= 0 && l.width >= 0 && l.height >= 0, where).toBe(true)
+      expect(l.x + l.width <= FIELD.length && l.y + l.height <= FIELD.width, where).toBe(true)
     }
   })
 })
