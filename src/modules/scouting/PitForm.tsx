@@ -7,12 +7,13 @@ import SavedOnDevice from './SavedOnDevice'
 import { TeamLink } from './TeamPage'
 import PickMany from './PickMany'
 import { AUTO_SIDES, DRIVETRAINS, VISION } from './season'
+import TeamSearchBox from './TeamSearchBox'
 
 // Big enough to tap, and 16px text so phones don't zoom in on the box.
 const BOX = { minHeight: 46, fontSize: 16 }
 
 /** A box that only takes a number, like 115.5. The number keypad opens on phones. */
-function NumberBox(props: { id: string; label: string; value: string; onChange: (value: string) => void; placeholder: string; wholeNumber?: boolean }) {
+function NumberBox(props: { id: string; label: string; value: string; onChange: (value: string) => void; placeholder: string }) {
   return (
     <label className="field" htmlFor={props.id}>
       {props.label}
@@ -20,9 +21,9 @@ function NumberBox(props: { id: string; label: string; value: string; onChange: 
         id={props.id}
         className="input"
         style={{ ...BOX, width: '9ch' }}
-        inputMode={props.wholeNumber ? 'numeric' : 'decimal'}
+        inputMode="decimal"
         value={props.value}
-        onChange={(e) => props.onChange(props.wholeNumber ? e.target.value.replace(/\D/g, '') : numberOnly(e.target.value))}
+        onChange={(e) => props.onChange(numberOnly(e.target.value))}
         placeholder={props.placeholder}
       />
     </label>
@@ -112,7 +113,7 @@ export default function PitForm() {
       <form onSubmit={save}>
         <Panel>
           <FormSection title="Team" first>
-            <NumberBox id="pit-team" label="Team number" value={team} onChange={setTeam} placeholder="4096" wholeNumber />
+            <TeamSearchBox id="pit-team" value={team} onChange={setTeam} />
           </FormSection>
           <FormSection title="Robot">
             <div className="field">

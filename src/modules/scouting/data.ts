@@ -1623,6 +1623,55 @@ export async function getEventTeams(event = currentEvent()): Promise<Result<TbaT
   return result.ok ? ok([...(result.value ?? [])].sort((a, b) => a.team_number - b.team_number)) : result
 }
 
+/** Find teams by number or name. Every typed word must appear; order is kept. */
+export function searchTeamList<T>(teams: T[], text: string, limit: number, number: (team: T) => number, name: (team: T) => string): T[] {
+  const words = text.toLowerCase().split(/\s+/).filter(Boolean)
+  return teams.filter((team) => {
+    const about = `${number(team)} ${name(team)}`.toLowerCase()
+    return words.every((word) => about.includes(word))
+  }).slice(0, Math.max(0, limit))
+}
+
+/** Search an event's teams by number or name, returning up to six suggestions by default. */
+export function searchTeams(teams: TbaTeam[], text: string, limit = 6): TbaTeam[] {
+  return searchTeamList(teams, text, limit, (team) => team.team_number, (team) => team.nickname)
+}
+
+/** The event's team list and when it was saved on this device. */
+export interface SavedEventTeams {
+  event: string
+  teams: TbaTeam[]
+  savedAt: string
+}
+
+// Like the schedule, this may be the only copy available in the pits.
+export const eventTeamsStore = createStore<SavedEventTeams | null>('scouting-event-teams', 1, () => null, { keepOnReset: true })
+
+/** The teams saved on this device for the event, or null if they haven't been loaded. */
+export function savedEventTeams(event = currentEvent()): SavedEventTeams | null {
+  const saved = eventTeamsStore.get()
+  return saved?.event === event ? saved : null
+}
+
+export function useSavedEventTeams(event?: string): TbaTeam[] | null {
+  const current = useCurrentEvent().key
+  const saved = useStore(eventTeamsStore)
+  return saved?.event === (event ?? current) ? saved.teams : null
+}
+
+/**
+ * Refresh the event's teams and keep the latest copy on this device. If
+ * fetching fails, use the saved list for this event when one is available.
+ */
+export async function loadEventTeams(event = currentEvent()): Promise<Result<TbaTeam[]>> {
+  const saved = savedEventTeams(event)
+  if (globalThis.navigator?.onLine === false) return saved ? ok(saved.teams) : fail('No connection.')
+  const result = await getEventTeams(event)
+  if (!result.ok) return saved ? ok(saved.teams) : result
+  eventTeamsStore.set({ event, teams: result.value, savedAt: new Date().toISOString() })
+  return ok(result.value)
+}
+
 /**
  * The event's page on Nexus (frc.nexus, #165), which shows what's on the
  * field right now, who should be queuing, and announcements. Only a link:

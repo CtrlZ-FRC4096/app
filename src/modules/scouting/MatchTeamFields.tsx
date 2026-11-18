@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Pick } from '../../core/ui'
 import { POSITIONS, loadSchedule, setPosition, teamFor, usePosition, useSavedSchedule, type Position } from './data'
+import TeamSearchBox from './TeamSearchBox'
 
 const NUMBER_BOX = { width: '9ch', minHeight: 46, fontSize: 16 }
 
@@ -78,10 +79,7 @@ export default function MatchTeamFields(props: { match: string; team: string; on
           Match number
           <input id="scout-match" className="input" style={NUMBER_BOX} inputMode="numeric" value={props.match} onChange={(e) => changeMatch(e.target.value)} placeholder="12" />
         </label>
-        <label className="field" htmlFor="scout-team">
-          Team number
-          <input id="scout-team" className="input" style={NUMBER_BOX} inputMode="numeric" value={props.team} onChange={(e) => props.onTeam(e.target.value)} placeholder="4096" />
-        </label>
+        <TeamSearchBox id="scout-team" value={props.team} onChange={props.onTeam} showSuggestions={!fromSchedule} />
       </div>
       <div aria-live="polite">
         {fromSchedule ? (

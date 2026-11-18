@@ -16,7 +16,7 @@ import { currentUser, isLeader, useSession, type Role } from '../../../core/sess
 import { createStore, useStore } from '../../../core/store'
 import { createTable, fail, ok, type Result, type Row } from '../../../core/table'
 import {
-  COUNTERS, ENDGAME, EVENT_KEY, MAX_TEAM, getEventTeams, getRatings, matchLabel, tbaTeamUrl, videoLink,
+  COUNTERS, ENDGAME, EVENT_KEY, MAX_TEAM, getEventTeams, getRatings, matchLabel, searchTeamList, tbaTeamUrl, videoLink,
   type Counter, type Match13Rating, type TbaMatchWithVideos, type TbaTeam,
 } from '../data'
 import { DRIVETRAINS } from '../season'
@@ -515,12 +515,7 @@ export function prescoutOverview(teams: PrescoutTeam[], notes: PrescoutNotes[], 
  * empty search matches every team. The order stays as it was.
  */
 export function searchPrescout<T extends { team: number; name: string }>(teams: T[], text: string): T[] {
-  const words = text.toLowerCase().split(/\s+/).filter(Boolean)
-  if (words.length === 0) return teams
-  return teams.filter((t) => {
-    const about = `${t.team} ${t.name}`.toLowerCase()
-    return words.every((word) => about.includes(word))
-  })
+  return searchTeamList(teams, text, Number.POSITIVE_INFINITY, (team) => team.team, (team) => team.name)
 }
 
 /** How the overview shows the teams: a card each, or one compact table with a row each. */

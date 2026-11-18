@@ -5,10 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetAllStores } from '../../core/store'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import {
-  MAX_NOTES_LENGTH, MAX_SHORT_LENGTH, blankOrNumber, checkEntry, checkPitEntry, getEventTeams, tbaTeamUrl, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
+  MAX_NOTES_LENGTH, MAX_SHORT_LENGTH, blankOrNumber, checkEntry, checkPitEntry, getEventTeams, searchTeams, tbaTeamUrl, entriesTable, entryStore, getPredictions, getRankings, getRatings, getSchedule, getTeam, getTeamMatches,
   MAX_PIT_NUMBER, MAX_DRIVETRAIN_LENGTH, numberOnly, pitAnswers, pitStore, pitTable, pitToRow, saveEntry, savePitEntry, scoutedTeams, syncEntries, syncStatus, teamNumber,
   teamSummary, toRow, type EntryFields, type MatchRow, type PitFields, type PitRow, type TeamSummary,
-  qualVideoRows, videoLink, type TbaMatchWithVideos,
+  qualVideoRows, videoLink, type TbaMatchWithVideos, type TbaTeam,
   loadRatings, needsLoading, ratingsStore, resetRatings, savedRatings, savedWhen, signed, STALE_MS, teamRating, teamRecord, type Match13Rating,
   DEFAULT_WEIGHTS, picklistCsv, picklistParts, rankTeams, type TeamNumbers, type Weights,
   MAX_WEIGHT, allWeightsZero, picklistTeams, resetWeights, setWeight, weightOf, weightsStore,
@@ -95,6 +95,27 @@ describe('numberOnly', () => {
       ['..5', '.5'],
     ]
     for (const [text, kept] of typed) expect(numberOnly(text), text).toBe(kept)
+  })
+})
+
+describe('searchTeams', () => {
+  it('finds teams by number or name, without case sensitivity, and respects the result limit', () => {
+    const teams: TbaTeam[] = [
+      { key: 'frc4096', team_number: 4096, nickname: 'Ctrl Z Robotics', city: null, state_prov: null, country: null },
+      { key: 'frc1640', team_number: 1640, nickname: 'TBirds', city: null, state_prov: null, country: null },
+      { key: 'frc2540', team_number: 2540, nickname: 'Iron Robotics', city: null, state_prov: null, country: null },
+    ]
+    const searches: [string, number[], number?][] = [
+      ['40', [4096, 1640, 2540]],
+      ['4096', [4096]],
+      ['robo', [4096, 2540]],
+      ['ROBO', [4096, 2540]],
+      ['iron 25', [2540]],
+      ['bird', [1640]],
+      ['not here', []],
+      ['40', [4096], 1],
+    ]
+    for (const [text, found, limit] of searches) expect(searchTeams(teams, text, limit).map((team) => team.team_number), `"${text}"`).toEqual(found)
   })
 })
 
@@ -1295,6 +1316,17 @@ describe("The Blue Alliance: an event's teams", () => {
     const result = await data.getEventTeams('2026arc')
     expect(callFunction).toHaveBeenCalledWith('tba', { kind: 'teams', event: '2026arc' }, expect.any(Function))
     expect(result.ok && result.value.map((t) => t.team_number)).toEqual([254, 9991, 9993])
+  })
+
+  it('saves and reads the event team list on this device', async () => {
+    const teams = [team(4096), team(254)]
+    const { data } = await withAnswers({ tba: { ok: true, value: teams } })
+    data.eventTeamsStore.reset()
+    const result = await data.loadEventTeams('2026arc')
+    expect(result).toEqual({ ok: true, value: [team(254), team(4096)] })
+    expect(data.savedEventTeams('2026arc')).toMatchObject({ event: '2026arc', teams: [team(254), team(4096)] })
+    expect(data.savedEventTeams('2025old')).toBeNull()
+    data.eventTeamsStore.reset()
   })
 })
 
