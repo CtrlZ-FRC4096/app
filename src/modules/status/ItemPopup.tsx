@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useMembers } from '../../core/members'
 import { PeoplePicker } from '../../core/ui'
 import {
-  MAX_ITEM_LENGTH, PIT_SUBGROUPS, assignPitItem, assignedPeople, belongsToSubgroup, removePitItem, renamePitItem, setPitItemSubgroup, usePitChecklist,
+  MAX_ITEM_LENGTH, PIT_SUBGROUPS, assignPitItem, belongsToSubgroup, removePitItem, renamePitItem, setPitItemSubgroup, suggestedFor, usePitChecklist,
   type PitItem,
 } from './data'
 
@@ -90,8 +90,9 @@ export function ItemPopup({ item, mode, onClose, onSaved }: {
 /**
  * The People popup for one item: who's on it, and adding or taking off
  * people with one tap each. Changes save straight away and never uncheck
- * the item. It lists the item's subgroup; for General, where that's the
- * whole team, the people already on other items until a name is typed.
+ * the item. It lists the item's subgroup; where that's the whole team
+ * (General, or a subgroup not set up on this device), the people already on
+ * other items until a name is typed (suggestedFor()).
  */
 function ItemPeople(props: { item: PitItem; onSaved: (message: string) => void; onError: (error: string) => void; onClose: () => void }) {
   const { item } = props
@@ -117,7 +118,7 @@ function ItemPeople(props: { item: PitItem; onSaved: (message: string) => void; 
       <PeoplePicker findId="pit-people-find" disabled={saving}
         chosen={item.assignee_ids.map((id) => ({ id, name: nameOf(id) }))}
         pool={pool}
-        suggestedIds={item.subgroup === 'General' ? assignedPeople(items) : undefined}
+        suggestedIds={suggestedFor([item.subgroup], items)}
         nobody={`Nobody is in ${item.subgroup} yet. Add people to it in the Subgroups panel under the checklist.`}
         onAdd={(id) => void save([...item.assignee_ids, id], `${nameOf(id)} added to ${item.text}.`)}
         onRemove={(id) => void save(item.assignee_ids.filter((old) => old !== id), `${nameOf(id)} taken off ${item.text}.`)} />

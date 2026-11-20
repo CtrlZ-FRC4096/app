@@ -1,12 +1,14 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import { plural } from '../../core/format'
 import { Bar, Panel, PeoplePicker, Pill } from '../../core/ui'
 import {
-  MAX_ITEM_LENGTH, PIT_SUBGROUPS, type PitMatch, type PitSubgroup, addPitItem, assignedPeople, belongsToSubgroup, canCheck, checkedIds, matchProgress,
-  movePitItem, movePitItemTo, progressText, setPitItemCompleted, takenOffText, usePitChecklist, usePitChecks, useSubgroupMembers,
+  MAX_ITEM_LENGTH, PIT_SUBGROUPS, type PitItem, type PitMatch, type PitSubgroup, addPitItem, belongsToSubgroup, canCheck, checkedIds, matchProgress,
+  movePitItem, movePitItemTo, progressText, setPitItemCompleted, suggestedFor, takenOffText, usePitChecklist, usePitChecks, useSubgroupMembers,
 } from './data'
 import { useMembers } from '../../core/members'
 import { useSession } from '../../core/session'
 import { usePitDrag } from './usePitDrag'
+import { AssignPeople } from './AssignPeople'
 import { ClearList } from './ClearList'
 import { ItemPopup, type ItemPopupMode } from './ItemPopup'
 import { SubgroupsPanel } from './SubgroupsPanel'
@@ -40,6 +42,17 @@ export function PitChecklist({ match }: { match: PitMatch }) {
     setError(error)
     setAnnouncement(announcement)
   })
+  // Select mode: tick several items, then Assign people gives them all the same people.
+  const [selecting, setSelecting] = useState(false)
+  const [selected, setSelected] = useState<string[]>([])
+  // The items in the Assign people popup while it's open, or none.
+  const [assigningIds, setAssigningIds] = useState<string[]>([])
+  // What the last Assign people did, shown while the items it skipped are still ticked.
+  const [notice, setNotice] = useState('')
+  // Worked out from the list each time, so items someone else removes drop
+  // out. If every item in the popup goes, the popup closes.
+  const ticked = items.filter((item) => selected.includes(item.id))
+  const assigning = items.filter((item) => assigningIds.includes(item.id))
 
   // Scroll a moved item into view, and stop lighting it up after a moment.
   useEffect(() => {
@@ -69,6 +82,28 @@ export function PitChecklist({ match }: { match: PitMatch }) {
     return ''
   }
 
+  /** Select, or Cancel: start or stop ticking items, with nothing ticked. */
+  function switchSelecting() {
+    setSelecting(!selecting)
+    setSelected([])
+    setNotice('')
+  }
+
+  function tick(id: string) {
+    setSelected((ids) => (ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id]))
+    setNotice('')
+  }
+
+  /** After Assign people. Items it skipped stay ticked, so they can go to someone else; with none, select mode ends. */
+  function assigned(message: string, skippedIds: string[]) {
+    const text = skippedIds.length ? `${message} ${plural(skippedIds.length, 'skipped item is', 'skipped items are')} still ticked.` : message
+    setError('')
+    setAnnouncement(text)
+    setNotice(skippedIds.length ? text : '')
+    setSelected(skippedIds)
+    setSelecting(skippedIds.length > 0)
+  }
+
   async function add(event: FormEvent) {
     event.preventDefault()
     if (!(await run(addPitItem(text, assigneeIds, subgroup), 'Item added.'))) return
@@ -82,7 +117,7 @@ export function PitChecklist({ match }: { match: PitMatch }) {
     <section className="stack" aria-labelledby="pit-checklist-title">
       <h2 id="pit-checklist-title">Full checklist</h2>
       <p className="muted">
-        Checks are for {match.label}. Drag the handle on the right to reorder items, or use Move to… in an item's three-dot menu. Rename and remove items there too. Tap an item's people to change who's on it, and its subgroup tag to change the subgroup. Clear list, under the checklist, unchecks everything for this match or removes every item.
+        Checks are for {match.label}. Drag the handle on the right to reorder items, or use Move to… in an item's three-dot menu. Rename and remove items there too. Tap an item's people to change who's on it, and its subgroup tag to change the subgroup. To give several items to the same people, tap Select above the list, tick them, then tap Assign people. Clear list, under the checklist, unchecks everything for this match or removes every item.
       </p>
       <Panel title="Checklist" aside={<Pill tone={progress.ready ? 'ok' : 'plain'}>{progressText(progress)}</Pill>}>
         <div className="panel-body">
@@ -90,10 +125,20 @@ export function PitChecklist({ match }: { match: PitMatch }) {
             {items.length === 0 ? 'No items yet. Add the first one below.' : progress.ready ? `All checked off for ${match.label}.` : `${progress.left} left to check for ${match.label}.`}
           </p>
           <Bar value={items.length ? progress.done / items.length : 0} label={`Pit checklist for ${match.label}`} />
+          {items.length > 0 && (
+            <div className="toolbar">
+              <button type="button" className="btn pit-add" onClick={switchSelecting}>{selecting ? 'Cancel' : 'Select'}</button>
+              {selecting && <button type="button" className="btn btn-primary pit-add" disabled={!ticked.length}
+                onClick={() => setAssigningIds(ticked.map((item) => item.id))}>Assign people</button>}
+            </div>
+          )}
+          {selecting && items.length > 0 && <p className="note pit-notice">{notice || (ticked.length ? `${plural(ticked.length, 'item', 'items')} ticked.` : 'Tick the items to give to the same people, then tap Assign people.')}</p>}
         </div>
         <p className="pit-sr-only" role="status">{announcement}</p>
-        <ul ref={list} className="pit-checklist">
-          {items.map((item) => (
+        <ul ref={list} className={selecting ? 'pit-checklist pit-selecting' : 'pit-checklist'}>
+          {items.map((item) => selecting ? (
+            <PitSelectRow key={item.id} item={item} nameOf={nameOf} ticked={selected.includes(item.id)} onTick={() => tick(item.id)} />
+          ) : (
             <li key={item.id} data-pit-id={item.id} className={drag.activeId === item.id ? 'pit-dragging' : !drag.activeId && moved?.id === item.id ? 'pit-moved' : undefined} style={drag.style(item.id)}>
               <div className="pit-item-heading">
               <label className="check pit-item">
@@ -163,9 +208,11 @@ export function PitChecklist({ match }: { match: PitMatch }) {
           ))}
         </ul>
       </Panel>
-      <ClearList match={match} itemCount={items.length} checkedCount={progress.done} onDone={(message) => { setError(''); setAnnouncement(message) }} />
+      {/* Clear list starts over, so it ends select mode too. */}
+      <ClearList match={match} itemCount={items.length} checkedCount={progress.done} onDone={(message) => { setError(''); setAnnouncement(message); setSelecting(false) }} />
       {popup && popupItem && <ItemPopup key={`${popup.id}:${popup.mode}`} item={popupItem} mode={popup.mode}
         onClose={() => setPopup(null)} onSaved={(message) => { setError(''); setAnnouncement(message) }} />}
+      {assigning.length > 0 && <AssignPeople items={assigning} onClose={() => setAssigningIds([])} onSaved={assigned} />}
       {error && <p id="pit-item-error" role="alert">{error}</p>}
       <Panel title="Add an item">
         <form className="panel-body" onSubmit={(event) => void add(event)}>
@@ -194,7 +241,7 @@ export function PitChecklist({ match }: { match: PitMatch }) {
             <PeoplePicker findId="new-pit-people-find"
               chosen={assigneeIds.map((id) => ({ id, name: nameOf(id) }))}
               pool={membersFor(subgroup)}
-              suggestedIds={subgroup === 'General' ? assignedPeople(items) : undefined}
+              suggestedIds={suggestedFor([subgroup], items)}
               nobody={`Nobody is in ${subgroup} yet. Add people to it in the Subgroups panel below.`}
               onAdd={(id) => { setAssigneeIds([...assigneeIds, id]); setTakenOff('') }}
               onRemove={(id) => setAssigneeIds(assigneeIds.filter((old) => old !== id))} />
@@ -206,6 +253,30 @@ export function PitChecklist({ match }: { match: PitMatch }) {
       </Panel>
       <SubgroupsPanel onSaved={(message) => { setError(''); setAnnouncement(message) }} />
     </section>
+  )
+}
+
+// An item in select mode: a tick box to choose it for Assign people. Its
+// subgroup and people show, but aren't buttons, and there's no three-dot
+// menu or drag handle while selecting.
+function PitSelectRow(props: { item: PitItem; nameOf: (id: string) => string; ticked: boolean; onTick: () => void }) {
+  const { item } = props
+  return (
+    <li className={props.ticked ? 'pit-selected' : undefined}>
+      <div className="pit-item-heading">
+        <label className="check pit-item">
+          <input type="checkbox" aria-label={`Select ${item.text}`} checked={props.ticked} onChange={props.onTick} />
+          <span>{item.text}</span>
+        </label>
+        <span className="pit-subgroup-tag" data-subgroup={item.subgroup}>{item.subgroup}</span>
+      </div>
+      <div className="pit-item-tools">
+        <div className="pit-chips">
+          {item.assignee_ids.map((id) => <span key={id} className="person-chip">{props.nameOf(id)}</span>)}
+          {item.assignee_ids.length === 0 && <span className="note">Nobody yet</span>}
+        </div>
+      </div>
+    </li>
   )
 }
 
