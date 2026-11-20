@@ -36,7 +36,7 @@ export function TeamProgress({ match }: { match: PitMatch }) {
             {left.map((group) => (
               <div key={group.id ?? 'unassigned'} className={group.id ? undefined : 'pit-unassigned-group'}>
                 <strong>{group.name}</strong>
-                {!group.id && <span className="note"> · assign these in the full checklist's ⋯ menu</span>}
+                {!group.id && <span className="note"> · assign these in the full checklist below: tap + Add people, or Select several at once</span>}
                 <ul>
                   {group.items.map((item) => <li key={item.id}>{item.text}</li>)}
                 </ul>
