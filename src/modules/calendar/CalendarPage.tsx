@@ -39,6 +39,9 @@ import {
   type SignUpLink,
 } from './data'
 
+/** For buttons people tap on a phone: 44px tall, like Scouting's (src/modules/scouting/FieldDrawing.tsx). */
+const TAP = { minHeight: 44 }
+
 // The page reads the events and sign-ups with hooks (useCalendar,
 // useSignUps) and changes them with functions from data.ts. It never saves
 // anything itself.
@@ -196,12 +199,13 @@ function EventRow(props: { event: CalendarEvent; user: User; signUps: SignUp[]; 
       {/* maxWidth lets the buttons wrap onto two lines on a phone instead of making the page scroll sideways. */}
       <span className="toolbar" style={{ marginLeft: 'auto', maxWidth: '100%' }}>
         {links.map((found, i) => (
-          <a key={i} className="btn btn-sm btn-primary" href={found.link} target="_blank" rel="noreferrer">
+          // overflowWrap lets a long name wrap inside its button instead of pushing the page sideways.
+          <a key={i} className="btn btn-sm btn-primary" style={{ ...TAP, overflowWrap: 'anywhere' }} href={found.link} target="_blank" rel="noreferrer">
             {signUpButtonText(found)} ↗
           </a>
         ))}
         {open && (
-          <button type="button" className={imGoing ? 'btn btn-sm' : 'btn btn-sm btn-primary'} disabled={busy} onClick={() => void toggleSignUp()}>
+          <button type="button" className={imGoing ? 'btn btn-sm' : 'btn btn-sm btn-primary'} style={TAP} disabled={busy} onClick={() => void toggleSignUp()}>
             {imGoing ? 'Cancel sign-up' : 'Sign up'}
           </button>
         )}
@@ -377,6 +381,10 @@ function EventFormFields(props: {
         <Pick label="Sign-ups" options={SIGN_UP_KINDS} value={form.signUps} onChange={(signUps) => set({ signUps })} />
       </div>
       {form.signUps === 'In the app' && <span className="note">People tap Sign up on the event, and everyone can see who's going.</span>}
+      {/* An event can't have both kinds of Sign up button, so saving with In the app leaves its links out. Say so first. */}
+      {form.signUps === 'In the app' && form.links.some((row) => row.link.trim()) && (
+        <span className="note">This event also has a sign-up link. Saving with In the app removes it: pick With a link to keep it.</span>
+      )}
       {form.signUps === 'With a link' && (
         <SignUpLinkRows links={form.links} id={id} onChange={(links) => set({ links })} />
       )}
@@ -409,12 +417,12 @@ function SignUpLinkRows(props: { links: SignUpLink[]; id: (name: string) => stri
             Link
             <input id={props.id(`link-${i}`)} className="input" type="url" inputMode="url" value={row.link} onChange={(e) => change(i, { link: e.target.value })} placeholder="https://forms.gle/abc123" />
           </label>
-          <button type="button" className="btn" aria-label={`Remove sign-up link ${i + 1}`} onClick={() => remove(i)}>Remove</button>
+          <button type="button" className="btn" style={TAP} aria-label={`Remove sign-up link ${i + 1}`} onClick={() => remove(i)}>Remove</button>
         </div>
       ))}
       {links.length < MAX_SIGN_UP_LINKS && (
         <div className="toolbar">
-          <button type="button" className="btn btn-sm" onClick={() => props.onChange([...links, blankLink()])}>Add another link</button>
+          <button type="button" className="btn" style={TAP} onClick={() => props.onChange([...links, blankLink()])}>Add another link</button>
         </div>
       )}
     </div>

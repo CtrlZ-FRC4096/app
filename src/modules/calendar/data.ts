@@ -14,8 +14,10 @@
  * in the app on or off for any event (setSignUps()).
  *
  * Sign-ups come two ways:
- *   - A link, on a "Sign up: https://..." line in the description, for a
- *     Google Form or Slack post. Works for events made in Google Calendar.
+ *   - Links, for Google Forms or Slack posts: each on its own "Sign up:
+ *     https://..." or "Sign up (Hotel): https://..." line in the
+ *     description, so an event can have several (#226). Works for events
+ *     made in Google Calendar.
  *   - In the app, for any event with sign-ups on (in the form for events
  *     the app added, or Take sign-ups on any event): people tap Sign up,
  *     and everyone sees who's going. Student leaders, mentors
@@ -218,8 +220,12 @@ export interface SignUpLink {
   link: string
 }
 
-/** A description split into its lines. Google Calendar marks lines with <br> or <p> as well as new lines. */
-const descriptionLines = (description: string) => description.split(/<br\s*\/?>|<\/p>|<\/div>|\n/i)
+/**
+ * A description split into its lines. As well as new lines, Google Calendar marks lines with <br>,
+ * paragraphs (<p>), boxes (<div>) and bulleted or numbered lists (<ul>, <ol>, <li>), opening and closing.
+ * The \b stops it matching other tags that start the same way, like <pre>.
+ */
+const descriptionLines = (description: string) => description.split(/<br\s*\/?>|<\/?(?:p|div|ul|ol|li)\b[^>]*>|\n/i)
 
 /** The sign-up link on one line of a description if it's a sign-up line with a safe link, or null. */
 function signUpOnLine(line: string): SignUpLink | null {
@@ -340,7 +346,10 @@ export function formFromEvent(event: CalendarEvent): EventForm {
     startClock: event.allDay ? '18:00' : chicagoClock(new Date(event.start)),
     endClock: event.allDay ? '20:00' : chicagoClock(new Date(event.end)),
     location: event.location ?? '',
-    description: (event.description ?? '').split('\n').filter((line) => !signUpOnLine(line)).join('\n').trim(),
+    // Split the way signUpLinks() does, since Google Calendar may have turned the lines into HTML (<br>).
+    // The sign-up lines come back as the link rows, so leaving them in Details would save each link twice.
+    // Each pair of list tags (</li><li>) leaves an empty line, so more than one blank line in a row becomes one.
+    description: descriptionLines(event.description ?? '').filter((line) => !signUpOnLine(line)).join('\n').replace(/\n{3,}/g, '\n\n').trim(),
     signUps: event.signUps ? 'In the app' : links.length > 0 ? 'With a link' : 'No sign-ups',
     links: links.length > 0 ? links : [blankLink()],
   }
@@ -370,6 +379,9 @@ function signUpLines(links: SignUpLink[]): Result<string[]> {
 export function eventFromForm(form: EventForm): Result<EventInput> {
   if (!form.day || (form.allDay && !form.lastDay)) return fail(form.allDay ? 'Pick the first and last days.' : 'Pick the day.')
   if (!form.allDay && (!form.startClock || !form.endClock)) return fail('Pick when it starts and ends.')
+  // A "Sign up:" line typed into Details would become a button without the Link boxes' checks,
+  // or sit next to the in-app Sign up button, so people would see two kinds.
+  if (signUpLinks(form.description).length > 0) return fail('Sign-up links go under Sign-ups, not in Details: pick "With a link" and paste each link in a Link box.')
   let description = form.description.trim()
   if (form.signUps === 'With a link') {
     const lines = signUpLines(form.links)

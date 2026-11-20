@@ -36,6 +36,7 @@ import {
   signUp,
   signUpButtonText,
   signUpLinks,
+  SIGN_UP_KINDS,
   signUpsFor,
   signUpsTable,
   timeOfDay,
@@ -128,6 +129,10 @@ describe('plainText', () => {
   })
 })
 
+// Two sign-up links as a bulleted list, the way Google Calendar saves one typed straight after some text.
+const bulletedList =
+  'Bring your badge.<ul><li>Sign up (Travel): <a href="https://forms.gle/travel">https://forms.gle/travel</a></li><li>Sign up (Hotel): <a href="https://forms.gle/hotel">https://forms.gle/hotel</a></li></ul>'
+
 describe('signUpLinks', () => {
   it('finds every "Sign up:" line, in order, with its name, however Google Calendar wraps it, and drops unsafe links', () => {
     const form = 'https://forms.gle/abc123'
@@ -162,6 +167,9 @@ describe('signUpLinks', () => {
       ['an http link, dropped', `Sign up (Hotel): http://forms.gle/hotel\nSign up (Travel): ${form}`, [{ name: 'Travel', link: form }]],
       ['a javascript link', 'Sign up: javascript:alert(1)', []],
       ['a javascript link shown as https', `Sign up: <a href="javascript:alert(1)">${form}</a>`, []],
+      // A bulleted or numbered list in Google Calendar: each <li> is its own line, so no link goes missing.
+      ['as a bulleted list, straight after text', bulletedList, [{ name: 'Travel', link: 'https://forms.gle/travel' }, { name: 'Hotel', link: 'https://forms.gle/hotel' }]],
+      ['as a numbered list', `<ol><li>Sign up (Travel): ${form}</li><li>Sign up: ${form}</li></ol>`, [{ name: 'Travel', link: form }, { name: '', link: form }]],
     ]
     for (const [label, description, links] of cases) expect(signUpLinks(description), label).toEqual(links)
   })
@@ -177,6 +185,7 @@ describe('shownDescription', () => {
     expect(shownDescription('Robot demo at the library.\nSign up: https://forms.gle/abc123\nWear your team shirt.')).toBe('Robot demo at the library. Wear your team shirt.')
     expect(shownDescription('Sign up (Travel): https://forms.gle/travel\nBring your badge.\nSign up (Hotel): https://forms.gle/hotel')).toBe('Bring your badge.')
     expect(shownDescription('Bring a laptop.<br>Sign up: <a href="https://forms.gle/abc123">https://forms.gle/abc123</a>')).toBe('Bring a laptop.')
+    expect(shownDescription(bulletedList)).toBe('Bring your badge.')
     expect(shownDescription('Sign up: https://forms.gle/abc123')).toBeNull()
     // So nothing goes missing.
     expect(shownDescription('Sign up: http://forms.gle/abc123')).toBe('Sign up: http://forms.gle/abc123')
@@ -232,7 +241,7 @@ describe('sign-ups in demo mode', () => {
       start: start.toISOString(),
       end: new Date(start.getTime() + 2 * 60 * 60 * 1000).toISOString(),
       allDay: false,
-      description: 'Bring your team shirt.\nSign up: https://forms.gle/abc123',
+      description: 'Bring your team shirt.\nSign up (Travel): https://forms.gle/travel\nSign up: https://forms.gle/abc123',
     })
     setDemoRole('student')
     expect(result).toMatchObject({ ok: true })
@@ -240,16 +249,20 @@ describe('sign-ups in demo mode', () => {
   }
 
   // The build session has no link, so this also checks that it gets no button.
-  it('shows a Sign up button only on the event with a link, and not the sign-up line', async () => {
+  it('shows a Sign up button for each link, only on the event with links, and not the sign-up lines', async () => {
     await addOutreachWithSignUp()
     const outreach = calendarNow().events.find((e) => e.title === 'Outreach: robot demo (made up)')!
     const page = await pageWith([event('build', { start: '2099-11-03T18:00:00-06:00', end: '2099-11-03T21:00:00-06:00' }), outreach])
     expect(page).toContain('Outreach: robot demo (made up)')
     expect(page).toContain('Build session')
+    // Two buttons: "Sign up: Travel" for the named link, and plain "Sign up" for the other.
+    expect(page).toContain('>Sign up: Travel<')
     expect(page.match(/>Sign up</g)).toHaveLength(1)
+    expect(page).toContain('href="https://forms.gle/travel" target="_blank"')
     expect(page).toContain('href="https://forms.gle/abc123" target="_blank"')
     expect(page).toContain('Bring your team shirt.')
-    expect(page).not.toContain('Sign up:')
+    expect(page).not.toContain('Sign up (Travel):')
+    expect(page).not.toContain('Sign up: https')
   })
 
   it('shows the made-up events with both kinds of sign-up, and who is going', async () => {
@@ -332,6 +345,11 @@ describe('the event form', () => {
       [Array.from({ length: 6 }, (_, i) => link(`Form ${i}`, `https://forms.gle/${i}`)), /up to 5/],
     ]
     for (const [links, error] of linkProblems) expect(eventFromForm(form({ signUps: 'With a link', links })), String(error)).toMatchObject({ ok: false, error: expect.stringMatching(error) })
+    // A "Sign up:" line typed into Details would skip the checks above, so it's refused whichever kind of sign-up is picked.
+    const typedLine = 'Bring water.\nSign up (Drivers): https://forms.gle/drivers'
+    for (const signUps of SIGN_UP_KINDS) {
+      expect(eventFromForm(form({ signUps, links: [link('', 'https://forms.gle/abc123')], description: typedLine })), signUps).toMatchObject({ ok: false, error: expect.stringMatching(/not in Details/) })
+    }
   })
 
   it('fills the Change form back in from the event, with its sign-up links and names in order', () => {
@@ -348,6 +366,19 @@ describe('the event form', () => {
       if (!saved.ok) throw new Error(saved.error)
       const { location, description, signUps, ...rest } = saved.value
       expect(formFromEvent(event('e1', { ...rest, location: location || null, description: description || null, signUps: !!signUps, fromApp: true }))).toEqual(filled)
+    }
+    // Changed on the Google Calendar website, so its lines are HTML. The links become the rows and leave Details, so saving doesn't add them twice,
+    // and the empty lines the list leaves behind don't push the rest of Details out of sight.
+    for (const [description, details] of [
+      ['Bring your badge.<br>Sign up (Travel): <a href="https://forms.gle/travel">https://forms.gle/travel</a><br>Sign up (Hotel): <a href="https://forms.gle/hotel">https://forms.gle/hotel</a>', 'Bring your badge.'],
+      [bulletedList, 'Bring your badge.'],
+      [`${bulletedList}Meet at 6.`, 'Bring your badge.\n\nMeet at 6.'],
+    ]) {
+      const changing = formFromEvent(event('e2', { fromApp: true, description }))
+      expect(changing, description).toMatchObject({ description: details, signUps: 'With a link', links: signUpLinks(description) })
+      const resaved = eventFromForm(changing)
+      if (!resaved.ok) throw new Error(resaved.error)
+      expect(signUpLinks(resaved.value.description ?? null), description).toEqual(signUpLinks(description))
     }
   })
 })
