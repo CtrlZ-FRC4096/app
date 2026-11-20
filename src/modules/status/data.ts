@@ -7,7 +7,10 @@ import { isLive } from '../../core/supabase'
 import { TEAM_TIME_ZONE } from '../../core/calendar'
 import type { Notice } from '../../core/registry'
 import type { Role } from '../../core/roles'
-import { OUR_TEAM, likelyWinner, matchesWithPredictions, useSavedSchedule, type SavedSchedule } from '../scouting/data'
+import {
+  OUR_TEAM, STALE_MS, keepScheduleFresh, likelyWinner, loadEventTeams, loadRatings, matchesWithPredictions, rankOf, updatedAgo, useCurrentEvent, useRankings, useRatings,
+  useSavedEventTeams, useSavedSchedule, useScheduleStatus, type Match13Rating, type SavedSchedule, type ScheduleRow, type ScheduleStatus, type TbaRanking, type TbaTeam,
+} from '../scouting/data'
 import { EVENT_KEY } from '../scouting/season'
 
 // Pit checklist (#146): what to do to get the robot ready for each match.
@@ -429,12 +432,24 @@ export interface PitMatch {
 
 export const PRACTICE_MATCH: PitMatch = { key: PRACTICE_KEY, label: 'Practice / no match', time: null, alliance: null, prediction: null }
 
+/**
+ * Our matches still to play, from the event's matches in order, each with its
+ * place in that order. It's our matches after the last match with a score:
+ * one of ours still waiting for its score after a later match has one counts
+ * as played (its score is late, or under review). The checklist, the home
+ * tile and the pit display all use this, so they name the same next match.
+ */
+function ourMatchesLeft(rows: ScheduleRow[]): { lastScored: number; left: { row: ScheduleRow; place: number }[] } {
+  const lastScored = rows.findLastIndex((row) => row.score !== null)
+  const left = rows.flatMap((row, place) => (place > lastScored && row.ours ? [{ row, place }] : []))
+  return { lastScored, left }
+}
+
 /** Our matches still to play, in order, then the practice round, which is always there. */
 export function ourMatches(saved: SavedSchedule | null, team = OUR_TEAM): PitMatch[] {
   const rows = saved ? matchesWithPredictions(saved.matches, saved.predictions, team) : []
-  const upcoming = rows
-    .filter((row) => row.ours && !row.score)
-    .map((row) => ({
+  const upcoming = ourMatchesLeft(rows).left
+    .map(({ row }) => ({
       key: row.key,
       label: row.label,
       time: row.time,
@@ -470,4 +485,324 @@ export function pitSummary(items: PitItem[], checks: PitCheck[], match: PitMatch
 
 export function usePitSummary(): Notice {
   return pitSummary(usePitChecklist(), usePitChecks(), defaultMatch(useOurMatches()))
+}
+
+// ---------------------------------------------------------------------------
+// The pit display (#161), at #/status/display: a page left open on a TV or
+// laptop in the pit, showing our next match, how long until it's expected
+// to start, who we're with and against, and how we're doing.
+//
+// Everything comes from what the Scouting module saves on this device (the
+// schedule, rankings, Match 13 ratings and team names), so it still shows
+// with no connection, saying how old it is. The sums are here, as plain
+// functions with `now` passed in, so the tests can use a fixed time;
+// PitDisplay.tsx only shows what they give back. It never shows Match 13's
+// predictions (who's likely to win, or the predicted score).
+
+/** "Queue now" shows when our next match is this many matches away or fewer (1 is up next). */
+export const QUEUE_AT = 2
+
+/** How many of our matches after the next one "Coming up" lists. */
+export const COMING_UP = 3
+
+/** The "Updated" line stands out when the saved schedule is older than this, so nobody trusts an old time. */
+export const DISPLAY_STALE_MS = 10 * 60 * 1000
+
+/** How often the countdown ticks. It only does sums, so it never asks the network. */
+export const DISPLAY_TICK_MS = 30 * 1000
+
+/** One team in an alliance on the display. */
+export interface DisplayTeam {
+  number: number
+  /** Its name, like "Ctrl-Z", or null when the event's team list isn't saved on this device. */
+  name: string | null
+  /** "Rank 6 · 5-2-0", "Rank 6" before The Blue Alliance has records, or "Not ranked yet". */
+  standing: string
+  /** "48.6 xP", "45.2 EPA" or "not rated": see ratingText(). */
+  rating: string
+  /** True for our team. */
+  us: boolean
+}
+
+/** One of our matches still to play. */
+export interface DisplayMatch {
+  /** The Blue Alliance's match key, like 2026ilch_qm24. */
+  key: string
+  /** Like "Qual 24" or "Semifinal 3". */
+  label: string
+  alliance: 'Red' | 'Blue'
+  /** When The Blue Alliance expects it to start, in seconds since 1970, or null. */
+  time: number | null
+  /** The other teams on our alliance. */
+  partners: number[]
+}
+
+/** Our next match, with everything the big card shows. */
+export interface NextMatch extends DisplayMatch {
+  /** "18 min", "1 h 5 min", "Any minute now" or "Time not known yet": see countdownText(). */
+  countdown: string
+  /** True while counting down to a time; false when the countdown is words, which the page draws a little smaller. */
+  counting: boolean
+  /** How many matches until ours, counting from the last match with a score. 1 is up next. */
+  away: number
+  /** "Up next" or "3 matches away". */
+  awayText: string
+  /** True at QUEUE_AT matches away or fewer. */
+  queueNow: boolean
+  /** Our alliance, us first. */
+  ours: DisplayTeam[]
+  /** The other alliance. */
+  theirs: DisplayTeam[]
+}
+
+/** What the display is worked out from: what the Scouting module saves on this device. */
+export interface PitDisplayInput {
+  schedule: SavedSchedule | null
+  /** Whether the schedule is being fetched, and why the last try didn't work (useScheduleStatus()). */
+  status: ScheduleStatus
+  /** The event's rankings, best first. Empty before The Blue Alliance has them. */
+  rankings: TbaRanking[]
+  /** Every team's Match 13 rating. Empty before Match 13 has them. */
+  ratings: Match13Rating[]
+  /** The event's teams, for their names, or null when they aren't saved on this device. */
+  teams: TbaTeam[] | null
+}
+
+/** Everything the display shows. */
+export interface PitDisplayView {
+  /** Our next match, or null when there isn't one: then `noMatch` says why. */
+  next: NextMatch | null
+  /** What the big card says instead of a next match, like "Quals done", with a smaller line under it. */
+  noMatch: { text: string; note: string | null } | null
+  /** Our rank and record, like "Rank 6 of 42 · 5-2-0", or "Not ranked yet". */
+  standing: string
+  /** Our last result, like "Qual 18 · Won 84–71", or null before we've played. */
+  lastResult: string | null
+  /** Our matches after the next one, up to COMING_UP of them. */
+  comingUp: DisplayMatch[]
+  /** "Updated 2 minutes ago", or null when no schedule is saved. */
+  updated: string | null
+  /** True when the saved schedule is older than DISPLAY_STALE_MS. The page makes "Updated" stand out. */
+  stale: boolean
+}
+
+/**
+ * The time until a match is expected to start: "18 min" or "1 h 5 min",
+ * rounded up so it never says "0 min". "Any minute now" once the expected
+ * time has passed (our next match has no score yet, so it hasn't been
+ * played), and "Time not known yet" when there's no expected time.
+ */
+export function countdownText(time: number | null, now: Date): string {
+  if (time === null) return 'Time not known yet'
+  const minutes = Math.ceil((time * 1000 - now.getTime()) / 60_000)
+  if (minutes <= 0) return 'Any minute now'
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  return minutes % 60 === 0 ? `${hours} h` : `${hours} h ${minutes % 60} min`
+}
+
+/**
+ * When a match is expected to start: "10:42 AM" on the same day as `now`,
+ * "Sun 9:00 AM" on another day, or "Time not known yet". It's in this
+ * device's own time zone, like Scouting's Schedule page, which is the
+ * event's when the device is there. `timeZone` is for the tests.
+ */
+export function clockTime(time: number | null, now: Date, timeZone?: string): string {
+  if (time === null) return 'Time not known yet'
+  const at = new Date(time * 1000)
+  const format = (date: Date, options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-US', { timeZone, ...options }).format(date)
+  const sameDay = format(at, { dateStyle: 'short' }) === format(now, { dateStyle: 'short' })
+  return format(at, sameDay ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+}
+
+/** A team's rating: Match 13's xP, Statbotics' EPA when Match 13 sent no xP, or "not rated". */
+export function ratingText(rating: { xpEnd: number | null; epa: number | null } | undefined): string {
+  const xp = rating?.xpEnd
+  const epa = rating?.epa
+  if (typeof xp === 'number') return `${xp.toFixed(1)} xP`
+  if (typeof epa === 'number') return `${epa.toFixed(1)} EPA`
+  return 'not rated'
+}
+
+/** " · 5-2-0" (wins, losses, ties), or nothing before The Blue Alliance has a record. */
+function recordText(ranking: TbaRanking): string {
+  return ranking.record ? ` · ${ranking.record.wins}-${ranking.record.losses}-${ranking.record.ties}` : ''
+}
+
+/**
+ * Everything the pit display shows, from what's saved on this device, at
+ * the time `now`.
+ *
+ * Our next match is our first one after the last match with a score. One of
+ * ours still waiting for its score after a later match has one counts as
+ * played. "Matches away" counts from that last match with a score, so with
+ * Qual 21 scored, our Qual 24 is 3 matches away, and Qual 22 is up next.
+ */
+export function pitDisplay(input: PitDisplayInput, now: Date, team = OUR_TEAM): PitDisplayView {
+  const matches = input.schedule?.matches ?? []
+  // No predictions are passed in, so Match 13's can never reach the display.
+  const rows = matchesWithPredictions(matches, [], team)
+  const tba = new Map(matches.map((match) => [match.key, match]))
+  const sideOf = (row: ScheduleRow): 'Red' | 'Blue' => (row.red.includes(team) ? 'Red' : 'Blue')
+
+  const { lastScored, left } = ourMatchesLeft(rows)
+
+  const teamOf = (number: number): DisplayTeam => {
+    const ranking = rankOf(input.rankings, number)
+    return {
+      number,
+      name: input.teams?.find((t) => t.team_number === number)?.nickname || null,
+      standing: ranking ? `Rank ${ranking.rank}${recordText(ranking)}` : 'Not ranked yet',
+      rating: ratingText(input.ratings.find((r) => r.teamNumber === number)),
+      us: number === team,
+    }
+  }
+  const displayMatch = (row: ScheduleRow): DisplayMatch => {
+    const alliance = sideOf(row)
+    const partners = (alliance === 'Red' ? row.red : row.blue).filter((n) => n !== team)
+    return { key: row.key, label: row.label, alliance, time: row.time, partners }
+  }
+
+  let next: NextMatch | null = null
+  if (left.length > 0) {
+    const { row, place } = left[0]
+    const match = displayMatch(row)
+    const away = place - lastScored
+    next = {
+      ...match,
+      countdown: countdownText(row.time, now),
+      counting: row.time !== null && row.time * 1000 > now.getTime(),
+      away,
+      awayText: away === 1 ? 'Up next' : `${away} matches away`,
+      queueNow: away <= QUEUE_AT,
+      ours: [team, ...match.partners].map(teamOf),
+      theirs: (match.alliance === 'Red' ? row.blue : row.red).map(teamOf),
+    }
+  }
+
+  const ourRanking = rankOf(input.rankings, team)
+  const standing = ourRanking ? `Rank ${ourRanking.rank} of ${input.rankings.length}${recordText(ourRanking)}` : 'Not ranked yet'
+
+  // Our last match with a score, our score first.
+  const last = rows.filter((row) => row.ours && row.score).at(-1)
+  let lastResult: string | null = null
+  if (last?.score) {
+    const side = sideOf(last)
+    const [us, them] = side === 'Red' ? [last.score.red, last.score.blue] : [last.score.blue, last.score.red]
+    // The Blue Alliance's winner, when it gives one, covers playoff tiebreakers. Otherwise the higher score wins.
+    const winner = tba.get(last.key)?.winning_alliance
+    const outcome = winner ? (winner === side.toLowerCase() ? 'Won' : 'Lost') : us > them ? 'Won' : us < them ? 'Lost' : 'Tied'
+    lastResult = `${last.label} · ${outcome} ${us}–${them}`
+  }
+
+  let noMatch: PitDisplayView['noMatch'] = null
+  if (!next) {
+    if (!input.schedule) {
+      noMatch = input.status.problem && !input.status.loading
+        ? { text: 'No schedule on this device yet', note: `${input.status.problem} This page tries again every 2 minutes.` }
+        : { text: 'Getting the schedule…', note: null }
+    } else if (rows.length === 0) {
+      noMatch = { text: 'Schedule not out yet', note: 'This page checks The Blue Alliance every 2 minutes.' }
+    } else if (!rows.some((row) => row.ours)) {
+      noMatch = { text: `${team} isn't on the schedule`, note: 'Check that the right event is picked in Scouting.' }
+    } else if (rows.some((row) => row.ours && tba.get(row.key)?.comp_level !== 'qm')) {
+      // We've played in the playoffs: between rounds, or out.
+      noMatch = { text: 'No match scheduled for us yet', note: 'Playoff matches show here once The Blue Alliance has them.' }
+    } else {
+      noMatch = { text: 'Quals done', note: standing }
+    }
+  }
+
+  const saved = input.schedule
+  const stale = saved !== null && now.getTime() - Date.parse(saved.savedAt) > DISPLAY_STALE_MS
+  let updated: string | null = null
+  if (saved) {
+    updated = `Updated ${updatedAgo(saved.savedAt, now)}`
+    // Say why, when the last try to get the schedule says why. Otherwise it's most likely the connection.
+    if (stale) updated += `. Times may be out of date: ${input.status.problem ?? "check this device's connection."}`
+  }
+
+  return { next, noMatch, standing, lastResult, comingUp: left.slice(1, 1 + COMING_UP).map(({ row }) => displayMatch(row)), updated, stale }
+}
+
+/** For the display: "Ready", "3 of 14 checklist items left", or "No checklist items yet". */
+export function readyText(progress: MatchProgress): string {
+  if (progress.total === 0) return 'No checklist items yet'
+  if (progress.ready) return 'Ready'
+  return `${progress.left} of ${progress.total} checklist ${progress.total === 1 ? 'item' : 'items'} left`
+}
+
+/**
+ * The display, for the page, at the time `now`. It reads the copies saved
+ * on this device, so it never waits on the network. useRankings() also
+ * checks for new rankings every minute while the page is open
+ * (watchRankings() in Scouting's data.ts).
+ */
+export function usePitDisplay(now: Date): PitDisplayView {
+  const event = useCurrentEvent().key
+  const schedule = useSavedSchedule(event)
+  const status = useScheduleStatus()
+  const rankings = useRankings().saved?.rankings ?? []
+  const { ratings } = useRatings()
+  const teams = useSavedEventTeams(event)
+  return pitDisplay({ schedule, status, rankings, ratings, teams }, now)
+}
+
+/**
+ * Keep the display's data up to date while it's open: the schedule (now
+ * and every 2 minutes, with keepScheduleFresh()), Match 13's ratings (every
+ * 5 minutes: useRatings() alone only loads them when a page opens), and the
+ * teams' names (now, and when the device comes back online, in case it
+ * opened with none). Gives back a function that stops it all, for when the
+ * page closes.
+ */
+export function keepPitDisplayFresh(event: string): () => void {
+  const stopSchedule = keepScheduleFresh(event)
+  const loadNames = () => void loadEventTeams(event)
+  const ratingsTimer = setInterval(() => void loadRatings(), STALE_MS)
+  globalThis.addEventListener?.('online', loadNames)
+  loadNames()
+  return () => {
+    stopSchedule()
+    clearInterval(ratingsTimer)
+    globalThis.removeEventListener?.('online', loadNames)
+  }
+}
+
+/**
+ * Keep the screen from sleeping while the display is open, with the Screen
+ * Wake Lock API, where the browser has it. The browser lets go when the page
+ * is hidden, so it asks again when the page is back on screen. Where there's
+ * no wake lock, or the browser says no (battery saver, say), the page works
+ * the same and the screen may sleep. Gives back a function that lets go, for
+ * when the page closes.
+ */
+export function keepScreenAwake(): () => void {
+  const wakeLock = globalThis.navigator?.wakeLock
+  if (!wakeLock) return () => {}
+  let held: WakeLockSentinel | null = null
+  let asking = false
+  let stopped = false
+  const ask = () => {
+    if (stopped || asking || globalThis.document?.visibilityState !== 'visible' || (held && !held.released)) return
+    asking = true
+    wakeLock.request('screen').then(
+      (lock) => {
+        asking = false
+        // The page closed while the browser was answering.
+        if (stopped) void lock.release()
+        else held = lock
+      },
+      () => {
+        asking = false
+      },
+    )
+  }
+  globalThis.document?.addEventListener('visibilitychange', ask)
+  ask()
+  return () => {
+    stopped = true
+    globalThis.document?.removeEventListener('visibilitychange', ask)
+    if (held) void held.release()
+  }
 }

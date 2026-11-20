@@ -3,17 +3,21 @@
 // the database's job too: see supabase/tests/pit-checklist.test.ts.
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   MAX_ITEM_LENGTH, PRACTICE_KEY, PRACTICE_MATCH, addPitItem, assignPitItem, belongsToSubgroup, canCheck, checkedIds, checksTable, defaultMatch, itemsTable,
   matchProgress, movePitItem, movePitItemTo, myItems, ourMatches, pitSummary, positionBetween, progressByPerson, progressText,
   assignedPeople, canManagePit, clearPitChecklist, takenOffText, removePitItem, renamePitItem, reorderPitItem, setPitItemCompleted, setPitItemSubgroup, setSubgroupMembers, subgroupMembersStore, uncheckAllPitItems, uncheckedByPerson,
   usePitSummary, type PitCheck, type PitItem,
+  COMING_UP, DISPLAY_STALE_MS, QUEUE_AT, clockTime, countdownText, keepPitDisplayFresh, keepScreenAwake, pitDisplay, ratingText, readyText, type PitDisplayInput,
 } from './data'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import { ROLES, type Role } from '../../core/roles'
 import { membersTable } from '../../core/members'
-import { scheduleStore, type MatchPrediction, type TbaMatch } from '../scouting/data'
+import {
+  STALE_MS, eventTeamsStore, ratingsStore, resetRatings, savedEventTeams, savedSchedule, scheduleStore,
+  type Match13Rating, type MatchPrediction, type SavedSchedule, type TbaMatch, type TbaRanking, type TbaTeam,
+} from '../scouting/data'
 import { EVENT_KEY } from '../scouting/season'
 
 const QM3 = `${EVENT_KEY}_qm3`
@@ -334,6 +338,12 @@ describe('our matches', () => {
     expect(defaultMatch(ourMatches(null)).key).toBe(PRACTICE_KEY)
     expect(defaultMatch(ourMatches({ ...saved, matches: [tba(1, [4096, 1, 2], [3, 4, 5], 80)] })).key).toBe(PRACTICE_KEY)
   })
+
+  it('skips our match still waiting for its score once a later match has one, like the pit display', () => {
+    // Our Qual 3 is under review with no score, and Qual 4 has been scored.
+    const late = { ...saved, matches: [tba(3, [1, 2, 3], [4096, 5, 6]), tba(4, [1, 2, 3], [4, 5, 6], 70), tba(5, [4096, 1, 2], [3, 4, 5])] }
+    expect(defaultMatch(ourMatches(late)).label).toBe('Qual 5')
+  })
 })
 
 describe('the home page summary', () => {
@@ -370,5 +380,304 @@ describe('subgroup members (on this device)', () => {
     expect((await setSubgroupMembers('Electrical', [DEMO_PEOPLE.pat])).ok).toBe(true)
     expect(belongsToSubgroup(DEMO_PEOPLE.alex, 'Electrical')).toBe(false)
     expect(byText('Batteries charged and numbered').assignee_ids).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The pit display (#161). pitDisplay() is a plain function with `now` passed
+// in, so these tests use a fixed time and made-up schedules.
+
+describe('the pit display', () => {
+  // Saturday 14 March 2026, 10:00 AM in Chicago. Qual n is expected n × 8 minutes later.
+  const NOW = new Date('2026-03-14T15:00:00Z')
+  const T0 = NOW.getTime() / 1000
+  const MINUTE = 60
+
+  /** A match from The Blue Alliance: the red and blue teams, and the score once it's played. */
+  const qm = (n: number, red: number[], blue: number[], score?: [red: number, blue: number], more: Partial<TbaMatch> = {}): TbaMatch => ({
+    key: `2026test_qm${n}`, comp_level: 'qm', set_number: 1, match_number: n, winning_alliance: '', predicted_time: T0 + n * 8 * MINUTE,
+    alliances: { red: { score: score?.[0] ?? -1, team_keys: red.map((t) => `frc${t}`) }, blue: { score: score?.[1] ?? -1, team_keys: blue.map((t) => `frc${t}`) } },
+    ...more,
+  })
+  /** Semifinal `set`, after the quals. */
+  const sf = (set: number, red: number[], blue: number[], score?: [red: number, blue: number], winner: TbaMatch['winning_alliance'] = '') =>
+    qm(100 + set, red, blue, score, { key: `2026test_sf${set}m1`, comp_level: 'sf', set_number: set, match_number: 1, winning_alliance: winner })
+  const saved = (matches: TbaMatch[], savedAt = NOW.toISOString()): SavedSchedule => ({ event: '2026test', matches, predictions: [], savedAt })
+  const input = (fields: Partial<PitDisplayInput>): PitDisplayInput => ({ schedule: null, status: { loading: false, problem: null }, rankings: [], ratings: [], teams: null, ...fields })
+  const ranking = (rank: number, team: number, record: TbaRanking['record'] = { wins: 5, losses: 2, ties: 0 }): TbaRanking => ({ rank, team_key: `frc${team}`, record, matches_played: 7, extra_stats: [] })
+  const rating = (team: number, xpEnd: number): Match13Rating => ({ teamNumber: team, xpStart: xpEnd, xpEnd, xAuto: null, xTele: null, xEnd: null, epa: null, opr: null, dpr: null })
+  const tbaTeam = (team: number, nickname: string): TbaTeam => ({ key: `frc${team}`, team_number: team, nickname, city: null, state_prov: null, country: null })
+  // Intl puts a narrow space before AM and PM; the tests compare plain ones.
+  const plain = (text: string) => text.replace(/[  ]/g, ' ')
+
+  // Quals 1 and 2 are played. We're in Qual 1 (red, won 84–71), Qual 3 (blue) and Qual 5 (red).
+  const SCHEDULE = [
+    qm(1, [4096, 1, 2], [3, 4, 5], [84, 71]),
+    qm(2, [1, 2, 3], [4, 5, 6], [60, 50]),
+    qm(3, [1, 2, 3], [4096, 5, 6]),
+    qm(4, [1, 2, 3], [4, 5, 6]),
+    qm(5, [4096, 4, 6], [1, 2, 3]),
+  ]
+  /** Ten quals, with ours last (Qual 10), and every match up to Qual `lastScored` played. */
+  const ourQual10 = (lastScored: number) =>
+    saved(Array.from({ length: 10 }, (_, i) => qm(i + 1, i === 9 ? [4096, 1, 2] : [1, 2, 3], [4, 5, 6], i + 1 <= lastScored ? [50, 40] : undefined)))
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('finds our next match: our first one after the last match with a score, with our alliance and partners', () => {
+    expect(pitDisplay(input({ schedule: saved(SCHEDULE) }), NOW).next).toMatchObject({ key: '2026test_qm3', label: 'Qual 3', alliance: 'Blue', partners: [5, 6] })
+    // The Blue Alliance's order doesn't matter.
+    expect(pitDisplay(input({ schedule: saved(SCHEDULE.toReversed()) }), NOW).next?.label).toBe('Qual 3')
+    // Qual 3 is still waiting for its score, but Qual 4 has one: Qual 3 counts as played.
+    const waiting = SCHEDULE.with(3, qm(4, [1, 2, 3], [4, 5, 6], [70, 60]))
+    expect(pitDisplay(input({ schedule: saved(waiting) }), NOW).next).toMatchObject({ label: 'Qual 5', alliance: 'Red', partners: [4, 6] })
+    // Once the quals are played, a playoff match of ours is next.
+    const playoffs = [qm(1, [4096, 1, 2], [3, 4, 5], [84, 71]), sf(1, [3, 4, 5], [4096, 1, 2])]
+    expect(pitDisplay(input({ schedule: saved(playoffs) }), NOW).next).toMatchObject({ label: 'Semifinal 1', alliance: 'Blue' })
+  })
+
+  it('counts down to the expected start in minutes, rounded up, then says "Any minute now", or "Time not known yet" with no time', () => {
+    const cases: [secondsFromNow: number | null, text: string][] = [
+      [18 * MINUTE, '18 min'],
+      [17 * MINUTE + 10, '18 min'],
+      [30, '1 min'],
+      [0, 'Any minute now'],
+      [-5 * MINUTE, 'Any minute now'],
+      [60 * MINUTE, '1 h'],
+      [65 * MINUTE, '1 h 5 min'],
+      [null, 'Time not known yet'],
+    ]
+    for (const [from, text] of cases) expect(countdownText(from === null ? null : T0 + from, NOW), `${from} seconds`).toBe(text)
+    // On the display, for our next match: Qual 3, expected 24 minutes from now.
+    const next = (qual3: TbaMatch) => pitDisplay(input({ schedule: saved(SCHEDULE.with(2, qual3)) }), NOW).next
+    expect(next(SCHEDULE[2])).toMatchObject({ countdown: '24 min', counting: true })
+    expect(next(qm(3, [1, 2, 3], [4096, 5, 6], undefined, { predicted_time: T0 - MINUTE }))).toMatchObject({ countdown: 'Any minute now', counting: false })
+    expect(next(qm(3, [1, 2, 3], [4096, 5, 6], undefined, { predicted_time: null }))).toMatchObject({ countdown: 'Time not known yet', counting: false })
+  })
+
+  it('says when a match is expected, with the day when it is not today', () => {
+    const at = (iso: string) => Date.parse(iso) / 1000
+    const cases: [time: number | null, text: string][] = [
+      [T0 + 42 * MINUTE, '10:42 AM'],
+      // Still Saturday in Chicago, though it's Sunday in UTC.
+      [at('2026-03-15T04:00:00Z'), '11:00 PM'],
+      [at('2026-03-15T14:00:00Z'), 'Sun 9:00 AM'],
+      [null, 'Time not known yet'],
+    ]
+    for (const [time, text] of cases) expect(plain(clockTime(time, NOW, 'America/Chicago')), text).toBe(text)
+  })
+
+  it('counts how many matches away ours is, from the last match with a score', () => {
+    const cases: [lastScored: number, away: number, awayText: string][] = [[9, 1, 'Up next'], [7, 3, '3 matches away'], [0, 10, '10 matches away']]
+    for (const [lastScored, away, awayText] of cases) {
+      expect(pitDisplay(input({ schedule: ourQual10(lastScored) }), NOW).next, `Qual ${lastScored} scored`).toMatchObject({ away, awayText })
+    }
+  })
+
+  it('says Queue now at QUEUE_AT matches away or fewer', () => {
+    const cases: [away: number, queueNow: boolean][] = [[QUEUE_AT + 1, false], [QUEUE_AT, true], [1, true]]
+    for (const [away, queueNow] of cases) {
+      expect(pitDisplay(input({ schedule: ourQual10(10 - away) }), NOW).next, `${away} away`).toMatchObject({ away, queueNow })
+    }
+  })
+
+  it('says when there is no schedule yet, or we are not on it', () => {
+    const show = (fields: Partial<PitDisplayInput>) => pitDisplay(input(fields), NOW)
+    expect(show({ schedule: saved([]) })).toMatchObject({ next: null, comingUp: [], noMatch: { text: 'Schedule not out yet' } })
+    // Nothing saved on this device: getting it, or why it couldn't.
+    expect(show({}).noMatch).toEqual({ text: 'Getting the schedule…', note: null })
+    expect(show({ status: { loading: true, problem: 'No connection.' } }).noMatch?.text).toBe('Getting the schedule…')
+    expect(show({ status: { loading: false, problem: 'No connection.' } }).noMatch).toEqual({ text: 'No schedule on this device yet', note: expect.stringMatching(/No connection/) })
+    expect(show({ schedule: saved([qm(1, [1, 2, 3], [4, 5, 6])]) }).noMatch?.text).toBe("4096 isn't on the schedule")
+  })
+
+  it('says "Quals done" after our last qual, with our rank, and shows playoff matches once The Blue Alliance has them', () => {
+    const rankings = Array.from({ length: 42 }, (_, i) => ranking(i + 1, i === 5 ? 4096 : 9000 + i))
+    const show = (matches: TbaMatch[]) => pitDisplay(input({ schedule: saved(matches), rankings }), NOW)
+    const quals = [qm(1, [4096, 1, 2], [3, 4, 5], [84, 71]), qm(2, [1, 2, 3], [4096, 5, 6], [60, 50])]
+    expect(show(quals)).toMatchObject({ next: null, noMatch: { text: 'Quals done', note: 'Rank 6 of 42 · 5-2-0' } })
+    expect(show([...quals, sf(1, [7, 8, 9], [10, 11, 12])]).noMatch?.text).toBe('Quals done')
+    // A playoff match of ours is next, and once it's played we wait for the next one.
+    expect(show([...quals, sf(1, [4096, 1, 2], [3, 4, 5])])).toMatchObject({ next: { label: 'Semifinal 1' }, noMatch: null })
+    expect(show([...quals, sf(1, [4096, 1, 2], [3, 4, 5], [90, 80], 'red')]).noMatch?.text).toBe('No match scheduled for us yet')
+  })
+
+  it('shows each team with its name, rank, record and rating, or "Not ranked yet" and "not rated"', () => {
+    const schedule = saved([qm(1, [1, 4096, 2], [3, 4, 5])])
+    const view = pitDisplay(input({
+      schedule,
+      rankings: [ranking(1, 4096), ranking(2, 1, null), ranking(3, 3)],
+      ratings: [rating(4096, 48.6), rating(1, 41.7)],
+      teams: [tbaTeam(4096, 'Ctrl-Z'), tbaTeam(1, 'Example Robotics')],
+    }), NOW)
+    expect(view.next?.ours).toEqual([
+      { number: 4096, name: 'Ctrl-Z', standing: 'Rank 1 · 5-2-0', rating: '48.6 xP', us: true },
+      { number: 1, name: 'Example Robotics', standing: 'Rank 2', rating: '41.7 xP', us: false },
+      { number: 2, name: null, standing: 'Not ranked yet', rating: 'not rated', us: false },
+    ])
+    expect(view.next?.theirs.map((team) => [team.number, team.standing, team.rating])).toEqual([
+      [3, 'Rank 3 · 5-2-0', 'not rated'], [4, 'Not ranked yet', 'not rated'], [5, 'Not ranked yet', 'not rated'],
+    ])
+    // With no team list saved on this device, no names.
+    expect(pitDisplay(input({ schedule }), NOW).next?.ours.map((team) => team.name)).toEqual([null, null, null])
+    // Statbotics' EPA when Match 13 sent no xP.
+    expect(ratingText({ xpEnd: null, epa: 45.2 })).toBe('45.2 EPA')
+  })
+
+  it('shows our rank and record, and our last result with our score first', () => {
+    const others = Array.from({ length: 41 }, (_, i) => ranking(i + 1, 9000 + i))
+    const standing = (rankings: TbaRanking[]) => pitDisplay(input({ rankings }), NOW).standing
+    expect(standing([...others, ranking(6, 4096)])).toBe('Rank 6 of 42 · 5-2-0')
+    expect(standing([...others, ranking(6, 4096, null)])).toBe('Rank 6 of 42')
+    expect(standing(others)).toBe('Not ranked yet')
+
+    const cases: [matches: TbaMatch[], lastResult: string | null][] = [
+      [[qm(1, [4096, 1, 2], [3, 4, 5], [84, 71])], 'Qual 1 · Won 84–71'],
+      [[qm(1, [1, 2, 3], [4096, 5, 6], [90, 66])], 'Qual 1 · Lost 66–90'],
+      [[qm(1, [4096, 1, 2], [3, 4, 5], [70, 70])], 'Qual 1 · Tied 70–70'],
+      // The latest of ours with a score.
+      [SCHEDULE, 'Qual 1 · Won 84–71'],
+      [[...SCHEDULE.slice(0, 2), qm(3, [1, 2, 3], [4096, 5, 6], [90, 66])], 'Qual 3 · Lost 66–90'],
+      // A playoff tie broken by a tiebreaker: The Blue Alliance says who won.
+      [[sf(1, [3, 4, 5], [4096, 1, 2], [70, 70], 'blue')], 'Semifinal 1 · Won 70–70'],
+      [[qm(1, [4096, 1, 2], [3, 4, 5])], null],
+    ]
+    for (const [matches, lastResult] of cases) expect(pitDisplay(input({ schedule: saved(matches) }), NOW).lastResult, String(lastResult)).toBe(lastResult)
+  })
+
+  it('lists our next few matches after this one, with when, our alliance and partners', () => {
+    const matches = [2, 4, 6, 8, 10].map((n, i) => (i % 2 === 0 ? qm(n, [4096, 1, 2], [3, 4, 5]) : qm(n, [3, 4, 5], [6, 4096, 7])))
+    const view = pitDisplay(input({ schedule: saved(matches) }), NOW)
+    expect(view.next?.label).toBe('Qual 2')
+    expect(view.comingUp[0]).toEqual({ key: '2026test_qm4', label: 'Qual 4', alliance: 'Blue', time: T0 + 4 * 8 * MINUTE, partners: [6, 7] })
+    expect(view.comingUp.map((match) => match.label)).toEqual(['Qual 4', 'Qual 6', 'Qual 8', 'Qual 10'].slice(0, COMING_UP))
+  })
+
+  it('says how old the saved schedule is, and makes it stand out once it is too old to trust', () => {
+    const savedAgo = (ms: number) => pitDisplay(input({ schedule: saved(SCHEDULE, new Date(NOW.getTime() - ms).toISOString()) }), NOW)
+    expect(savedAgo(0)).toMatchObject({ updated: 'Updated just now', stale: false })
+    expect(savedAgo(DISPLAY_STALE_MS)).toMatchObject({ updated: expect.stringMatching(/^Updated \d+ minutes ago$/), stale: false })
+    expect(savedAgo(DISPLAY_STALE_MS + 60_000)).toMatchObject({ updated: expect.stringMatching(/^Updated \d+ minutes ago\. Times may be out of date: check this device's connection/), stale: true })
+    // When the last try says why, it says that instead of blaming the connection.
+    const failing = input({ schedule: saved(SCHEDULE, new Date(NOW.getTime() - DISPLAY_STALE_MS - 60_000).toISOString()), status: { loading: false, problem: 'The Blue Alliance is down.' } })
+    expect(pitDisplay(failing, NOW).updated).toMatch(/Times may be out of date: The Blue Alliance is down/)
+    expect(pitDisplay(input({}), NOW)).toMatchObject({ updated: null, stale: false })
+  })
+
+  it('says Ready, or how many checklist items are left, for a match', () => {
+    const items = [item('1', ['a']), item('2', []), item('3', []), item('4', [])]
+    const cases: [items: PitItem[], checks: PitCheck[], text: string][] = [
+      [items, ['1', '2', '3', '4'].map((id) => check(id)), 'Ready'],
+      [items, [check('1')], '3 of 4 checklist items left'],
+      [[item('1', [])], [], '1 of 1 checklist item left'],
+      [[], [], 'No checklist items yet'],
+    ]
+    for (const [list, checks, text] of cases) expect(readyText(matchProgress(list, checks, 'm1'))).toBe(text)
+  })
+
+  it('keeps the schedule, Match 13 ratings and team names up to date while open, until it closes', async () => {
+    vi.useFakeTimers({ now: NOW })
+    // A stand-in for the browser's window, which the tests don't have.
+    const page = new EventTarget()
+    vi.stubGlobal('addEventListener', page.addEventListener.bind(page))
+    vi.stubGlobal('removeEventListener', page.removeEventListener.bind(page))
+    resetRatings()
+    eventTeamsStore.reset()
+    const loaded = () => ({ schedule: savedSchedule(EVENT_KEY)?.savedAt, ratings: ratingsStore.get().loadedAt, names: savedEventTeams(EVENT_KEY)?.savedAt })
+
+    const stop = keepPitDisplayFresh(EVENT_KEY)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(loaded()).toEqual({ schedule: '2026-03-14T15:00:00.000Z', ratings: null, names: '2026-03-14T15:00:00.000Z' })
+
+    // Match 13's ratings every 5 minutes (and the schedule every 2).
+    await vi.advanceTimersByTimeAsync(STALE_MS)
+    expect(loaded()).toEqual({ schedule: '2026-03-14T15:04:00.000Z', ratings: '2026-03-14T15:05:00.000Z', names: '2026-03-14T15:00:00.000Z' })
+
+    // The team names again when the device is back online.
+    page.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(loaded().names).toBe('2026-03-14T15:05:00.000Z')
+
+    stop()
+    const before = loaded()
+    await vi.advanceTimersByTimeAsync(2 * STALE_MS)
+    page.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(loaded()).toEqual(before)
+    resetRatings()
+    eventTeamsStore.reset()
+  })
+
+  /** A stand-in for the browser's Screen Wake Lock API and document, which the tests don't have. */
+  function fakeWakeLock(refuse = false) {
+    interface FakeLock { type: string; released: boolean; release: () => Promise<void> }
+    const locks: FakeLock[] = []
+    const request = vi.fn(async (type: string) => {
+      if (refuse) throw new DOMException('Battery saver is on.', 'NotAllowedError')
+      const lock: FakeLock = { type, released: false, release: async () => { lock.released = true } }
+      locks.push(lock)
+      return lock
+    })
+    const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' })
+    vi.stubGlobal('navigator', { wakeLock: { request } })
+    vi.stubGlobal('document', doc)
+    const show = (state: 'visible' | 'hidden') => {
+      doc.visibilityState = state
+      doc.dispatchEvent(new Event('visibilitychange'))
+    }
+    return { request, locks, show }
+  }
+  /** Let the browser's answers arrive. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  it('keeps the screen on while open, asks again when back on screen, and lets go when it closes', async () => {
+    const { request, locks, show } = fakeWakeLock()
+    const stop = keepScreenAwake()
+    await settle()
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(request).toHaveBeenCalledWith('screen')
+
+    // Hidden, the browser lets go, and it isn't asked for. Back on screen, it's asked for again.
+    locks[0].released = true
+    show('hidden')
+    await settle()
+    expect(request).toHaveBeenCalledTimes(1)
+    show('visible')
+    await settle()
+    expect(request).toHaveBeenCalledTimes(2)
+    // While it's held, there's no need to ask.
+    show('visible')
+    await settle()
+    expect(request).toHaveBeenCalledTimes(2)
+
+    // Closing the page lets go, and it stops asking.
+    stop()
+    expect(locks[1].released).toBe(true)
+    show('visible')
+    await settle()
+    expect(request).toHaveBeenCalledTimes(2)
+
+    // Closed before the browser answered (React does this once in development): it lets go when the answer comes.
+    keepScreenAwake()()
+    await settle()
+    expect(locks[2].released).toBe(true)
+  })
+
+  it('carries on where the browser has no wake lock, or says no', async () => {
+    vi.stubGlobal('navigator', {})
+    expect(() => keepScreenAwake()()).not.toThrow()
+
+    const { request, show } = fakeWakeLock(true)
+    const stop = keepScreenAwake()
+    await settle()
+    expect(request).toHaveBeenCalledTimes(1)
+    // It tries again next time the page is back on screen.
+    show('visible')
+    await settle()
+    expect(request).toHaveBeenCalledTimes(2)
+    stop()
   })
 })
