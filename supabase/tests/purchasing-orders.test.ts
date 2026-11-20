@@ -5,17 +5,21 @@
 // database fills in Ordered by with whoever places an order.
 // Prices are for everyone to see, and anyone can change one until it's ordered.
 // Once an item is ordered, students can't change anything about it.
+// Student leaders can mark an order that's on its way as Received, then
+// In Shop, and nothing else.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, setUpTestDatabase } from './database'
 
 const db = setUpTestDatabase()
 let student: string
 let buyer: string
+let leader: string
 let mentor: string
 
 beforeEach(async () => {
   student = await db.member('Riley Park')
   buyer = await db.member('Casey Lee')
+  leader = await db.member('Sam Rivera', 'leader')
   mentor = await db.member('Pat Mentor', 'mentor')
   await db.as(mentor, 'insert into public.purchasing_buyers (member_id) values ($1)', [buyer])
 })
@@ -119,6 +123,43 @@ describe('placing orders', () => {
     await db.as(mentor, 'insert into public.purchasing_buyers (member_id) values ($1)', [buyer])
     await db.switchOff(buyer)
     expect(await setStatus(buyer, item.id, 'placed')).toEqual([])
+  })
+})
+
+describe('student leaders receiving orders', () => {
+  it('lets a student leader mark an order that is on its way as Received', async () => {
+    for (const from of ['placed', 'out_of_stock', 'backordered']) {
+      const item = await ask(student)
+      await setStatus(buyer, item.id, from)
+      expect((await setStatus(leader, item.id, 'received'))[0].status, from).toBe('received')
+    }
+  })
+
+  it('lets a student leader put a received order in the shop, but not a student', async () => {
+    const item = await ask(student)
+    await setStatus(buyer, item.id, 'received')
+    await expect(setStatus(student, item.id, 'in_shop')).rejects.toThrow(PERMISSION_DENIED)
+    expect((await setStatus(leader, item.id, 'in_shop'))[0].status).toBe('in_shop')
+  })
+
+  it("doesn't let a student leader do anything else with an order", async () => {
+    const asked = await ask(student)
+    await expect(setStatus(leader, asked.id, 'placed'), 'place an order').rejects.toThrow(PERMISSION_DENIED)
+    await expect(setStatus(leader, asked.id, 'received'), 'receive something never ordered').rejects.toThrow(PERMISSION_DENIED)
+    await setStatus(buyer, asked.id, 'placed')
+    for (const status of ['in_shop', 'cancelled', 'backordered', 'order']) { // in_shop: can't skip Received
+      await expect(setStatus(leader, asked.id, status), status).rejects.toThrow(PERMISSION_DENIED)
+    }
+    for (const change of ['quantity = 99', 'price = 1', "tracking = 'EXAMPLE-1'", "notes = 'Changed'"]) {
+      await expect(
+        db.as(leader, `update public.purchase_items set status = 'received', ${change} where id = $1`, [asked.id]),
+        change,
+      ).rejects.toThrow(PERMISSION_DENIED)
+    }
+    await setStatus(leader, asked.id, 'received')
+    await expect(setStatus(leader, asked.id, 'placed'), 'undo Received').rejects.toThrow(PERMISSION_DENIED)
+    await setStatus(leader, asked.id, 'in_shop')
+    await expect(setStatus(leader, asked.id, 'received'), 'undo In Shop').rejects.toThrow(PERMISSION_DENIED)
   })
 })
 

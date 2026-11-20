@@ -26,6 +26,13 @@ import {
   orderedText,
   pickStatus,
   isLate,
+  isOnItsWay,
+  matchParts,
+  planFor,
+  receiveItem,
+  shelveItem,
+  useCanReceive,
+  type InventoryPlan,
   itemToForm,
   priceText,
   receiptCountText,
@@ -310,6 +317,17 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
   // it: everyone else sees it as text.
   const locked = !!item && !canOrder && !isAsking(item.status)
   const canDelete = !!item && (canOrder || isAsking(item.status))
+  // Student leaders can't change an order, but they can say it has
+  // arrived, then that it's put away in the shop.
+  const leaderSteps = useCanReceive() && locked
+  const canReceive = leaderSteps && isOnItsWay(item)
+  const canShelve = leaderSteps && item.status === 'received'
+  // The Add to Inventory tick, when an item moves to In Shop. Until someone
+  // changes it, it follows Inventory's parts as they load.
+  const inventoryParts = useInventoryItems()
+  const [plan, setPlan] = useState<InventoryPlan | null>(null)
+  const shownPlan = plan ?? (item ? planFor(item, inventoryParts) : null)
+  const shelving = !!item && (canShelve || (!locked && form.status === 'in_shop' && item.status !== 'in_shop'))
   const price = formPriceText(form)
   const buyers = useBuyers()
   const people = members.filter((m) => m.active || m.id === form.shipped_to)
@@ -319,7 +337,7 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
   async function save(event: FormEvent) {
     event.preventDefault()
     setSaving(true)
-    const result = item ? await changeItem(item, form) : await addItem(form, props.bomPartId ?? null)
+    const result = item ? await changeItem(item, form, shelving ? shownPlan : null) : await addItem(form, props.bomPartId ?? null)
     setSaving(false)
     if (!result.ok) {
       toast(result.error)
@@ -327,6 +345,24 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
     }
     toast(item ? 'Saved.' : 'Added to the list.')
     props.onDone()
+  }
+
+  async function receive() {
+    if (!item) return
+    setSaving(true)
+    const result = await receiveItem(item)
+    setSaving(false)
+    toast(result.ok ? `Marked ${item.name} as received.` : result.error)
+    if (result.ok) props.onDone()
+  }
+
+  async function shelve() {
+    if (!item || !shownPlan) return
+    setSaving(true)
+    const result = await shelveItem(item, shownPlan)
+    setSaving(false)
+    toast(result.ok ? `${item.name} is in the shop.${shownPlan.add ? ' Added to Inventory.' : ''}` : result.error)
+    if (result.ok) props.onDone()
   }
 
   async function remove() {
@@ -378,7 +414,13 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
         <div className="field" style={FIELD}>
           Status
           <span><Pill tone={statusOf(item.status).tone}>{statusOf(item.status).label}</Pill></span>
-          <span className="note">Only mentors and purchasers change anything about an order once it's placed.</span>
+          <span className="note">
+            {canReceive
+              ? "Has it arrived? Press Mark as received. Only mentors and purchasers change anything else about an order."
+              : canShelve
+                ? "Put away in the shop? Press Put in shop. Only mentors and purchasers change anything else about an order."
+                : "Only mentors and purchasers change anything about an order once it's placed."}
+          </span>
         </div>
       ) : (
         <label className="field" style={FIELD} htmlFor={id('status')}>
@@ -411,10 +453,13 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
         </label>
       )}
       {item && <OrderDetails item={item} form={form} canOrder={canOrder} set={set} id={id} people={people} orderers={orderers} />}
+      {shelving && item && shownPlan && <ToInventory item={item} plan={shownPlan} set={(changes) => setPlan({ ...shownPlan, ...changes })} id={id} />}
       {/* Re-key when the item or permission changes, clearing any local file waiting for review. */}
       {item && <Receipts key={`${item.id}-${canOrder}-${receiptAddingShown(form.status)}`} item={item} showAdd={receiptAddingShown(form.status)} />}
       <div className="toolbar">
         {!locked && <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : item ? 'Save' : 'Add to the list'}</button>}
+        {canShelve && <button type="button" className="btn btn-primary" disabled={saving} onClick={() => void shelve()}>{saving ? 'Saving…' : 'Put in shop'}</button>}
+        {canReceive && <button type="button" className="btn btn-primary" disabled={saving} onClick={() => void receive()}>{saving ? 'Saving…' : 'Mark as received'}</button>}
         <button type="button" className="btn" onClick={props.onDone}>{locked ? 'Close' : 'Cancel'}</button>
         {canDelete && (
           <button type="button" className="btn" style={{ marginLeft: 'auto' }} onClick={() => void remove()}>
@@ -423,6 +468,78 @@ function ItemForm(props: { item: PurchaseItem | null; start?: NewItem; bomPartId
         )}
       </div>
     </form>
+  )
+}
+
+/**
+ * The Add to Inventory tick, when an item moves to In Shop: which part it
+ * is (best matches first), how many single parts go on the shelf, and for a
+ * new part, what Inventory lists it as and where it lives.
+ */
+function ToInventory(props: { item: PurchaseItem; plan: InventoryPlan; set: (changes: Partial<InventoryPlan>) => void; id: (field: string) => string }) {
+  const { item, plan, set, id } = props
+  const parts = useInventoryItems()
+  const matches = matchParts(item, parts)
+  const others = parts.filter((p) => !matches.some((m) => m.part.id === p.id))
+  const part = parts.find((p) => p.id === plan.partId)
+  const text = (field: 'name' | 'vendor' | 'vendor_part_number' | 'location', label: string, placeholder = '') => (
+    <label className="field" style={FIELD} htmlFor={id(`inv-${field}`)}>
+      {label}
+      <input id={id(`inv-${field}`)} className="input" style={BOX} value={plan[field]} placeholder={placeholder} onChange={(e) => set({ [field]: e.target.value })} />
+    </label>
+  )
+
+  return (
+    <div style={{ display: 'grid', gap: 14, minWidth: 0, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
+      <label className="check">
+        <input type="checkbox" checked={plan.add} onChange={(e) => set({ add: e.target.checked })} /> Add to Inventory
+      </label>
+      {!plan.add ? (
+        <span className="note">Leave it unticked for one-off parts that don't go on a shelf.</span>
+      ) : (
+        <>
+          <label className="field" style={FIELD} htmlFor={id('inv-part')}>
+            Which part is it?
+            <select id={id('inv-part')} className="input" style={BOX} value={plan.partId} onChange={(e) => set({ partId: e.target.value })}>
+              {matches.length > 0 && (
+                <optgroup label="Looks like">
+                  {matches.map((m) => <option key={m.part.id} value={m.part.id}>{m.part.name}, {m.part.location} ({m.reason.toLowerCase()})</option>)}
+                </optgroup>
+              )}
+              <option value="">A new part</option>
+              {others.length > 0 && (
+                <optgroup label="Other parts">
+                  {others.map((p) => <option key={p.id} value={p.id}>{p.name}, {p.location}</option>)}
+                </optgroup>
+              )}
+            </select>
+            {matches.length === 0 && (
+              <span className="note">
+                {plan.partId
+                  ? "It didn't match this part by part number, link or name, so check it's the right one."
+                  : 'Nothing in Inventory matches its part number, link or name.'}
+              </span>
+            )}
+          </label>
+          <div className="field">
+            <span>How many single parts go on the shelf</span>
+            <Stepper id={id('inv-quantity')} label="How many single parts go on the shelf" min={1} value={plan.quantity} onChange={(quantity) => set({ quantity })} />
+            <span className="note">
+              {item.quantity} needed. If each one was a pack, count what's inside, like 100 for a pack of 100.
+              {part && ` ${part.name} goes from ${part.quantity} to ${part.quantity + plan.quantity}.`}
+            </span>
+          </div>
+          {!plan.partId && (
+            <>
+              {text('name', 'Name in Inventory')}
+              {text('vendor', 'Vendor', 'Like REV or AndyMark')}
+              {text('vendor_part_number', 'Part number', 'Like REV-11-1850')}
+              {text('location', 'Where it lives', 'Like "Bin E2"')}
+            </>
+          )}
+        </>
+      )}
+    </div>
   )
 }
 
