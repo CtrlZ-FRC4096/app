@@ -308,16 +308,23 @@ function EventFormFields(props: {
 }) {
   const [form, setForm] = useState(props.initial)
   const [saving, setSaving] = useState(false)
+  // Why the last Save didn't work. The toast goes after a few seconds, too
+  // soon to read a long message about Google Calendar's setup, so the form
+  // also keeps it on screen until the next Save, to fix or copy into an
+  // issue (#158).
+  const [problem, setProblem] = useState<string | null>(null)
   const set = (changes: Partial<EventForm>) => setForm({ ...form, ...changes })
   const id = (name: string) => `${props.idPrefix}-${name}`
 
   async function save(event: FormEvent) {
     event.preventDefault()
     setSaving(true)
+    setProblem(null)
     const result = await props.onSave(form)
     setSaving(false)
     toast(result.ok ? props.savedText : result.error)
     if (result.ok) props.onDone()
+    else setProblem(result.error)
   }
 
   return (
@@ -379,6 +386,11 @@ function EventFormFields(props: {
       {form.signUps === 'In the app' && <span className="note">People tap Sign up on the event, and everyone can see who's going.</span>}
       {form.signUps === 'With a link' && (
         <SignUpLinkRows links={form.links} id={id} onChange={(links) => set({ links })} />
+      )}
+      {problem && (
+        <Callout title="Couldn't save">
+          <span style={{ overflowWrap: 'anywhere' }}>{problem}</span>
+        </Callout>
       )}
       <div className="toolbar">
         <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : props.saveLabel}</button>
