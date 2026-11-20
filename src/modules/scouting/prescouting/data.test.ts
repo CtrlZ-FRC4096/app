@@ -8,6 +8,7 @@ import {
   PRESCOUT_QUESTIONS, prescoutAverages, prescoutMatchesTable, savePrescoutMatch, seasonMatches, prescoutFor, prescoutHref, type PrescoutMatch, type PrescoutNotes,
   MAX_PRESCOUT_ANSWER, NO_ANSWERS, NO_FACTS, checkFacts, prescoutFacts, cleanEventKey, firstLine, hasAnswers, isEventKey, loadPrescoutTeams, prescoutEventStore, prescoutList, prescoutOverview, prescoutViewStore, searchPrescout, setPrescoutView, starCount,
   prescoutTable, savePrescout, setPrescoutEvent, setTier, canRemoveStar, starTeam, starredFirst, starsFor, starsTable, unstarTeam, visibleStars,
+  bestValue, clearCompare, compactSummary, compareChoice, compareHref, compareTeams, parseCompare, seasonLooks, tickCompare, toggleCompare,
   type PrescoutStar, type Tier,
 } from './data'
 import { DEMO_PEOPLE, setDemoRole } from '../../../core/demo'
@@ -375,13 +376,31 @@ describe('the prescouting overview', () => {
   })
 })
 
-describe('the Cards / Table choice', () => {
+describe('the Cards / Compact / Table choice', () => {
   afterEach(() => prescoutViewStore.reset())
 
-  it('starts as Cards, and remembers Table once chosen', () => {
+  it('starts as Cards, and remembers Compact or Table once chosen', () => {
     expect(prescoutViewStore.get()).toBe('Cards')
+    setPrescoutView('Compact')
+    expect(prescoutViewStore.get()).toBe('Compact')
     setPrescoutView('Table')
     expect(prescoutViewStore.get()).toBe('Table')
+  })
+
+  it("gives a Compact row's second line: the overall note, else the key task, else another answer, else the quick answers (#233)", () => {
+    const notes = (more: Partial<PrescoutNotes>): PrescoutNotes => ({
+      id: 'n', event_key: EVENT_KEY, team_number: 9991, ...NO_ANSWERS, ...NO_FACTS, tier: null, created_at: '2026-11-05T19:00:00Z', created_by: null, ...more,
+    })
+    // [the team's notes, the second line, or null for "Not prescouted yet"]
+    const cases: [PrescoutNotes | null, string | null][] = [
+      [null, null],
+      [notes({ tier: 'B' }), null],
+      [notes({ overall: 'Strong scorer\nslow climb', key_task: 'Defense' }), 'Strong scorer …'],
+      [notes({ overall: '  ', key_task: 'Playing defense' }), 'Key task: Playing defense'],
+      [notes({ strengths: 'Fast' }), 'Strengths: Fast'],
+      [notes({ rating: 4, drivetrain: 'Swerve' }), 'Rating 4 of 5 · Drivetrain Swerve'],
+    ]
+    for (const [row, line] of cases) expect(compactSummary(row)).toBe(line)
   })
 
   it("counts a team's stars: the team's, plus your own just for you", () => {
@@ -527,5 +546,105 @@ describe("a team's season", () => {
     expect(PRESCOUT_QUESTIONS[0].key).toBe('overall')
     const result = await savePrescout(EVENT_KEY, 9995, { ...NO_ANSWERS, overall: '  Good second pick  ' })
     expect(result).toMatchObject({ ok: true, value: { overall: 'Good second pick' } })
+  })
+
+  it("keeps only a team's looks from this season, from any event that year (#233)", () => {
+    const look = (team: number, event: string): PrescoutMatch => ({
+      id: `${team}-${event}`, team_number: team, event_key: event, match_key: `${event}_qm1`, counts: {}, endgame: 'None', roles: [], notes: '',
+      created_at: '2026-11-04T19:00:00Z', created_by: null, updated_at: '2026-11-04T19:00:00Z',
+    })
+    const rows = [look(9991, '2026ilch'), look(9991, '2026wila'), look(9991, '2025ilch'), look(9993, '2026ilch')]
+    expect(seasonLooks(rows, 9991, '2026').map((r) => r.id)).toEqual(['9991-2026ilch', '9991-2026wila'])
+  })
+})
+
+describe('comparing teams (#233)', () => {
+  afterEach(() => clearCompare())
+
+  it('reads the teams from a compare address: team numbers only, no repeats, in order, at most 4', () => {
+    // [the address's last part, the teams it should give]
+    const cases: [string, number[]][] = [
+      ['9991,9993', [9991, 9993]],
+      ['254,1678,4096,118', [254, 1678, 4096, 118]],
+      [' 254 , 1678 ', [254, 1678]],
+      ['254,,1678,', [254, 1678]],
+      ['254,abc,-5,25.4,1e3,0x10,1678', [254, 1678]],
+      ['0,100000,254', [254]],
+      ['254,254,1678', [254, 1678]],
+      ['0254,254', [254]],
+      ['1,2,3,4,5', [1, 2, 3, 4]],
+      ['', []],
+    ]
+    for (const [text, teams] of cases) expect(parseCompare(text), text).toEqual(teams)
+  })
+
+  it('builds a compare link with plain commas, which reads back as the same teams', () => {
+    const link = compareHref(EVENT_KEY, [9993, 9991])
+    expect(link).toBe(`#/scouting/prescouting/${EVENT_KEY}/compare/9993,9991`)
+    expect(parseCompare(link.split('/').pop()!)).toEqual([9993, 9991])
+  })
+
+  it('ticks and unticks teams to compare, refuses a fifth, and keeps each event apart', () => {
+    // [ticked already, the team tapped, what's ticked after, or the error's key words]
+    const cases: [number[], number, number[] | RegExp][] = [
+      [[], 9991, [9991]],
+      [[9991], 9993, [9991, 9993]],
+      [[9991, 9993], 9991, [9993]],
+      [[1, 2, 3, 4], 5, /up to 4/],
+      [[1, 2, 3, 4], 4, [1, 2, 3]],
+    ]
+    for (const [chosen, team, after] of cases) {
+      const result = toggleCompare(chosen, team)
+      expect(result).toEqual(after instanceof RegExp ? { ok: false, error: expect.stringMatching(after) } : { ok: true, value: after })
+    }
+    tickCompare(EVENT_KEY, 9991)
+    tickCompare(EVENT_KEY, 9993)
+    expect(compareChoice(EVENT_KEY)).toEqual([9991, 9993])
+    // Ticking at another event starts again there, and hides the first event's ticks.
+    tickCompare('2026arc', 9995)
+    expect(compareChoice('2026arc')).toEqual([9995])
+    expect(compareChoice(EVENT_KEY)).toEqual([])
+  })
+
+  it('finds the best number to show in bold, or none when there is nothing to point out', () => {
+    // [the numbers, fewer is better, the best]
+    const cases: [(number | null)[], boolean, number | null][] = [
+      [[41.7, 30, null], false, 41.7],
+      [[2, 5], true, 2],
+      [[5, 5, 3], false, 5],
+      [[3, 3], false, null],
+      [[7, null], false, null],
+      [[], false, null],
+    ]
+    for (const [values, lowerIsBetter, best] of cases) expect(bestValue(values, lowerIsBetter), String(values)).toBe(best)
+  })
+
+  it("gathers each team's details to compare: Match 13 numbers, notes and tier at this event, stars you can see, and this season's video averages", () => {
+    const list = [{ team: 9991, name: 'Example Robotics', epa: 39.6, xp: 41.7, xpRank: { rank: 3, of: 6 }, auto: null, teleop: null, endgame: null, opr: null, dpr: null, tbaUrl: tbaTeamUrl(9991, EVENT_KEY) }]
+    const row = (id: string, event: string, team: number, more: Partial<PrescoutNotes>): PrescoutNotes => ({
+      id, event_key: event, team_number: team, ...NO_ANSWERS, ...NO_FACTS, tier: null, created_at: '2026-11-05T19:00:00Z', created_by: null, ...more,
+    })
+    const notes = [
+      row('n1', EVENT_KEY, 9991, { overall: 'Strong scorer', tier: 'S', rating: 4 }),
+      row('n2', '2027ilch', 9991, { overall: 'Next year' }),
+      row('n3', EVENT_KEY, 9993, { tier: 'B' }),
+    ]
+    const stars = [at(9991, true, SOMEONE, 'Great auto'), at(9991, false, ME), at(9993, false, SOMEONE), { ...at(9991, true, SOMEONE, 'Elsewhere'), id: 'other', event_key: '2026arc' }]
+    const look = (event: string): PrescoutMatch => ({
+      id: event, team_number: 9991, event_key: event, match_key: `${event}_qm1`, counts: { autoFuel: 2 }, endgame: 'Level 1', roles: [], notes: '',
+      created_at: '2026-11-04T19:00:00Z', created_by: null, updated_at: '2026-11-04T19:00:00Z',
+    })
+    const looks = [look('2026ilch'), look('2026wila'), look('2025ilch')]
+
+    const [first, second] = compareTeams(EVENT_KEY, [9991, 9993], { list, notes, stars, looks, me: ME })
+    expect(first).toMatchObject({ team: 9991, name: 'Example Robotics', epa: 39.6, xp: 41.7, tier: 'S', prescouted: true, href: `#/scouting/prescouting/${EVENT_KEY}/9991` })
+    expect(first.answers.overall).toBe('Strong scorer')
+    expect(first.facts.map((f) => f.value)).toContain('4 of 5')
+    expect(first.stars.forTeam.map((s) => s.reason)).toEqual(['Great auto'])
+    expect(first.stars.mine).not.toBeNull()
+    expect(first.averages.matches).toBe(2)
+    // Not on the event's list, only a tier, and only someone else's own star.
+    expect(second).toMatchObject({ team: 9993, name: null, epa: null, tier: 'B', prescouted: false, stars: { forTeam: [], mine: null }, tbaUrl: tbaTeamUrl(9993, EVENT_KEY) })
+    expect(second.averages.matches).toBe(0)
   })
 })
