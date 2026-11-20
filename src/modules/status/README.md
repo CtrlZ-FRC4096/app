@@ -119,6 +119,7 @@ in demo mode the countdown says "Any minute now".
 | Check or uncheck any item | | Yes |
 | Add, rename, assign, reorder and remove items | | Yes |
 | Change who's on an item (the People popup) | | Yes |
+| Give several items to the same people (Select, then Assign people) | | Yes |
 | Change an item's subgroup, and who's in each subgroup (the Subgroups panel) | | Yes |
 | Clear list: uncheck everything, or remove every item | | Yes |
 
@@ -149,10 +150,12 @@ popup (a mode of `ItemPopup.tsx`), with no ⋯ menu in the way:
   Enter adds the first name listed.
 - Under it are the people who can be added: the item's subgroup members.
   Tap a name to add it. Nothing is a checkbox.
-- For **General** items, where anyone can be chosen, it lists the people
-  already on other items, and everyone else only once a name is typed
-  (`assignedPeople()` in `data.ts`, and `pickablePeople()` in
-  `src/core/members.ts`).
+- For **General** items, and a subgroup not set up on this device, where
+  anyone can be chosen, it lists the people already on other items, and
+  everyone else only once a name is typed (`suggestedFor()` in `data.ts`,
+  and `pickablePeople()` in `src/core/members.ts`). The Add form does the
+  same. When Assign people's ticked items mix those with a set-up subgroup,
+  that subgroup's members are listed too.
 
 Changes save straight away. Clearing everyone leaves the item unassigned,
 and changing who's on an item never unchecks it. The picker is
@@ -161,10 +164,30 @@ off" form), and the **Add an item** form uses the same one. In the
 form, picking a subgroup takes off anyone who isn't in it, and says so:
 "You're not in Electrical, so you were taken off." (`takenOffText()`).
 
+**Several items at once.** **Select**, above the list, turns each item's
+check box into one for choosing the item, and hides the three-dot menus and
+drag handles until **Cancel**. Tick the items, then tap **Assign people**:
+the same picker opens once, and its Add button (like **Add to 3 items**)
+puts the chosen people on every ticked item
+(`assignPitItems(ids, peopleIds)`). Nobody already on an item is taken off,
+and checks stay. Unlike one item's People popup, nothing saves until you
+tap Add.
+
+An item whose subgroup doesn't have everyone being added is skipped whole
+(`planAssignment()`). The popup lists those items before you tap Add, and
+the message after says why, like "Skipped Code deployed: Pat Chen isn't in
+Programming." Skipped items stay ticked, so you can give them to someone
+else. General items take anyone. Here and in the People popup, only the
+people being added are checked: someone already on an item never stops a
+change, even if their access was switched off or this device's subgroup
+list doesn't have them.
+
 **Subgroups**, a panel at the bottom of the page (`SubgroupsPanel.tsx`),
 has a row for each subgroup with its people as name tags. Tap a row to
 change them in the same picker. Taking someone out of a subgroup also takes
-them off that subgroup's items. General isn't listed: it's always everyone.
+them off that subgroup's items, for everyone. Setting a subgroup up for the
+first time on a device, or adding someone, takes nobody off. General isn't
+listed: it's always everyone.
 
 **Clear list**, under the checklist, opens a small popup with two choices.
 Each says how many items it affects and needs a second tap:
@@ -204,7 +227,11 @@ The database's rules, tested in `supabase/tests/pit-checklist.test.ts`:
 **Who's in each subgroup** is still saved in each browser, not the
 database: a student leader or mentor sets it on their own device, in the
 Subgroups panel. A subgroup nobody has set up on that device lists
-everyone. It only decides who shows in the assignment lists.
+everyone. These lists decide who the People popups show and which items
+Assign people skips. They also change items for everyone: taking someone
+out of a subgroup takes them off that subgroup's items in the team
+database. Only people taken out of this device's list come off, so setting
+a subgroup up for the first time, or adding someone, takes nobody off.
 
 **Items from the old local preview** (saved in a browser before this
 change) aren't moved over. They stay in that browser's storage, unused.
@@ -230,7 +257,6 @@ passes no predictions to `matchesWithPredictions()`, so none can show.
 - Tiles showing each other module's summary (low stock, short BOM lines,
   and so on), built from each module's `useSummary` hook.
 - Saving subgroup members in the team database, so they're set once.
-- Select several items and give them to the same people.
 - Should the checklist show which battery is in the robot (the Batteries
   module)?
 - The pit display: Nexus's live queue status (`useNexusStatus()`) where the

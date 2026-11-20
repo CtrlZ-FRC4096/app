@@ -518,11 +518,14 @@ export function searchPrescout<T extends { team: number; name: string }>(teams: 
   return searchTeamList(teams, text, Number.POSITIVE_INFINITY, (team) => team.team, (team) => team.name)
 }
 
-/** How the overview shows the teams: a card each, or one compact table with a row each. */
-export const PRESCOUT_VIEWS = ['Cards', 'Table'] as const
+/**
+ * How the overview shows the teams: a card each; Compact, a short row each
+ * that opens in place (#233); or one table with a column for each question.
+ */
+export const PRESCOUT_VIEWS = ['Cards', 'Compact', 'Table'] as const
 export type PrescoutView = (typeof PRESCOUT_VIEWS)[number]
 
-/** The overview's Cards / Table choice, remembered on this device like the event. */
+/** The overview's Cards / Compact / Table choice, remembered on this device like the event. */
 export const prescoutViewStore = createStore<PrescoutView>('prescouting-view', 1, () => 'Cards', { keepOnReset: true })
 
 export function usePrescoutView(): PrescoutView {
@@ -549,6 +552,21 @@ export function firstLine(text: string, max = 100): string {
   const line = lines[0].trim()
   if (line.length > max) return line.slice(0, max).trimEnd() + '…'
   return lines.length > 1 ? line + ' …' : line
+}
+
+/**
+ * The second line of a team's Compact row (#233): their overall note, else
+ * their key task, else the first other answer (like "Strengths: Fast"),
+ * else their quick answers. Null if they're not prescouted yet (no notes,
+ * or only a tier), so the page can say so.
+ */
+export function compactSummary(notes: PrescoutNotes | null): string | null {
+  if (!notes || !hasAnswers(notes)) return null
+  if (notes.overall.trim() !== '') return firstLine(notes.overall)
+  if (notes.key_task.trim() !== '') return `Key task: ${firstLine(notes.key_task)}`
+  const other = PRESCOUT_QUESTIONS.find((q) => notes[q.key].trim() !== '')
+  if (other) return `${other.label}: ${firstLine(notes[other.key])}`
+  return prescoutFacts(notes).map((f) => `${f.label} ${f.value}`).join(' · ')
 }
 
 // ---------------------------------------------------------------------------
@@ -676,4 +694,176 @@ export function prescoutAverages(rows: PrescoutMatch[], counters: Counter[] = CO
     }),
     endgame: ENDGAME.map((option) => ({ option, count: rows.filter((r) => r.endgame === option).length })),
   }
+}
+
+/**
+ * A team's looks from one season, like '2026': the rows for that team from
+ * events that year. A look's event is where the match was played, so it's
+ * the year in its key that counts, not the prescouting event.
+ */
+export function seasonLooks(rows: PrescoutMatch[], team: number, year: string): PrescoutMatch[] {
+  return rows.filter((row) => row.team_number === team && row.event_key.startsWith(year))
+}
+
+// ---------------------------------------------------------------------------
+// Comparing teams side by side (#233). Tick 2 to 4 teams in the overview,
+// then the compare page shows them next to each other. The ticks are only
+// kept while the app is open: nothing here is saved.
+
+/** The most and fewest teams the compare page shows. */
+export const MAX_COMPARE = 4
+export const MIN_COMPARE = 2
+
+/** The compare page's part of the address: #/scouting/prescouting/<event>/compare/<team>,<team>. */
+export const COMPARE_PATH = 'compare'
+
+/** A Match 13 number to one decimal place, or "—" if Match 13 didn't give it. */
+export function formatEpa(epa: number | null): string {
+  return epa === null ? '—' : epa.toFixed(1)
+}
+
+/**
+ * The address of the compare page, like
+ * #/scouting/prescouting/2026ilch/compare/254,1678. The teams are added by
+ * hand: href() would turn each comma into %2C, an ugly link to send.
+ * Team numbers are only digits, so they're safe as they are.
+ */
+export function compareHref(event: string, teams: number[]): string {
+  return `${href('scouting', PRESCOUT_PATH, event, COMPARE_PATH)}/${teams.join(',')}`
+}
+
+/**
+ * The teams in a compare address, like "254,1678" → [254, 1678]. Skips
+ * anything that isn't a team number (digits only, from 1 to MAX_TEAM),
+ * removes repeats, keeps the order given, and keeps no more than
+ * MAX_COMPARE.
+ */
+export function parseCompare(text: string): number[] {
+  const teams: number[] = []
+  for (const part of text.split(',')) {
+    // Digits only: Number() would also accept things like '1e3' and '0x10'.
+    if (!/^\d+$/.test(part.trim())) continue
+    const team = Number(part.trim())
+    if (team < 1 || team > MAX_TEAM || teams.includes(team)) continue
+    teams.push(team)
+    if (teams.length === MAX_COMPARE) break
+  }
+  return teams
+}
+
+/** Tick or untick a team to compare: refused if MAX_COMPARE are already ticked. */
+export function toggleCompare(chosen: number[], team: number): Result<number[]> {
+  if (chosen.includes(team)) return ok(chosen.filter((t) => t !== team))
+  if (chosen.length >= MAX_COMPARE) return fail(`You can compare up to ${MAX_COMPARE} teams. Untick one first.`)
+  return ok([...chosen, team])
+}
+
+// The ticked teams, and the event they're at. Kept while the app is open,
+// so you can tick, look at a team's page, come back and tick more. Not
+// saved on the phone.
+const compareStore = createStore<{ event: string; teams: number[] }>('prescouting-compare', 1, () => ({ event: '', teams: [] }), { persist: false })
+
+/** The teams ticked to compare at this event. Ticks at another event don't count. */
+export function compareChoice(event: string): number[] {
+  const chosen = compareStore.get()
+  return chosen.event === event ? chosen.teams : []
+}
+
+/** The teams ticked to compare at this event, for a page. */
+export function useCompareChoice(event: string): number[] {
+  const chosen = useStore(compareStore)
+  return chosen.event === event ? chosen.teams : []
+}
+
+/** Tick a team to compare, or untick it. Ticking at a new event starts again. Gives back the ticked teams, or why not. */
+export function tickCompare(event: string, team: number): Result<number[]> {
+  const result = toggleCompare(compareChoice(event), team)
+  if (result.ok) compareStore.set({ event, teams: result.value })
+  return result
+}
+
+/** Untick every team. */
+export function clearCompare(): void {
+  compareStore.reset()
+}
+
+/**
+ * The best of some numbers, to show in bold: the highest, or the lowest
+ * when fewer is better. Null when there's nothing to point out: fewer than
+ * two numbers known, or all the same. Ties for best are all best.
+ */
+export function bestValue(values: (number | null)[], lowerIsBetter = false): number | null {
+  const known = values.filter((v): v is number => v !== null)
+  if (known.length < 2 || known.every((v) => v === known[0])) return null
+  return lowerIsBetter ? Math.min(...known) : Math.max(...known)
+}
+
+/** Everything the compare page shows about one team. */
+export interface CompareTeam {
+  team: number
+  /** Null if The Blue Alliance doesn't list them at this event, or the list hasn't loaded. */
+  name: string | null
+  epa: number | null
+  xp: number | null
+  xpRank: { rank: number; of: number } | null
+  tier: Tier | null
+  /** Whether anyone has written answers for them yet. */
+  prescouted: boolean
+  answers: PrescoutAnswers
+  /** The quick answers that are filled in, as words. */
+  facts: ReturnType<typeof prescoutFacts>
+  stars: TeamStars
+  /** From matches scouted from video this season. */
+  averages: PrescoutAverages
+  /** Their prescouting page. */
+  href: string
+  tbaUrl: string
+}
+
+/**
+ * Gather each team's details for the compare page, in the order given: the
+ * list's name and Match 13 numbers, our notes and tier at this event, the
+ * stars you can see (team stars, and your own), and their averages from
+ * this season's matches scouted from video.
+ */
+export function compareTeams(
+  event: string,
+  teams: number[],
+  from: { list: PrescoutTeam[]; notes: PrescoutNotes[]; stars: PrescoutStar[]; looks: PrescoutMatch[]; me: string | null },
+): CompareTeam[] {
+  const stars = from.stars.filter((s) => s.event_key === event)
+  return teams.map((team) => {
+    const details = from.list.find((t) => t.team === team)
+    // The row itself, not prescoutFor(): a row with only a tier still has the tier.
+    const row = from.notes.find((n) => n.event_key === event && n.team_number === team)
+    return {
+      team,
+      name: details?.name ?? null,
+      epa: details?.epa ?? null,
+      xp: details?.xp ?? null,
+      xpRank: details?.xpRank ?? null,
+      tier: row?.tier ?? null,
+      prescouted: hasAnswers(row),
+      answers: Object.fromEntries(PRESCOUT_QUESTIONS.map((q) => [q.key, row?.[q.key] ?? ''])) as PrescoutAnswers,
+      facts: prescoutFacts(row ?? NO_FACTS),
+      stars: starsFor(stars, team, from.me),
+      averages: prescoutAverages(seasonLooks(from.looks, team, event.slice(0, 4))),
+      href: prescoutHref(event, team),
+      tbaUrl: details?.tbaUrl ?? tbaTeamUrl(team, event),
+    }
+  })
+}
+
+/**
+ * The compare page's teams, and the event's list (null while it loads), so
+ * the page can say it's loading or what went wrong. Starts loading the list,
+ * so a link opened on another phone works.
+ */
+export function useCompareTeams(event: string, teams: number[]): { list: Result<PrescoutTeam[]> | null; teams: CompareTeam[] } {
+  const list = usePrescoutTeams(event)
+  const notes = prescoutTable.useRows()
+  const stars = starsTable.useRows()
+  const looks = prescoutMatchesTable.useRows()
+  const me = useSession().id
+  return { list, teams: compareTeams(event, teams, { list: list?.ok ? list.value : [], notes, stars, looks, me }) }
 }

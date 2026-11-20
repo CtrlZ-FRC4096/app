@@ -13,7 +13,8 @@ event**, and **Change** and **Remove** on events the app added. Students
 see the events and sign up, but ask a student leader or mentor to add or
 change one. The app never changes the details of events made in Google
 Calendar: change those in Google Calendar. It can turn sign-ups on for
-them, though (below).
+them, though (below). If saving doesn't work, the form stays open and says
+why above its buttons, until you save again.
 
 **Sign-ups** come two ways. Pick one under "Sign-ups" when you add an event:
 
@@ -89,6 +90,34 @@ The app also marks each event it adds with who added it
 The database can't see Google Calendar, so it can't check that an event
 takes sign-ups or hasn't ended. `signUp()` in `data.ts` checks those, so
 the page says what's wrong.
+
+## If adding events doesn't work (#158)
+
+When events show on the page but Save fails, the app can read the team
+calendar but Google won't let it write. The code is the same for reading and
+writing, so it's almost always the calendar's setup:
+
+1. **A mentor or admin checks the setup.** On the **Members** page, under
+   **Server functions**, tap **Check them**, and read the Google Calendar line.
+2. **"The app can see … but can't add events":** in Google Calendar, open
+   the team calendar's **Settings and sharing**. Under **Share with specific
+   people or groups**, change the `…@….iam.gserviceaccount.com` row to
+   **Make changes to events**.
+3. **If that option can't be picked, or doesn't stick,** the calendar is in
+   a Google Workspace (a school or team domain), where the app counts as an
+   outsider. The Workspace admin allows outsiders to change calendars: Admin
+   console → Apps → Google Workspace → Calendar, under **General settings**
+   for a calendar made with "Create new calendar", or **Sharing settings**
+   for someone's main calendar. It can take up to a day.
+4. **"Working" with a name ending in `iam.gserviceaccount.com`:** the app is
+   using its own calendar, which nobody else sees. A mentor sets
+   `GOOGLE_CALENDAR_ID` to the team calendar's Calendar ID, then runs the
+   Deploy workflow again.
+5. **"Working" with the team calendar's name, and Save still fails:** copy
+   the message the form shows into an issue, with your role and whether it
+   was an all-day event.
+
+Setting up the keys is under "Server functions" in `supabase/README.md`.
 
 ## Ideas for next
 

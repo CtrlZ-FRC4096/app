@@ -1,5 +1,6 @@
 import { createStore, useStore } from '../../core/store'
 import { createTable, fail, ok, type Result, type Row } from '../../core/table'
+import { plural } from '../../core/format'
 import { currentUser, isLeader } from '../../core/session'
 import { membersTable } from '../../core/members'
 import { DEMO_PEOPLE } from '../../core/demo'
@@ -28,10 +29,12 @@ import { EVENT_KEY } from '../scouting/season'
 export const PIT_SUBGROUPS = ['General', 'Mechanical', 'Electrical', 'Programming', 'Drive team'] as const
 export type PitSubgroup = typeof PIT_SUBGROUPS[number]
 
-// Who's in each subgroup, so the assignment lists show the right people.
+// Who's in each subgroup, on this device. It decides who the People popups
+// list and which items Assign people skips, and taking someone out of a
+// subgroup also takes them off its items for everyone (setSubgroupMembers()).
 // Still saved in each browser, not the team database: a student leader or
-// mentor sets it on their own device. A subgroup nobody has set up yet lists everyone. The
-// made-up members only make sense in demo mode.
+// mentor sets it on their own device. A subgroup nobody has set up yet lists
+// everyone. The made-up members only make sense in demo mode.
 const DEMO_SUBGROUP_MEMBERS: Record<string, string[]> = {
   Mechanical: [DEMO_PEOPLE.alex, DEMO_PEOPLE.jordan],
   Electrical: [DEMO_PEOPLE.alex, DEMO_PEOPLE.pat],
@@ -54,6 +57,19 @@ export function belongsToSubgroup(id: string, subgroup: string): boolean {
 /** Everyone on any item's list of people, once each: who to suggest for a General item. */
 export function assignedPeople(items: Pick<PitItem, 'assignee_ids'>[]): string[] {
   return [...new Set(items.flatMap((item) => item.assignee_ids))]
+}
+
+/**
+ * Who a People popup lists before a name is typed, for items in these
+ * subgroups. When the whole team can be chosen (General, or a subgroup with
+ * no list on this device), that's the people already on items, plus the
+ * members of the other subgroups given. Otherwise undefined: list everyone
+ * who can be chosen, as a subgroup's own members are few.
+ */
+export function suggestedFor(subgroups: string[], items: Pick<PitItem, 'assignee_ids'>[]): string[] | undefined {
+  const groups = subgroupMembersStore.get()
+  if (!subgroups.some((group) => group === 'General' || groups[group] === undefined)) return undefined
+  return [...new Set([...assignedPeople(items), ...subgroups.flatMap((group) => groups[group] ?? [])])]
 }
 
 /**
@@ -164,6 +180,9 @@ function checkText(text: string): string | null {
 const findItem = (id: string) => itemsTable.rows().find((item) => item.id === id)
 const MISSING = 'That item is no longer on the checklist.'
 
+/** The people in `ids` who aren't on the item yet: the ones a change would add. */
+const newPeople = (item: PitItem, ids: string[]) => ids.filter((id) => !item.assignee_ids.includes(id))
+
 /** Add an item at the bottom of the list. Student leaders, mentors and admins only. */
 export async function addPitItem(text: string, assigneeIds: string[], subgroup: PitSubgroup = 'General'): Promise<Result<PitItem>> {
   const problem = leaderProblem('add checklist items') ?? checkText(text) ??
@@ -179,10 +198,99 @@ export async function assignPitItem(id: string, assigneeIds: string[]): Promise<
   if (problem) return fail(problem)
   const item = findItem(id)
   if (!item) return fail(MISSING)
-  const wrong = checkAssignees(assigneeIds, item.subgroup, true)
+  // Only the people being added are checked. Someone already on the item
+  // stays, even if their access was switched off or this device's subgroup
+  // list doesn't have them, so they never stop anyone else being changed.
+  const wrong = checkAssignees(newPeople(item, assigneeIds), item.subgroup, true)
   if (wrong) return fail(wrong)
   const result = await itemsTable.update(id, { assignee_ids: [...new Set(assigneeIds)] })
   return result.ok ? ok(null) : result
+}
+
+// ---------------------------------------------------------------------------
+// Several items at once: Select, then Assign people (#238).
+
+/** A ticked item that Assign people leaves as it is, and who chosen isn't in its subgroup. */
+export interface SkippedItem {
+  item: PitItem
+  /** The chosen people who aren't in the item's subgroup, on this device. */
+  notIn: string[]
+}
+
+/** What Assign people does with the ticked items. */
+export interface AssignPlan {
+  /** The items the people go on, in list order. Anyone on one already stays, and isn't added twice. */
+  assign: PitItem[]
+  /** The items left as they are, because someone chosen isn't in their subgroup. */
+  skip: SkippedItem[]
+}
+
+/**
+ * Which ticked items the chosen people can go on. An item whose subgroup
+ * doesn't have everyone being added is skipped whole: nobody is added to it.
+ * General items take anyone. As in assignPitItem(), only the people being
+ * added are checked, so someone already on an item doesn't skip it.
+ */
+export function planAssignment(items: PitItem[], peopleIds: string[]): AssignPlan {
+  const plan: AssignPlan = { assign: [], skip: [] }
+  for (const item of items) {
+    const notIn = newPeople(item, peopleIds).filter((id) => !belongsToSubgroup(id, item.subgroup))
+    if (notIn.length) plan.skip.push({ item, notIn })
+    else plan.assign.push(item)
+  }
+  return plan
+}
+
+/**
+ * Add the same people to several items: Assign people, after Select. The
+ * people already on each item stay, and so do its checks. Items whose
+ * subgroup someone chosen isn't in are skipped (planAssignment()). Gives
+ * back what it did, so the page can say which items were skipped and why.
+ * Student leaders, mentors and admins only.
+ */
+export async function assignPitItems(ids: string[], peopleIds: string[]): Promise<Result<AssignPlan>> {
+  const problem = leaderProblem('change the people assigned to these items')
+  if (problem) return fail(problem)
+  // In list order, once each, leaving out any removed meanwhile.
+  const items = itemsTable.rows().filter((item) => ids.includes(item.id))
+  if (!items.length) return fail('Tick at least one item on the checklist first.')
+  const people = [...new Set(peopleIds)]
+  if (!people.length) return fail('Choose at least one person to add.')
+  if (people.some((id) => !membersTable.rows().some((member) => member.id === id && member.active))) return fail('Choose active team members.')
+  const plan = planAssignment(items, people)
+  // A table saves one row at a time, so this goes item by item. Trying again
+  // after a failure is safe: nobody is ever added to an item twice.
+  let saved = 0
+  for (const item of plan.assign) {
+    const added = newPeople(item, people)
+    if (!added.length) continue
+    const result = await itemsTable.update(item.id, { assignee_ids: [...item.assignee_ids, ...added] })
+    if (!result.ok) return saved === 0 ? result : fail(`Added them to ${plural(saved, 'item', 'items')}, then it stopped: ${result.error}`)
+    saved += 1
+  }
+  return ok(plan)
+}
+
+/** "Pat", "Pat and Alex", or "Pat, Alex and Jordan". */
+function andList(names: string[]): string {
+  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
+}
+
+/** Who chosen isn't in a subgroup, like "Pat Chen isn't in Electrical." or "Pat Chen and Jordan Kim aren't in Electrical." */
+export function notInText(ids: string[], subgroup: string, members: { id: string; name: string }[]): string {
+  return `${andList(ids.map((id) => nameOf(id, members)))} ${ids.length === 1 ? "isn't" : "aren't"} in ${subgroup}.`
+}
+
+/**
+ * What to say after Assign people: how many items the people are on now,
+ * then each skipped item and why, like "Pat Chen is now on 2 items. Skipped
+ * Code deployed: Pat Chen isn't in Programming." "Now on" because some may
+ * have been on an item already.
+ */
+export function assignedText(plan: AssignPlan, peopleIds: string[], members: { id: string; name: string }[]): string {
+  const added = plan.assign.length ? [`${andList(peopleIds.map((id) => nameOf(id, members)))} ${peopleIds.length === 1 ? 'is' : 'are'} now on ${plural(plan.assign.length, 'item', 'items')}.`] : []
+  const skipped = plan.skip.map((skip) => `Skipped ${skip.item.text}: ${notInText(skip.notIn, skip.item.subgroup, members)}`)
+  return [...added, ...skipped].join(' ')
 }
 
 /** Change an item's subgroup. People not in the new subgroup are unassigned. Student leaders, mentors and admins only. */
@@ -279,15 +387,23 @@ export async function movePitItem(id: string, direction: -1 | 1): Promise<Result
   return reorderPitItem(id, items[to].id)
 }
 
-/** Choose who's in a subgroup, on this device. Removes their assignments on that subgroup's items. Student leaders, mentors and admins only. */
+/**
+ * Choose who's in a subgroup, on this device. People taken out of this
+ * device's list also come off that subgroup's items, for everyone. Setting
+ * a subgroup up for the first time, or adding someone, takes nobody off:
+ * with no list before, it isn't known who was meant to be taken out.
+ * Student leaders, mentors and admins only.
+ */
 export async function setSubgroupMembers(subgroup: PitSubgroup, ids: string[]): Promise<Result> {
   const problem = leaderProblem('edit subgroup members')
   if (problem) return fail(problem)
   if (!PIT_SUBGROUPS.includes(subgroup) || subgroup === 'General') return fail('General includes all active team members.')
   if (ids.some((id) => !membersTable.rows().some((member) => member.id === id && member.active))) return fail('Choose active team members.')
+  const before = subgroupMembersStore.get()[subgroup]
+  const removed = before ? before.filter((id) => !ids.includes(id)) : []
   subgroupMembersStore.set((groups) => ({ ...groups, [subgroup]: [...new Set(ids)] }))
   for (const item of itemsTable.rows().filter((item) => item.subgroup === subgroup)) {
-    const kept = item.assignee_ids.filter((id) => ids.includes(id))
+    const kept = item.assignee_ids.filter((id) => !removed.includes(id))
     if (kept.length === item.assignee_ids.length) continue
     const result = await itemsTable.update(item.id, { assignee_ids: kept })
     if (!result.ok) return result

@@ -140,6 +140,20 @@ describe('the Prescouting tab (#184)', () => {
     }
   })
 
+  it('passes the teams in a compare address on to Prescouting (#233)', async () => {
+    vi.resetModules()
+    vi.doMock('../../core/router', async (original) => ({ ...(await original<object>()), useRoute: () => ({ id: 'scouting', rest: ['prescouting', EVENT_KEY, 'compare', '9991,9993'] }) }))
+    try {
+      const { default: Page } = await import('./ScoutingPage')
+      const html = renderToString(<Page />)
+      expect(html).toContain('Compare teams')
+      expect(html).toContain(`href="#/scouting/prescouting/${EVENT_KEY}/9993"`)
+    } finally {
+      vi.doUnmock('../../core/router')
+      vi.resetModules()
+    }
+  })
+
   it("shows the quick answers in the team page's Prescouting panel, linking to the team in the tab", () => {
     // Team 9991's example prescouting (EXAMPLE_PRESCOUT in prescouting/data.ts) is rated 4, with swerve.
     const html = renderToString(<TeamPage team={9991} />)

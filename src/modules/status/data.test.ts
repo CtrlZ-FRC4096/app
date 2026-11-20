@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   MAX_ITEM_LENGTH, PRACTICE_KEY, PRACTICE_MATCH, addPitItem, assignPitItem, belongsToSubgroup, canCheck, checkedIds, checksTable, defaultMatch, itemsTable,
   matchProgress, movePitItem, movePitItemTo, myItems, ourMatches, pitSummary, positionBetween, progressByPerson, progressText,
-  assignedPeople, canManagePit, clearPitChecklist, takenOffText, removePitItem, renamePitItem, reorderPitItem, setPitItemCompleted, setPitItemSubgroup, setSubgroupMembers, subgroupMembersStore, uncheckAllPitItems, uncheckedByPerson,
-  usePitSummary, type PitCheck, type PitItem,
+  assignedPeople, suggestedFor, canManagePit, clearPitChecklist, takenOffText, removePitItem, renamePitItem, reorderPitItem, setPitItemCompleted, setPitItemSubgroup, setSubgroupMembers, subgroupMembersStore, uncheckAllPitItems, uncheckedByPerson,
+  assignPitItems, assignedText, notInText, usePitSummary, type AssignPlan, type PitCheck, type PitItem,
   COMING_UP, DISPLAY_STALE_MS, QUEUE_AT, clockTime, countdownText, keepPitDisplayFresh, keepScreenAwake, pitDisplay, ratingText, readyText, type PitDisplayInput,
 } from './data'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
@@ -40,6 +40,19 @@ describe('choosing people for items', () => {
     expect(assignedPeople([])).toEqual([])
   })
 
+  it('suggests people already on items, and the other subgroups’ members, when the whole team can be chosen', () => {
+    // Programming in the example data is Jordan and Morgan; Mechanical isn't set up on this device.
+    subgroupMembersStore.set({ Programming: [DEMO_PEOPLE.jordan, DEMO_PEOPLE.morgan] })
+    const onItems = [DEMO_PEOPLE.alex, DEMO_PEOPLE.pat, DEMO_PEOPLE.jordan]
+    const cases: [string[], string[] | undefined][] = [
+      [['Programming'], undefined],
+      [['General'], onItems],
+      [['Mechanical'], onItems],
+      [['General', 'Programming'], [...onItems, DEMO_PEOPLE.morgan]],
+    ]
+    for (const [subgroups, ids] of cases) expect(suggestedFor(subgroups, itemsTable.rows())?.sort(), subgroups.join(', ')).toEqual(ids?.sort())
+  })
+
   it('says who was taken off when a subgroup they are not in is picked', () => {
     const members = membersTable.rows()
     // Electrical in the example data is Alex and Pat.
@@ -54,6 +67,29 @@ describe('choosing people for items', () => {
     ]
     for (const [chosen, subgroup, text] of cases) expect(takenOffText(chosen, subgroup, members, DEMO_PEOPLE.casey), `${chosen} → ${subgroup}`).toBe(text)
   })
+
+  it('says who isn’t in a subgroup, by name', () => {
+    const members = membersTable.rows()
+    const cases: [string[], string][] = [
+      [[DEMO_PEOPLE.pat], "Pat Chen isn't in Programming."],
+      [[DEMO_PEOPLE.pat, DEMO_PEOPLE.alex], "Pat Chen and Alex Rivera aren't in Programming."],
+      [[DEMO_PEOPLE.pat, DEMO_PEOPLE.alex, DEMO_PEOPLE.casey], "Pat Chen, Alex Rivera and Casey Nguyen aren't in Programming."],
+      [['someone-no-longer-on-the-team'], "Former member isn't in Programming."],
+    ]
+    for (const [ids, text] of cases) expect(notInText(ids, 'Programming', members)).toBe(text)
+  })
+
+  it('says what Assign people did: who went on how many items, then each skipped item and why', () => {
+    const members = membersTable.rows()
+    const [batteries, bumpers, , code] = itemsTable.rows()
+    const skipCode = { item: code, notIn: [DEMO_PEOPLE.pat] }
+    const cases: [AssignPlan, string[], string][] = [
+      [{ assign: [batteries, bumpers], skip: [] }, [DEMO_PEOPLE.pat, DEMO_PEOPLE.alex], 'Pat Chen and Alex Rivera are now on 2 items.'],
+      [{ assign: [bumpers], skip: [skipCode] }, [DEMO_PEOPLE.pat], "Pat Chen is now on 1 item. Skipped Code deployed: Pat Chen isn't in Programming."],
+      [{ assign: [], skip: [skipCode] }, [DEMO_PEOPLE.pat], "Skipped Code deployed: Pat Chen isn't in Programming."],
+    ]
+    for (const [plan, people, text] of cases) expect(assignedText(plan, people, members)).toBe(text)
+  })
 })
 
 describe('changing items: student leaders, mentors and admins only', () => {
@@ -64,6 +100,7 @@ describe('changing items: student leaders, mentors and admins only', () => {
       add: () => addPitItem('Tools packed', [DEMO_PEOPLE.pat]),
       rename: () => renamePitItem(first().id, 'Renamed'),
       assign: () => assignPitItem(first().id, [DEMO_PEOPLE.pat]),
+      'assign several items': () => assignPitItems([first().id, itemsTable.rows()[1].id], [DEMO_PEOPLE.pat]),
       'change the subgroup': () => setPitItemSubgroup(first().id, 'General'),
       reorder: () => reorderPitItem(first().id, itemsTable.rows()[2].id),
       'edit subgroup members': () => setSubgroupMembers('Electrical', [DEMO_PEOPLE.pat]),
@@ -149,6 +186,64 @@ describe('changing items: student leaders, mentors and admins only', () => {
     expect((await assignPitItem(batteries.id, [])).ok).toBe(true)
     expect(byText('Batteries charged and numbered').assignee_ids).toEqual([])
     expect(checkedIds(checksTable.rows(), QM3).has(batteries.id)).toBe(true)
+  })
+
+  it('checks only the people being added, so someone already on an item never stops a change', async () => {
+    setDemoRole('leader')
+    const code = byText('Code deployed')
+    // Jordan and Sam are on Code deployed, but on this device Programming is
+    // only Morgan now, and Sam's access has been switched off.
+    subgroupMembersStore.set((groups) => ({ ...groups, Programming: [DEMO_PEOPLE.morgan] }))
+    const cases: [string, string[], boolean][] = [
+      ['add Morgan', [DEMO_PEOPLE.jordan, DEMO_PEOPLE.sam, DEMO_PEOPLE.morgan], true],
+      ['take Sam off', [DEMO_PEOPLE.jordan], true],
+      ["add Alex, who isn't in Programming", [DEMO_PEOPLE.jordan, DEMO_PEOPLE.sam, DEMO_PEOPLE.alex], false],
+    ]
+    for (const [what, ids, allowed] of cases) {
+      await itemsTable.update(code.id, { assignee_ids: [DEMO_PEOPLE.jordan, DEMO_PEOPLE.sam] })
+      expect((await assignPitItem(code.id, ids)).ok, what).toBe(allowed)
+    }
+    // Assign people too: Jordan is on it already, so choosing Jordan doesn't skip it.
+    expect(await assignPitItems([code.id], [DEMO_PEOPLE.jordan, DEMO_PEOPLE.morgan])).toMatchObject({ ok: true, value: { skip: [] } })
+    expect(byText('Code deployed').assignee_ids).toEqual([DEMO_PEOPLE.jordan, DEMO_PEOPLE.sam, DEMO_PEOPLE.morgan])
+  })
+
+  it('gives several items to the same people, keeping who is on them and their checks, and skips items whose subgroup someone chosen isn’t in', async () => {
+    setDemoRole('leader')
+    // Electrical and Drive team are Alex and Pat; Programming is Jordan and Morgan.
+    const [batteries, bumpers, , code, laptop] = itemsTable.rows()
+    const peopleOn = () => [batteries, bumpers, code, laptop].map((item) => byText(item.text).assignee_ids)
+    // Ticked in any order, one twice: the items go in list order, once each.
+    expect(await assignPitItems([laptop.id, code.id, bumpers.id, batteries.id, batteries.id], [DEMO_PEOPLE.pat])).toEqual({
+      ok: true, value: { assign: [batteries, bumpers, laptop], skip: [{ item: code, notIn: [DEMO_PEOPLE.pat] }] },
+    })
+    expect(peopleOn()).toEqual([
+      [DEMO_PEOPLE.alex, DEMO_PEOPLE.pat],
+      [DEMO_PEOPLE.pat], // Already on it, so not added twice.
+      [DEMO_PEOPLE.jordan], // Skipped.
+      [DEMO_PEOPLE.alex, DEMO_PEOPLE.pat],
+    ])
+    expect(checkedIds(checksTable.rows(), QM3).has(batteries.id)).toBe(true)
+    // Someone chosen who isn't in the subgroup skips the whole item, even with someone who is.
+    const before = peopleOn()
+    expect(await assignPitItems([code.id], [DEMO_PEOPLE.morgan, DEMO_PEOPLE.alex])).toEqual({
+      ok: true, value: { assign: [], skip: [{ item: code, notIn: [DEMO_PEOPLE.alex] }] },
+    })
+    expect(peopleOn()).toEqual(before)
+  })
+
+  it('needs ticked items still on the list, and active people to add', async () => {
+    setDemoRole('leader')
+    const batteries = byText('Batteries charged and numbered')
+    const before = itemsTable.rows()
+    const cases: [string[], string[], RegExp][] = [
+      [[], [DEMO_PEOPLE.pat], /Tick at least one item/],
+      [['not-an-item'], [DEMO_PEOPLE.pat], /Tick at least one item/],
+      [[batteries.id], [], /Choose at least one person/],
+      [[batteries.id], [DEMO_PEOPLE.sam], /active team members/],
+    ]
+    for (const [ids, people, error] of cases) expect(await assignPitItems(ids, people), String(error)).toEqual({ ok: false, error: expect.stringMatching(error) })
+    expect(itemsTable.rows()).toEqual(before)
   })
 
   it('unchecks everything for one match, keeping the items, their people and other matches’ checks', async () => {
@@ -380,6 +475,18 @@ describe('subgroup members (on this device)', () => {
     expect((await setSubgroupMembers('Electrical', [DEMO_PEOPLE.pat])).ok).toBe(true)
     expect(belongsToSubgroup(DEMO_PEOPLE.alex, 'Electrical')).toBe(false)
     expect(byText('Batteries charged and numbered').assignee_ids).toEqual([])
+  })
+
+  it('takes off only people taken out of this device’s list, never when a subgroup is first set up', async () => {
+    setDemoRole('mentor')
+    subgroupMembersStore.set({}) // A new device: no subgroup set up. Code deployed is Jordan's.
+    const code = () => byText('Code deployed').assignee_ids
+    expect((await setSubgroupMembers('Programming', [DEMO_PEOPLE.morgan])).ok).toBe(true)
+    expect((await setSubgroupMembers('Programming', [DEMO_PEOPLE.morgan, DEMO_PEOPLE.pat])).ok).toBe(true)
+    expect(code()).toEqual([DEMO_PEOPLE.jordan])
+    expect((await assignPitItem(byText('Code deployed').id, [DEMO_PEOPLE.jordan, DEMO_PEOPLE.morgan])).ok).toBe(true)
+    expect((await setSubgroupMembers('Programming', [DEMO_PEOPLE.pat])).ok).toBe(true)
+    expect(code()).toEqual([DEMO_PEOPLE.jordan])
   })
 })
 
