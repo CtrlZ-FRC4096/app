@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DEMO_PEOPLE, setDemoRole } from '../../core/demo'
 import type { Member } from '../../core/members'
-import type { Item as InventoryItem } from '../inventory/data'
+import { changesTable as inventoryChanges, itemsTable as inventoryTable, type Item as InventoryItem } from '../inventory/data'
 import {
   EMPTY_ITEM,
   MAX_NAME_LENGTH,
@@ -25,6 +25,14 @@ import {
   addReceipt,
   buyersTable,
   canOrder,
+  canReceive,
+  checkPlan,
+  matchParts,
+  planFor,
+  receiveItem,
+  shelveItem,
+  FROM_PURCHASING,
+  type InventoryPlan,
   cartCsv,
   markOrdered,
   orderCsv,
@@ -80,6 +88,8 @@ beforeEach(() => {
   itemsTable.reset()
   buyersTable.reset()
   receiptsTable.reset()
+  inventoryTable.reset()
+  inventoryChanges.reset()
 })
 
 afterEach(() => setDemoRole('student'))
@@ -481,6 +491,51 @@ describe('purchasers', () => {
     expect((await setBuyer(DEMO_PEOPLE.jordan, false)).ok).toBe(true)
     expect((await setBuyer(DEMO_PEOPLE.jordan, false)).ok).toBe(true)
     expect(ids()).toEqual([DEMO_PEOPLE.alex])
+  })
+})
+
+describe('marking an order as received', () => {
+  it('is for student leaders, mentors, admins and purchasers', () => {
+    const buyers = buyersTable.rows()
+    const people: [string, Parameters<typeof canReceive>[0], boolean][] = [
+      ['a student', { id: DEMO_PEOPLE.alex, role: 'student' }, false],
+      ['a purchaser', { id: buyers[0].member_id, role: 'student' }, true],
+      ['a student leader', { id: DEMO_PEOPLE.casey, role: 'leader' }, true],
+      ['a mentor', { id: DEMO_PEOPLE.pat, role: 'mentor' }, true],
+      ['nobody signed in', null, false],
+    ]
+    for (const [who, user, expected] of people) expect(canReceive(user, buyers), who).toBe(expected)
+  })
+
+  it('lets a student leader move an order that is on its way to Received, changing nothing else', async () => {
+    setDemoRole('leader')
+    const ordered = find('Timing belt, 60T')
+    const result = await receiveItem(ordered)
+    expect(result).toMatchObject({ ok: true })
+    expect(find('Timing belt, 60T')).toEqual({ ...ordered, status: 'received' })
+  })
+
+  it('refuses anything that is not on its way, and says why', async () => {
+    setDemoRole('leader')
+    const cases: [string, RegExp][] = [
+      ['Zip ties, 8 in (pack of 100)', /can't be marked as received/],
+      ['Motor controller', /already marked as received/],
+      ['Polycarbonate sheet, 1/8 in', /can't be marked as received/],
+    ]
+    const before = itemsTable.rows()
+    for (const [name, error] of cases) {
+      expect(await receiveItem(find(name)), name).toMatchObject({ ok: false, error: expect.stringMatching(error) })
+    }
+    expect(itemsTable.rows()).toEqual(before)
+  })
+
+  it('tells a student who can, and still stops a student leader changing an order', async () => {
+    const ordered = find('Timing belt, 60T')
+    const before = itemsTable.rows()
+    expect(await receiveItem(ordered)).toMatchObject({ ok: false, error: expect.stringMatching(/student leaders, mentors and purchasers/) })
+    setDemoRole('leader')
+    expect(await changeItem(ordered, { ...itemToForm(ordered), status: 'cancelled' })).toMatchObject({ ok: false, error: expect.stringMatching(/^Only mentors and purchasers/) })
+    expect(itemsTable.rows()).toEqual(before)
   })
 })
 
@@ -973,5 +1028,101 @@ describe('receipts', () => {
     const [receipt] = receiptsOf(item)
     await removeReceipt(receipt)
     expect((await removeItem(item)).ok).toBe(true)
+  })
+})
+
+describe('adding what arrived to Inventory', () => {
+  const part = (name: string) => inventoryTable.rows().find((p) => p.name === name)!
+  const roborio = () => part('roboRIO 2.0')
+  const blank: { name: string; vendor: string; part_number: string | null; link: string | null } = { name: 'Something else', vendor: 'Amazon', part_number: null, link: null }
+
+  it('matches Inventory parts by vendor and part number, part number, link or name, strongest first', () => {
+    const cases: [string, Partial<typeof blank>, string | null][] = [
+      ['vendor and part number, ignoring capitals', { vendor: 'Andy Mark', part_number: 'AM-3000A' }, 'Same vendor and part number'],
+      ['part number from another vendor, ignoring spaces and dashes', { part_number: 'am 3000a' }, 'Same part number'],
+      ['link, ignoring www and a trailing slash', { link: 'https://www.example.com/parts/am-3000a/' }, 'Same product link'],
+      ['name, ignoring capitals and spaces', { name: '  ROBORIO  2.0 ' }, 'Same name'],
+      ['nothing in common', {}, null],
+    ]
+    for (const [what, item, reason] of cases) {
+      const [best] = matchParts({ ...blank, ...item }, inventoryTable.rows())
+      expect(best ? [best.part.id, best.reason] : null, what).toEqual(reason ? [roborio().id, reason] : null)
+    }
+    // A part that matches more than one way is listed once, with its strongest reason.
+    expect(matchParts({ ...blank, name: 'roboRIO 2.0', part_number: 'am-3000a', vendor: 'Andy Mark' }, inventoryTable.rows()))
+      .toEqual([{ part: roborio(), reason: 'Same vendor and part number' }])
+  })
+
+  it('starts ticked on the best match with the number needed, or unticked as a new part when nothing matches', () => {
+    const received = find('Motor controller')
+    expect(planFor({ ...received, name: 'roboRIO 2.0' }, inventoryTable.rows())).toMatchObject({ add: true, partId: roborio().id, quantity: received.quantity })
+    expect(planFor(received, inventoryTable.rows())).toMatchObject({
+      add: false, partId: '', quantity: received.quantity, name: received.name, vendor: received.vendor, vendor_part_number: received.part_number, location: '',
+    })
+  })
+
+  it('checks how many, that the part is still there, and a new part like Inventory does', () => {
+    const plan: InventoryPlan = { add: true, partId: roborio().id, quantity: 2, name: 'Gear', vendor: 'WCP', vendor_part_number: 'EXAMPLE-G-1', location: 'Bin M2' }
+    const cases: [string, Partial<InventoryPlan>, RegExp | null][] = [
+      ['an existing part', {}, null],
+      ['unticked, even if empty', { add: false, quantity: 0, partId: '', location: '' }, null],
+      ['no parts', { quantity: 0 }, /1 or more/],
+      ['a deleted part', { partId: 'gone' }, /deleted/],
+      ['a new part', { partId: '' }, null],
+      ['a new part with nowhere to live', { partId: '', location: ' ' }, /where it lives/],
+      ['a new part already listed', { partId: '', vendor: 'AndyMark', vendor_part_number: 'am-3000a' }, /already listed/],
+    ]
+    for (const [what, changes, error] of cases) {
+      const problem = checkPlan({ ...plan, ...changes }, inventoryTable.rows())
+      if (error) expect(problem, what).toMatch(error)
+      else expect(problem, what).toBeNull()
+    }
+  })
+
+  it('adds the count to the matched part, adds a new part, or adds nothing when unticked, as it moves to In Shop', async () => {
+    setDemoRole('mentor')
+    const received = find('Motor controller')
+    const toShop = { ...itemToForm(received), status: 'in_shop' as const }
+    const plan = { ...planFor(received, inventoryTable.rows()), add: true, partId: roborio().id, quantity: 3 }
+    const before = roborio().quantity
+
+    expect(await changeItem(received, toShop, plan)).toMatchObject({ ok: true })
+    expect(find('Motor controller').status).toBe('in_shop')
+    expect(roborio().quantity).toBe(before + 3)
+    expect(inventoryChanges.rows()[0]).toMatchObject({ item_id: roborio().id, change: 3, note: FROM_PURCHASING })
+
+    itemsTable.reset()
+    const count = inventoryTable.rows().length
+    await changeItem(received, toShop, { ...plan, partId: '', location: 'Bin E5' })
+    expect(part('Motor controller')).toMatchObject({ vendor: 'CTRE', vendor_part_number: 'EXAMPLE-MC-1', location: 'Bin E5', quantity: 3 })
+
+    itemsTable.reset()
+    await changeItem(received, toShop, { ...plan, add: false })
+    expect(inventoryTable.rows()).toHaveLength(count + 1)
+  })
+
+  it("saves nothing when the plan can't be done", async () => {
+    setDemoRole('mentor')
+    const received = find('Motor controller')
+    const before = [itemsTable.rows(), inventoryTable.rows()]
+    const result = await changeItem(received, { ...itemToForm(received), status: 'in_shop' }, { ...planFor(received, inventoryTable.rows()), add: true, location: '' })
+    expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/where it lives/) })
+    expect([itemsTable.rows(), inventoryTable.rows()]).toEqual(before)
+  })
+
+  it('lets a student leader put a received item in the shop and add it, but only from Received', async () => {
+    setDemoRole('leader')
+    const plan = (item: PurchaseItem) => ({ ...planFor(item, inventoryTable.rows()), add: true, partId: roborio().id, quantity: 1 })
+    const before = roborio().quantity
+    const received = find('Motor controller')
+    expect(await shelveItem(received, plan(received))).toMatchObject({ ok: true })
+    expect(find('Motor controller')).toEqual({ ...received, status: 'in_shop' })
+    expect(roborio().quantity).toBe(before + 1)
+
+    const ordered = find('Timing belt, 60T')
+    expect(await shelveItem(ordered, plan(ordered))).toMatchObject({ ok: false, error: expect.stringMatching(/Only something marked Received/) })
+    setDemoRole('student')
+    itemsTable.reset()
+    expect(await shelveItem(received, plan(received))).toMatchObject({ ok: false, error: expect.stringMatching(/student leaders, mentors and purchasers/) })
   })
 })

@@ -25,7 +25,7 @@
  */
 import { createTable, fail, newestFirst, ok, type Fields, type Result, type Row } from '../../core/table'
 import { DEMO_PEOPLE } from '../../core/demo'
-import { currentUser, isMentor, useSession, type User } from '../../core/session'
+import { currentUser, isLeader, isMentor, useSession, type User } from '../../core/session'
 import type { Member } from '../../core/members'
 import type { Role } from '../../core/roles'
 import { isLive, supabase } from '../../core/supabase'
@@ -33,7 +33,13 @@ import { money, plural } from '../../core/format'
 import type { Notice, Tone } from '../../core/registry'
 import { toCsv } from '../attendance/data'
 import type { BomSystem, Part } from '../bom/data'
-import type { Item as InventoryItem } from '../inventory/data'
+import {
+  addItem as addInventoryPart,
+  changeStock,
+  checkItem as checkInventoryPart,
+  itemsTable as inventoryTable,
+  type Item as InventoryItem,
+} from '../inventory/data'
 import { compressReceiptImage, type ImageEncoder } from './receipt-image'
 
 // ---------------------------------------------------------------------------
@@ -827,16 +833,81 @@ export async function addItem(item: NewItem, bomPartId: string | null = null): P
   return itemsTable.insert(fields)
 }
 
-export async function changeItem(item: PurchaseItem, changes: NewItem): Promise<Result<PurchaseItem>> {
+/**
+ * Save changes to an item. When it moves to In Shop and `plan.add` is
+ * ticked, what arrived is added to Inventory too.
+ */
+export async function changeItem(item: PurchaseItem, changes: NewItem, plan: InventoryPlan | null = null): Promise<Result<PurchaseItem>> {
   const problem = checkItem(changes)
   if (problem) return fail(problem)
   if (isOrderChange(item, changes) && !canOrder(currentUser(), buyersTable.rows())) return fail(NOT_A_BUYER)
+  const shelving = plan !== null && changes.status === 'in_shop' && item.status !== 'in_shop'
+  const planProblem = shelving ? checkPlan(plan, inventoryTable.rows()) : null
+  if (planProblem) return fail(planProblem)
+  const saved = await saveChanges(item, changes)
+  if (!saved.ok || !shelving) return saved
+  return addToInventory(saved.value, plan)
+}
+
+async function saveChanges(item: PurchaseItem, changes: NewItem): Promise<Result<PurchaseItem>> {
   const fields = itemFields(changes)
   // Placing an order without picking who ordered it: it's whoever placed it.
   // The team database fills that in itself; demo mode has no database, so
   // it's done here instead.
   const placing = changes.status === 'placed' && item.status !== 'placed' && fields.ordered_by === item.ordered_by
   return itemsTable.update(item.id, !isLive && placing ? { ...fields, ordered_by: currentUser()?.id ?? null } : fields)
+}
+
+/**
+ * Who says an order has arrived, and puts it in the shop: student leaders,
+ * as well as the mentors, admins and purchasers who change orders. These
+ * two steps are all a student leader can change about an order.
+ */
+export function canReceive(user: Pick<User, 'id' | 'role'> | null, buyers: Buyer[]): boolean {
+  return !!user && (isLeader(user.role) || canOrder(user, buyers))
+}
+
+/** Whether the signed-in person can mark an order as received or in the shop. */
+export function useCanReceive(): boolean {
+  return canReceive(useSession(), useBuyers())
+}
+
+const NOT_RECEIVING = 'Only student leaders, mentors and purchasers mark an order as received or in the shop. Ask one of them.'
+
+/** The item as it is now: someone else may have changed it since the page drew it. */
+const latestItem = (item: PurchaseItem) => itemsTable.rows().find((i) => i.id === item.id) ?? item
+
+/**
+ * Mark an order that's on its way (Order Placed, Out of Stock or
+ * Backordered) as Received, changing nothing else about it. The database
+ * has the same rule: supabase/migrations/..._purchase_items_leaders_receive.sql.
+ */
+export async function receiveItem(item: PurchaseItem): Promise<Result<PurchaseItem>> {
+  if (!canReceive(currentUser(), buyersTable.rows())) return fail(NOT_RECEIVING)
+  const current = latestItem(item)
+  if (current.status === 'received') return fail(`${current.name} is already marked as received.`)
+  if (!isOnItsWay(current)) {
+    return fail(`${current.name} is ${statusOf(current.status).label}, so it can't be marked as received. Only an order that's on its way can. Ask a mentor or purchaser.`)
+  }
+  return itemsTable.update(current.id, { status: 'received' })
+}
+
+/**
+ * Mark a received item as In Shop, changing nothing else about it, and
+ * add it to Inventory when `plan.add` is ticked. For student leaders (and
+ * mentors and purchasers): they can only move it on from Received.
+ */
+export async function shelveItem(item: PurchaseItem, plan: InventoryPlan): Promise<Result<PurchaseItem>> {
+  if (!canReceive(currentUser(), buyersTable.rows())) return fail(NOT_RECEIVING)
+  const current = latestItem(item)
+  if (current.status !== 'received') {
+    return fail(`${current.name} is ${statusOf(current.status).label}, so it can't be put in the shop from here. Only something marked Received can.`)
+  }
+  const problem = checkPlan(plan, inventoryTable.rows())
+  if (problem) return fail(problem)
+  const saved = await itemsTable.update(current.id, { status: 'in_shop' })
+  if (!saved.ok) return saved
+  return addToInventory(saved.value, plan)
 }
 
 /** Anyone can delete a request; only mentors and purchasers can delete an order. */
@@ -1029,4 +1100,127 @@ export function requestsByBomPart(items: PurchaseItem[]): Map<string, PurchaseIt
 /** For the BOM page: each part's request, by part id. */
 export function useRequestsByBomPart(): Map<string, PurchaseItem> {
   return requestsByBomPart(useItems())
+}
+
+// ---------------------------------------------------------------------------
+// Adding what arrived to Inventory. When an item moves to In Shop, the form
+// has an Add to Inventory tick. It finds the Inventory part it most likely
+// is (matchParts()), and adds the number that arrived to that part's stock,
+// or adds a new part. Anyone on the team can add parts and stock, so this
+// needs no new database rule. Inventory's own data.ts does the saving.
+
+/** Why an Inventory part matched, strongest first. */
+export const MATCH_REASONS = ['Same vendor and part number', 'Same part number', 'Same product link', 'Same name'] as const
+export type MatchReason = (typeof MATCH_REASONS)[number]
+
+export interface PartMatch {
+  part: InventoryItem
+  reason: MatchReason
+}
+
+/** A product link without the bits that change between copies of it: capitals, "www.", a trailing slash or "#...". */
+function plainLink(link: string): string {
+  return link.trim().toLowerCase().replace(/#.*$/, '').replace(/^https:\/\/www\./, 'https://').replace(/\/+$/, '')
+}
+
+/** The name with capitals and extra spaces ignored. */
+const plainName = (name: string) => name.trim().toLowerCase().replace(/\s+/g, ' ')
+
+/**
+ * The Inventory parts a purchase item might be, strongest match first, each
+ * listed once with its strongest reason:
+ *
+ *   1. the same vendor and part number (Inventory's "AndyMark" is Andy Mark)
+ *   2. the same part number, from any vendor
+ *   3. the same product link
+ *   4. the same name
+ *
+ * Part numbers ignore capitals, spaces and dashes, so "REV-11-1850" matches
+ * "rev 11 1850". An empty part number, link or name never matches.
+ */
+export function matchParts(item: Pick<PurchaseItem, 'name' | 'vendor' | 'part_number' | 'link'>, parts: InventoryItem[]): PartMatch[] {
+  const number = plain(item.part_number ?? '')
+  const link = item.link ? plainLink(item.link) : ''
+  const name = plainName(item.name)
+  const reasonFor = (part: InventoryItem): MatchReason | null => {
+    const sameNumber = number !== '' && plain(part.vendor_part_number) === number
+    if (sameNumber && vendorFor(part.vendor) === item.vendor) return 'Same vendor and part number'
+    if (sameNumber) return 'Same part number'
+    if (link && part.link && plainLink(part.link) === link) return 'Same product link'
+    if (name && plainName(part.name) === name) return 'Same name'
+    return null
+  }
+  return parts
+    .map((part) => ({ part, reason: reasonFor(part) }))
+    .filter((m): m is PartMatch => m.reason !== null)
+    .sort((a, b) => MATCH_REASONS.indexOf(a.reason) - MATCH_REASONS.indexOf(b.reason) || a.part.name.localeCompare(b.part.name))
+}
+
+/** What the Add to Inventory tick does when an item moves to In Shop. */
+export interface InventoryPlan {
+  /** Whether to add it to Inventory at all. One-off parts don't need to be. */
+  add: boolean
+  /** The Inventory part to add to, or '' for a new part. */
+  partId: string
+  /** How many single parts go on the shelf. Starts as the number needed; a pack of 100 is 100. */
+  quantity: number
+  /** For a new part only: what Inventory lists it as. */
+  name: string
+  vendor: string
+  vendor_part_number: string
+  location: string
+}
+
+/**
+ * Where the tick starts: ticked, adding to the best match, when there is
+ * one; otherwise unticked, with a new part filled in from the item. The
+ * number to add starts as the number needed, as single parts.
+ */
+export function planFor(item: PurchaseItem, parts: InventoryItem[]): InventoryPlan {
+  const [best] = matchParts(item, parts)
+  return {
+    add: !!best,
+    partId: best?.part.id ?? '',
+    quantity: item.quantity,
+    name: item.name,
+    vendor: item.vendor,
+    vendor_part_number: item.part_number ?? '',
+    location: '',
+  }
+}
+
+/** Why a plan can't be done, or null if it can (or it isn't ticked). `parts` is every Inventory part. */
+export function checkPlan(plan: InventoryPlan, parts: InventoryItem[]): string | null {
+  if (!plan.add) return null
+  if (!Number.isInteger(plan.quantity) || plan.quantity < 1) return 'Enter how many single parts go on the shelf, 1 or more.'
+  if (plan.partId) {
+    return parts.some((p) => p.id === plan.partId) ? null : 'That Inventory part has been deleted. Pick another, or add a new part.'
+  }
+  return checkInventoryPart(newPart(plan, ''), parts)
+}
+
+function newPart(plan: InventoryPlan, link: string) {
+  return {
+    name: plan.name,
+    vendor: plan.vendor,
+    vendor_part_number: plan.vendor_part_number,
+    location: plan.location,
+    link,
+    quantity: plan.quantity,
+    low_stock_level: 0,
+  }
+}
+
+/** The note on the Inventory history line. */
+export const FROM_PURCHASING = 'Arrived (from Purchasing)'
+
+/** Add what arrived to Inventory, for an item already saved as In Shop. */
+async function addToInventory(item: PurchaseItem, plan: InventoryPlan): Promise<Result<PurchaseItem>> {
+  if (!plan.add) return ok(item)
+  const part = inventoryTable.rows().find((p) => p.id === plan.partId)
+  const added = part
+    ? await changeStock(part, plan.quantity, FROM_PURCHASING)
+    : await addInventoryPart(newPart(plan, item.link ?? ''))
+  if (added.ok) return ok(item)
+  return fail(`${item.name} is saved as In Shop, but it wasn't added to Inventory: ${added.error} Add it on the Inventory page.`)
 }
