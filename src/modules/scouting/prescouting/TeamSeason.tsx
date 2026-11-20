@@ -5,7 +5,7 @@ import type { Result } from '../../../core/table'
 import { toast } from '../../../core/toast'
 import { Panel, Pick, Stepper } from '../../../core/ui'
 import { COUNTERS, ENDGAME, ROLES, eventWhenWhere, getTeamEvents, getTeamMatches, getTeamSeasonRatings, tbaEventUrl, type TbaEvent, type TeamEventRating } from '../data'
-import { prescoutAverages, savePrescoutMatch, seasonMatches, usePrescoutMatches, type PrescoutMatch, type PrescoutMatchFields, type SeasonMatch } from './data'
+import { prescoutAverages, savePrescoutMatch, seasonLooks, seasonMatches, usePrescoutMatches, type PrescoutMatch, type PrescoutMatchFields, type SeasonMatch } from './data'
 
 /** Big enough to tap. */
 const TAP = { minHeight: 44 }
@@ -46,7 +46,8 @@ export default function TeamSeason(props: { event: string; team: number }) {
   // Match 13's numbers at each event. Extra: the events still show without them.
   const [xp] = useLoaded(useCallback(() => getTeamSeasonRatings(props.team, year), [props.team, year]))
   const looks = usePrescoutMatches(props.team)
-  const season = prescoutAverages(looks)
+  // Only this year's matches, the same as the compare page (#233), so last season's don't mix in.
+  const season = prescoutAverages(seasonLooks(looks, props.team, String(year)))
 
   return (
     <Panel title={`${year} season`} aside={<span className="note">Scouted from video</span>}>

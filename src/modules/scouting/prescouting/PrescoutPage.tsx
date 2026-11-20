@@ -6,7 +6,8 @@ import { PageHead, Panel, Pick } from '../../../core/ui'
 import type { Result } from '../../../core/table'
 import { MAX_TEAM, tbaTeamUrl, useTeamPhotos } from '../data'
 import { DRIVETRAINS, ENDGAME } from '../season'
-import { PRESCOUT_VIEWS, TABLE_ANSWER_LENGTH, setPrescoutView, starCount, usePrescoutView } from './data'
+import ComparePage, { CompareBar, CompareTick } from './Compare'
+import { COMPARE_PATH, PRESCOUT_VIEWS, TABLE_ANSWER_LENGTH, compactSummary, formatEpa, setPrescoutView, starCount, usePrescoutView } from './data'
 import {
   MAX_AUTO_FUEL, MAX_CYCLE_SECONDS, NO_ANSWERS, NO_FACTS, PRESCOUT_QUESTIONS, PRESCOUT_SORTS, STAR_GROUPS, TIERS, firstLine, hasMatch13, isEventKey, prescoutFacts, prescoutHref, prescoutOverview,
   reloadPrescoutTeams, savePrescout, searchPrescout, setPrescoutEvent, setTier, usePrescoutEvent, usePrescoutNotes, usePrescoutTeams, useStars,
@@ -15,6 +16,7 @@ import {
 import Stars from './Stars'
 import './prescouting.css'
 import TeamSeason from './TeamSeason'
+import TierBadge from './TierBadge'
 
 // Big enough to tap, and 16px text so phones don't zoom in on the box.
 const BOX = { minHeight: 46, fontSize: 16 }
@@ -27,17 +29,20 @@ const teamHref = prescoutHref
 // is one team's page with our notes (#117). ScoutingPage.tsx reads the
 // address and passes the event and team in. The event is in a team page's
 // address, so a link to it always opens the same team at the same event.
+// #/scouting/prescouting/<event>/compare/<team>,<team> compares 2 to 4
+// teams side by side (#233, Compare.tsx): there, `teams` is the last part.
 // Every scout can use it (#184).
-export default function PrescoutPage(props: { event?: string; team?: string }) {
+export default function PrescoutPage(props: { event?: string; team?: string; teams?: string }) {
   const { event, team } = props
   if (event === undefined) return <Overview />
+  if (team === COMPARE_PATH) return <ComparePage event={event} teams={props.teams ?? ''} />
   const number = Number(team)
   if (!isEventKey(event) || !Number.isInteger(number) || number < 1 || number > MAX_TEAM) {
     return (
       <Panel>
         <div className="panel-body" style={{ display: 'grid', gap: 10 }}>
           <p style={{ margin: 0 }}>That address isn't a team's prescouting page. Go back to the list and choose the team.</p>
-          <div className="toolbar"><a className="btn" href={prescoutHref()}>All teams</a></div>
+          <div className="toolbar"><a className="btn" style={{ minHeight: 44 }} href={prescoutHref()}>All teams</a></div>
         </div>
       </Panel>
     )
@@ -46,7 +51,8 @@ export default function PrescoutPage(props: { event?: string; team?: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// The overview: the event box, then a card for each team.
+// The overview: the event box, then the teams as cards, compact rows or a
+// table, each with a Compare tick (#233).
 
 function Overview() {
   const event = usePrescoutEvent()
@@ -98,6 +104,7 @@ function Overview() {
                 placeholder="Number or name"
               />
             </label>
+            <p className="note" style={{ margin: 0 }}>Tick the box on 2 to 4 teams to compare them side by side.</p>
             {/* Said aloud by screen readers when the list empties, since nothing else on the page changes. */}
             <div aria-live="polite">
               {teams.length > 0 && found.length === 0 && (
@@ -108,11 +115,13 @@ function Overview() {
               found.length > 0 && <TeamTable event={event} teams={found} headings={starred} />
             ) : (
               STAR_GROUPS.map((group) => (
-                <TeamGroup key={group} title={starred ? group : ''} event={event} teams={found.filter((t) => t.group === group)} />
+                <TeamGroup key={group} title={starred ? group : ''} event={event} teams={found.filter((t) => t.group === group)} compact={view === 'Compact'} />
               ))
             )}
           </div>
         )}
+        {/* Last in the panel, outside .panel-body's grid, so it can stay at the bottom of the screen while the list scrolls. */}
+        {result?.ok && <CompareBar event={event} />}
       </Panel>
     </>
   )
@@ -121,15 +130,77 @@ function Overview() {
 /**
  * Team stars, your stars, or everyone else, each in the chosen sort. The
  * headings show why a starred team stays above a team with a better EPA.
- * With no starred teams there's one list and no heading (title '').
+ * With no starred teams there's one list and no heading (title ''). Cards,
+ * or compact rows when `compact` (#233).
  */
-function TeamGroup(props: { title: string; event: string; teams: OverviewTeam[] }) {
+function TeamGroup(props: { title: string; event: string; teams: OverviewTeam[]; compact: boolean }) {
   if (props.teams.length === 0) return null
   return (
     <section style={{ display: 'grid', gap: 12 }} aria-label={props.title || 'Teams'}>
       {props.title && <h3 style={{ margin: '4px 0 0', fontSize: 15 }}>{props.title} <span className="note">({props.teams.length})</span></h3>}
-      {props.teams.map((t) => <TeamCard key={t.team} event={props.event} team={t} />)}
+      {props.compact ? <CompactList event={props.event} teams={props.teams} /> : props.teams.map((t) => <TeamCard key={t.team} event={props.event} team={t} />)}
     </section>
+  )
+}
+
+/** Compact (#233): a short row for each team, with a thin line between rows. Several rows can be open at once. */
+function CompactList(props: { event: string; teams: OverviewTeam[] }) {
+  const [open, setOpen] = useState<number[]>([])
+  const toggle = (team: number) => setOpen((now) => (now.includes(team) ? now.filter((t) => t !== team) : [...now, team]))
+  return (
+    <ul className="row-list" style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+      {props.teams.map((t) => <CompactRow key={t.team} event={props.event} team={t} open={open.includes(t.team)} onToggle={() => toggle(t.team)} />)}
+    </ul>
+  )
+}
+
+/**
+ * One team in Compact (#233), two short lines: their number, name, tier,
+ * EPA and stars; then their overall note, or what compactSummary() in
+ * data.ts gives instead. Tap it to open all their notes right under it,
+ * with Open notes and TBA; tap again to close it. The Compare tick is
+ * beside it.
+ */
+export function CompactRow(props: { event: string; team: OverviewTeam; open: boolean; onToggle: () => void }) {
+  const t = props.team
+  const stars = starCount(t.stars)
+  const summary = compactSummary(t.notes)
+  const notes = t.prescouted ? t.notes : null
+  return (
+    <li style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center', gap: '4px 8px', padding: '4px 0' }}>
+      <button type="button" className="prescout-row" aria-expanded={props.open} onClick={props.onToggle}>
+        <span className="prescout-row-line">
+          <strong className="tnum">{t.team}</strong>
+          <span className="prescout-row-name">{t.name}</span>
+          {t.notes?.tier && <TierBadge tier={t.notes.tier} />}
+          <span className="note tnum" style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>{`EPA ${formatEpa(t.epa)}`}</span>
+          {stars > 0 && <span className="note tnum" style={{ whiteSpace: 'nowrap' }} title={stars === 1 ? '1 star' : `${stars} stars`}>{`★${stars}`}</span>}
+        </span>
+        <span className={'prescout-row-note' + (summary ? '' : ' muted')}>{summary ?? 'Not prescouted yet'}</span>
+      </button>
+      <CompareTick event={props.event} team={t.team} />
+      {props.open && (
+        <div style={{ gridColumn: '1 / -1', display: 'grid', gap: 8, padding: '0 4px 10px', minWidth: 0 }}>
+          {notes ? (
+            <dl style={{ margin: 0, display: 'grid', gap: 4, fontSize: 14 }}>
+              <FactsLine notes={notes} />
+              {PRESCOUT_QUESTIONS.map((q) => (
+                <div key={q.key} style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+                  <dt style={{ display: 'inline', fontWeight: 600 }}>{`${q.label}: `}</dt>
+                  <dd style={{ display: 'inline', margin: 0, whiteSpace: 'pre-wrap' }} className={notes[q.key].trim() ? undefined : 'muted'}>{notes[q.key].trim() || '—'}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="muted" style={{ margin: 0, fontSize: 14 }}>Not prescouted yet</p>
+          )}
+          <div className="toolbar">
+            <a className="btn" style={{ minHeight: 44 }} href={teamHref(props.event, t.team)}>{t.prescouted ? 'Open notes' : 'Add notes'}</a>
+            <a className="btn" style={{ minHeight: 44 }} href={t.tbaUrl} target="_blank" rel="noreferrer" aria-label={`Team ${t.team} on The Blue Alliance`}>TBA</a>
+          </div>
+        </div>
+      )}
+    </li>
   )
 }
 
@@ -138,7 +209,8 @@ const CELL = { padding: '0 10px', whiteSpace: 'nowrap' } as const
 
 /**
  * The overview as a table: a row for each team, a column for each question
- * in PRESCOUT_QUESTIONS (so a new question gets a column by itself). It's
+ * in PRESCOUT_QUESTIONS (so a new question gets a column by itself), and a
+ * Compare tick by each team number (#233). It's
  * wider than a phone, so it scrolls sideways inside its own box, with the
  * team column kept in place (.grid-table, like Attendance). The star groups
  * are heading rows, so the columns stay lined up. `teams` come sorted and
@@ -185,17 +257,20 @@ function TeamRow(props: { event: string; team: OverviewTeam }) {
   return (
     <tr>
       <td style={CELL}>
-        {/* As tall as the row, so the whole cell is the tap target. */}
-        <a
-          href={teamHref(props.event, t.team)}
-          title={t.name}
-          aria-label={`Team ${t.team}, ${t.name}${t.notes?.tier ? `, tier ${t.notes.tier}` : ''}${stars ? `, ${stars === 1 ? '1 star' : `${stars} stars`}` : ''}`}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 44, minWidth: 44, color: 'inherit' }}
-        >
-          <strong className="tnum">{t.team}</strong>
-          {t.notes?.tier && <TierBadge tier={t.notes.tier} />}
-          {stars > 0 && <span className="note tnum">★{stars}</span>}
-        </a>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <CompareTick event={props.event} team={t.team} />
+          {/* As tall as the row, so the whole cell is the tap target. */}
+          <a
+            href={teamHref(props.event, t.team)}
+            title={t.name}
+            aria-label={`Team ${t.team}, ${t.name}${t.notes?.tier ? `, tier ${t.notes.tier}` : ''}${stars ? `, ${stars === 1 ? '1 star' : `${stars} stars`}` : ''}`}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 44, minWidth: 44, color: 'inherit' }}
+          >
+            <strong className="tnum">{t.team}</strong>
+            {t.notes?.tier && <TierBadge tier={t.notes.tier} />}
+            {stars > 0 && <span className="note tnum">★{stars}</span>}
+          </a>
+        </span>
       </td>
       {PRESCOUT_QUESTIONS.map((q) => {
         const answer = firstLine(t.notes?.[q.key] ?? '', TABLE_ANSWER_LENGTH)
@@ -292,8 +367,9 @@ export function TeamCard(props: { event: string; team: OverviewTeam }) {
         <p className="muted" style={{ margin: 0, fontSize: 14 }}>Not prescouted yet</p>
       )}
       <div className="toolbar">
-        <a className="btn" href={open}>{t.prescouted ? 'Open notes' : 'Add notes'}</a>
-        <a className="btn" href={t.tbaUrl} target="_blank" rel="noreferrer" aria-label={`Team ${t.team} on The Blue Alliance`}>TBA</a>
+        <a className="btn" style={{ minHeight: 44 }} href={open}>{t.prescouted ? 'Open notes' : 'Add notes'}</a>
+        <a className="btn" style={{ minHeight: 44 }} href={t.tbaUrl} target="_blank" rel="noreferrer" aria-label={`Team ${t.team} on The Blue Alliance`}>TBA</a>
+        <CompareTick event={props.event} team={t.team} words />
       </div>
     </section>
   )
@@ -309,11 +385,6 @@ function FactsLine(props: { notes: PrescoutNotes }) {
       <dd style={{ display: 'inline', margin: 0 }}>{facts.map((f) => `${f.label} ${f.value}`).join(' · ')}</dd>
     </div>
   )
-}
-
-/** A team's tier as a small badge (#191): "B", or "Tier B" when `long`. Colours in prescouting.css. */
-function TierBadge(props: { tier: Tier; long?: boolean }) {
-  return <span className="prescout-tier-badge" data-tier={props.tier} title={`Tier ${props.tier}`}>{props.long ? `Tier ${props.tier}` : props.tier}</span>
 }
 
 /**
@@ -340,11 +411,6 @@ function TierPanel(props: { event: string; team: number; tier: Tier | null }) {
       </div>
     </Panel>
   )
-}
-
-/** A Match 13 number to one decimal place, or "—" if Match 13 didn't give it. */
-function formatEpa(epa: number | null): string {
-  return epa === null ? '—' : epa.toFixed(1)
 }
 
 // ---------------------------------------------------------------------------

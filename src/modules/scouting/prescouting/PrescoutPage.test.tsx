@@ -3,12 +3,18 @@
 // scout can use Prescouting (#184).
 import { afterEach, describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
+import { DEMO_PEOPLE } from '../../../core/demo'
 import { EVENT_KEY, tbaTeamUrl } from '../data'
-import { NO_ANSWERS, NO_FACTS, PRESCOUT_QUESTIONS, prescoutViewStore, reloadPrescoutTeams, setPrescoutView } from './data'
-import PrescoutPage, { Match13Panel, TeamCard, TeamPage, TeamTable } from './PrescoutPage'
+import {
+  NO_ANSWERS, NO_FACTS, PRESCOUT_QUESTIONS, PRESCOUT_VIEWS, clearCompare, loadPrescoutTeams, prescoutOverview, prescoutTable, prescoutViewStore, reloadPrescoutTeams, setPrescoutView, starsTable, tickCompare,
+} from './data'
+import PrescoutPage, { CompactRow, Match13Panel, TeamCard, TeamPage, TeamTable } from './PrescoutPage'
 
 describe('the prescouting pages', () => {
-  afterEach(() => { prescoutViewStore.reset() })
+  afterEach(() => {
+    prescoutViewStore.reset()
+    clearCompare()
+  })
 
   it("start on this season's event, and say the teams are loading, for any scout (#184)", () => {
     const html = renderToString(<PrescoutPage />)
@@ -70,6 +76,82 @@ describe('the prescouting pages', () => {
     expect(html).toContain('Team stars')
     expect(html).toContain('Everyone else')
     expect(html).toContain('id="prescout-search"')
+  })
+
+  it('show the teams as compact rows when Compact is chosen, each with their overall note, keeping the star groups, sort and search (#233)', async () => {
+    await reloadPrescoutTeams(EVENT_KEY)
+    setPrescoutView('Compact')
+    const html = renderToString(<PrescoutPage />)
+    expect(html).toMatch(/aria-pressed="true"[^>]*>Compact</)
+    expect(html).not.toContain('<table')
+    // Team stars, then your stars, then everyone else, each by number.
+    const rows = [...html.matchAll(/class="prescout-row"[^>]*><span[^>]*><strong class="tnum">(\d+)/g)].map((m) => m[1])
+    expect(rows).toEqual(['9991', '9994', '9993', '4096', '9992', '9995'])
+    for (const text of ['Strong scorer, slow climb. Good first pick.', 'Key task: Playing defense', 'Not prescouted yet', 'Team stars', 'Your stars', 'id="prescout-search"']) {
+      expect(html).toContain(text)
+    }
+    // Every row starts closed.
+    expect(html).not.toContain('aria-expanded="true"')
+  })
+
+  it('open a compact row in place with all their notes, Open notes and TBA (#233)', async () => {
+    const list = await loadPrescoutTeams(EVENT_KEY)
+    if (!list.ok) throw new Error(list.error)
+    const team = prescoutOverview(list.value, prescoutTable.rows(), starsTable.rows(), DEMO_PEOPLE.alex, 'Team number').find((t) => t.team === 9991)!
+    const closed = renderToString(<CompactRow event={EVENT_KEY} team={team} open={false} onToggle={() => {}} />)
+    expect(closed).not.toContain('Expected auto paths')
+    const html = renderToString(<CompactRow event={EVENT_KEY} team={team} open onToggle={() => {}} />)
+    expect(html).toContain('aria-expanded="true"')
+    for (const q of PRESCOUT_QUESTIONS) expect(html).toContain(`${q.label}: `)
+    // The whole answer, not just its first line.
+    expect(html).toContain('Never broke down at their last event.')
+    expect(html).toContain('Open notes')
+    expect(html).toContain(`href="#/scouting/prescouting/${EVENT_KEY}/9991"`)
+    expect(html).toContain(`href="${tbaTeamUrl(9991, EVENT_KEY)}"`)
+  })
+
+  it('give every team a Compare tick in each view, and a Compare button once two are ticked (#233)', async () => {
+    await reloadPrescoutTeams(EVENT_KEY)
+    for (const view of PRESCOUT_VIEWS) {
+      setPrescoutView(view)
+      expect(renderToString(<PrescoutPage />), view).toContain('aria-label="Compare team 9992"')
+    }
+    // Before any tick there's no bar, but its empty aria-live words are
+    // already on the page, so a screen reader reads the first tick's hint.
+    let html = renderToString(<PrescoutPage />)
+    expect(html).not.toContain('prescout-compare-bar')
+    expect(html).toMatch(/<span aria-live="polite"[^>]*><\/span>/)
+    tickCompare(EVENT_KEY, 9991)
+    html = renderToString(<PrescoutPage />)
+    expect(html).toContain('Tick another team to compare')
+    expect(html).not.toContain('Compare (1)')
+    tickCompare(EVENT_KEY, 9993)
+    html = renderToString(<PrescoutPage />)
+    expect(html).toContain(`href="#/scouting/prescouting/${EVENT_KEY}/compare/9991,9993"`)
+    expect(html).toContain('Compare (2)')
+    expect(html.match(/checked=""/g)).toHaveLength(2)
+  })
+
+  it('open the compare page from its address, and say when the address is wrong (#233)', async () => {
+    await reloadPrescoutTeams(EVENT_KEY)
+    // A repeat in the address shows the team once.
+    const html = renderToString(<PrescoutPage event={EVENT_KEY} team="compare" teams="9991,9993,9991" />)
+    expect(html).toContain('href="#/scouting/prescouting"')
+    expect(html).toContain(`href="#/scouting/prescouting/${EVENT_KEY}/9991"`)
+    expect(html).toContain(`href="#/scouting/prescouting/${EVENT_KEY}/9993"`)
+    expect(html.match(/aria-label="Team 9991 on The Blue Alliance"/g)).toHaveLength(1)
+    for (const q of PRESCOUT_QUESTIONS) expect(html).toContain(`>${q.label}</h3>`)
+    for (const text of ['Fast, reliable auto. Good second pick.', 'Strong scorer, slow climb. Good first pick.', 'Playing defense', 'class="prescout-compare"']) {
+      expect(html).toContain(text)
+    }
+    // The highest EPA is bold.
+    expect(html).toContain('<strong class="tnum">39.6</strong>')
+    expect(html).toContain('28.9')
+    expect(html).not.toContain('<strong class="tnum">28.9</strong>')
+
+    for (const [event, teams] of [[EVENT_KEY, '9991'], [EVENT_KEY, 'abc'], ['nope', '9991,9993']]) {
+      expect(renderToString(<PrescoutPage event={event} team="compare" teams={teams} />), teams).toContain('tick the teams you want')
+    }
   })
 
   it('give a team with no notes a table row with a dash in every answer, and show how many stars a team has', () => {

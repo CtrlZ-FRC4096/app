@@ -81,10 +81,11 @@ const PICKLISTS: Record<string, string> = { Ranked: 'Picklist', Mine: 'My pickli
 // strategy page by its address says it's strategy only.
 //
 // Prescouting (#184, prescouting/PrescoutPage.tsx) is for every scout:
-// #/scouting/prescouting lists the teams, and
-// #/scouting/prescouting/<event>/<team> is one team's page.
+// #/scouting/prescouting lists the teams,
+// #/scouting/prescouting/<event>/<team> is one team's page, and
+// #/scouting/prescouting/<event>/compare/<team>,<team> compares teams (#233).
 export default function ScoutingPage() {
-  const [rest = '', teamText, prescoutTeam] = useRoute().rest
+  const [rest = '', teamText, prescoutTeam, compareList] = useRoute().rest
   const strategy = useIsStrategy()
   const found = rest === 'team' ? 'Team' : Object.keys(PATHS).find((v) => PATHS[v] === rest) ?? 'Overview'
   // Off the strategy team, the overview's address is the match form.
@@ -107,7 +108,7 @@ export default function ScoutingPage() {
         </Panel>
       )}
       {!blocked && view === 'Overview' && <Overview paths={{ ...PATHS, Teams: 'team' }} />}
-      {view === 'Prescouting' && <PrescoutPage event={teamText} team={prescoutTeam} />}
+      {view === 'Prescouting' && <PrescoutPage event={teamText} team={prescoutTeam} teams={compareList} />}
       <div hidden={view !== 'Match'}><MatchForm /></div>
       <div hidden={view !== 'Pit'}><PitForm /></div>
       {view === 'Schedule' && <Schedule />}

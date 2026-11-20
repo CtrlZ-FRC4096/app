@@ -10,3 +10,28 @@
 /* The S to F buttons on a team's page: big enough to tap, and they wrap
    rather than scroll sideways on a narrow phone. */
 .prescout-tier .pick button { min-width: 48px; min-height: 48px; font-size: 18px; font-weight: 700; }
+
+/* Compact (#233): two short lines per team, with a thin line between rows
+   (.row-list). min-width: 0 at every level lets a long name be cut short
+   with "…" instead of making the page scroll sideways. */
+.prescout-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; width: 100%; min-width: 0; min-height: 44px; padding: 6px 4px; border: 0; border-radius: var(--radius); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color var(--motion-fast) ease; }
+.prescout-row[aria-expanded='true'] { background: var(--surface-2); }
+@media (hover: hover) { .prescout-row:hover { background: var(--surface-2); } }
+.prescout-row-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.prescout-row-name, .prescout-row-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prescout-row-note { font-size: 14px; }
+
+/* The compare page (#233). Each section has a cell per team: stacked on a
+   phone, so nothing scrolls sideways, and one column per team from 720px. */
+.prescout-compare-section { display: grid; gap: 6px; padding: 12px 16px; }
+.prescout-compare-section + .prescout-compare-section { border-top: 1px solid var(--line); }
+.prescout-compare { display: grid; gap: 10px; }
+.prescout-compare > * { min-width: 0; overflow-wrap: anywhere; }
+@media (min-width: 720px) {
+  .prescout-compare { grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 16px; }
+}
+
+/* The bar with Clear and Compare (n) under the team list. Sticky, so it
+   stays at the bottom of the screen while the list scrolls, above the
+   iPhone's home bar. Under the top bar (20), toasts (30) and menus (40). */
+.prescout-compare-bar { position: sticky; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); z-index: 10; margin: 0 12px 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
