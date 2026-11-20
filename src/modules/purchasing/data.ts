@@ -203,7 +203,7 @@ const EXAMPLE_ITEMS: PurchaseItem[] = [
   example({ name: 'Ethernet cables, 5 ft (10 pack)', status: 'wait', vendor: 'Amazon', type: 'Electrical', part_number: null, quantity: 1, requested_by: DEMO_PEOPLE.jordan }, '2026-10-29T18:20:00Z'),
   example({ name: 'Timing belt, 60T', status: 'placed', vendor: 'West Coast Products', type: 'Drive Base', part_number: 'EXAMPLE-TB-60', quantity: 4, price: 18.75, requested_by: DEMO_PEOPLE.sam, ...ORDERED, estimated_arrival: '2026-12-15', ordered_on: '2026-11-10', tracking: 'EXAMPLE-TRACK-0001' }, '2026-10-24T20:00:00Z'),
   example({ name: 'Hex bearing, 1/2 in', status: 'backordered', vendor: 'Andy Mark', type: 'Hardware', part_number: 'EXAMPLE-HB-12', quantity: 12, price: 3.2, requested_by: DEMO_PEOPLE.alex, ...ORDERED, estimated_arrival: '2026-11-01', ordered_on: '2026-10-23' }, '2026-10-22T23:15:00Z'),
-  example({ name: 'Motor controller', status: 'received', vendor: 'CTRE', type: 'Electrical', part_number: 'EXAMPLE-MC-1', quantity: 1, price: 120, requested_by: DEMO_PEOPLE.pat, ...ORDERED, ordered_on: '2026-10-21', tracking: 'EXAMPLE-TRACK-0002' }, '2026-10-21T17:00:00Z'),
+  example({ name: 'Motor controller', status: 'received', vendor: 'CTRE', type: 'Electrical', part_number: 'EXAMPLE-MC-1', quantity: 1, price: 120, requested_by: DEMO_PEOPLE.pat, ...ORDERED, ordered_on: '2026-10-21', tracking: '1ZEXAMPLE000000002' }, '2026-10-21T17:00:00Z'),
   example({ name: 'Polycarbonate sheet, 1/8 in', status: 'in_shop', vendor: 'McMaster', type: 'Mechanical', part_number: 'EXAMPLE-PC-18', quantity: 1, price: 42.5, requested_by: DEMO_PEOPLE.jordan, ...ORDERED }, '2026-10-20T18:30:00Z'),
   // In the shop already, so the BOM's Drivetrain shows a part that arrived.
   example({ name: 'Absolute encoder', status: 'in_shop', vendor: 'CTRE', type: 'Drive Base', part_number: 'EXAMPLE-ENC-1', quantity: 4, price: 39, requested_by: DEMO_PEOPLE.sam, ...ORDERED, bom_part_id: BOM_ABSOLUTE_ENCODER }, '2026-10-19T17:30:00Z'),
@@ -351,6 +351,49 @@ export function arrivalText(item: PurchaseItem): string | null {
 /** "Ordered Nov 10", or nothing if there's no date ordered. */
 export function orderedText(item: Pick<PurchaseItem, 'ordered_on'>): string | null {
   return item.ordered_on ? `Ordered ${dayText(item.ordered_on)}` : null
+}
+
+/** The shipping companies the team's orders come by. */
+export type Carrier = 'UPS' | 'USPS' | 'FedEx'
+
+/** Each carrier's own tracking page. The tracking number goes on the end. */
+const TRACKING_PAGES: Record<Carrier, string> = {
+  UPS: 'https://www.ups.com/track?tracknum=',
+  USPS: 'https://tools.usps.com/go/TrackConfirmAction?tLabels=',
+  FedEx: 'https://www.fedex.com/fedextrack/?trknbr=',
+}
+
+/** A tracking number as the carriers write it: no spaces or dashes, in capitals. */
+function tidyTracking(number: string): string {
+  return number.replace(/[\s-]/g, '').toUpperCase()
+}
+
+/**
+ * Which carrier a tracking number belongs to, worked out from its shape
+ * (#225), or null if it doesn't look like any of them. Spaces, dashes and
+ * small letters don't matter. It's a good guess, not a promise: only the
+ * carrier knows if the number is real.
+ */
+export function carrierFor(number: string): Carrier | null {
+  const tidy = tidyTracking(number)
+  // UPS: "1Z" and 16 more letters and digits.
+  if (/^1Z[0-9A-Z]{16}$/.test(tidy)) return 'UPS'
+  // USPS: 20 to 22 digits starting with 9, or 2 letters, 9 digits and "US".
+  // This comes before FedEx, whose numbers can also be 20 digits.
+  if (/^9\d{19,21}$/.test(tidy) || /^[A-Z]{2}\d{9}US$/.test(tidy)) return 'USPS'
+  // FedEx: 12, 15 or 20 digits.
+  if (/^(\d{12}|\d{15}|\d{20})$/.test(tidy)) return 'FedEx'
+  return null
+}
+
+/**
+ * A link to the carrier's own tracking page for a tracking number, like
+ * "Track on UPS", or null if we can't tell whose number it is.
+ */
+export function trackingLink(number: string | null): { label: string; url: string } | null {
+  const carrier = number ? carrierFor(number) : null
+  if (!number || !carrier) return null
+  return { label: `Track on ${carrier}`, url: TRACKING_PAGES[carrier] + encodeURIComponent(tidyTracking(number)) }
 }
 
 const NOT_A_BUYER = 'Only mentors and purchasers place and change orders. Ask a mentor.'
