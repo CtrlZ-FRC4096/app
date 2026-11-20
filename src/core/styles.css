@@ -182,6 +182,17 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .menu-item-name { font-weight: 600; }
 /* With the Size setting (src/core/size.ts), 100vw doesn't shrink with the zoom: a menu is at most the screen less 32px. */
 .menu-panel { max-width: min(300px, calc(100vw / var(--zoom, 1) - 32px)); }
+/*
+ * A long menu scrolls inside itself and ends 16px above the bottom of the
+ * screen (and above an iPhone's home bar). The top bar stays put when the
+ * page scrolls, so without this the end of a long menu is out of reach.
+ * Menu in src/App.tsx sets --menu-room while the menu is open: the space
+ * from the top of the panel to the bottom of the screen, in CSS pixels.
+ * overscroll-behavior: contain stops a scroll over a menu from scrolling the
+ * page behind it. scroll-padding-block stops an item you Tab to 8px inside
+ * the edge, so its focus ring isn't cut off.
+ */
+.menu-panel { max-height: calc(var(--menu-room) - 16px - env(safe-area-inset-bottom, 0px)); overflow-y: auto; overscroll-behavior: contain; scroll-padding-block: 8px; }
 .menu-item[aria-current='page'], .menu-item[aria-pressed='true'] { background: var(--blue-soft); }
 .menu-item[aria-current='page'] .menu-item-name, .menu-item[aria-pressed='true'] .menu-item-name { color: var(--blue); }
 .menu-head { display: grid; gap: 1px; padding: 6px 10px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }

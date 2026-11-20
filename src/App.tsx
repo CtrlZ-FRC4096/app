@@ -1,4 +1,4 @@
-import { createElement, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createElement, lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { modules } from './modules'
 import { ROLES, canOpen, roleName, signOut, switchUser, useAccess, useSession, useSignIn, type User } from './core/session'
 import { isLive } from './core/supabase'
@@ -7,6 +7,7 @@ import { initials } from './core/members'
 import { groupModules, useNothingHidden, type ModuleDefinition } from './core/registry'
 import { href, useRoute } from './core/router'
 import { resetAllStores } from './core/store'
+import { useSize, zoomFor } from './core/size'
 import { toast, useToast } from './core/toast'
 import { ErrorBoundary, QuietBoundary } from './core/ErrorBoundary'
 import { loadPage } from './core/updates'
@@ -298,6 +299,40 @@ function Menu(props: {
   children: ReactNode
 }) {
   const button = useRef<HTMLButtonElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
+  const zoom = zoomFor(useSize())
+
+  /*
+   * While the menu is open, tell styles.css how much room there is under it,
+   * so a long menu scrolls instead of running off the bottom of the screen
+   * (see .menu-panel there). Both ends are counted in CSS pixels from the top
+   * of the page. Adding up offsetTop gives where the panel starts in every
+   * browser, even while it slides into place. (getBoundingClientRect doesn't:
+   * with the Size zoom, Safari before 26.4 gets it wrong once the page has
+   * scrolled.) scrollY and innerHeight are screen pixels, so they're divided
+   * by the zoom. It measures again when a phone turns or the window changes
+   * size. Then the menu starts at the top, not where it was scrolled to last
+   * time, with the page you're on in view. A layout effect runs before the
+   * menu is drawn, so it never shows at full length first. Returns a cleanup
+   * on purpose. --menu-room stays after closing, so the menu keeps its size
+   * while it fades out.
+   */
+  useLayoutEffect(() => {
+    const element = panel.current
+    if (!props.open || !element) return
+    const measure = () => {
+      let top = 0
+      for (let box: HTMLElement | null = element; box; box = box.offsetParent as HTMLElement | null) top += box.offsetTop
+      const bottom = (window.scrollY + window.innerHeight) / zoom
+      element.style.setProperty('--menu-room', `${bottom - top}px`)
+    }
+    measure()
+    element.scrollTop = 0
+    element.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest' })
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [props.open, zoom])
+
   return (
     <div
       className={'menu' + (props.className ? ' ' + props.className : '')}
@@ -320,7 +355,7 @@ function Menu(props: {
         {props.label}
         <span className="chev" aria-hidden="true" />
       </button>
-      <div className="menu-panel" id={props.panelId} hidden={!props.open}>
+      <div ref={panel} className="menu-panel" id={props.panelId} hidden={!props.open}>
         {props.children}
       </div>
     </div>
