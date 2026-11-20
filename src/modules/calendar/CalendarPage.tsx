@@ -38,6 +38,7 @@ import {
   type SignUp,
   type SignUpLink,
 } from './data'
+import { MonthView } from './MonthView'
 
 // The page reads the events and sign-ups with hooks (useCalendar,
 // useSignUps) and changes them with functions from data.ts. It never saves
@@ -96,7 +97,9 @@ export default function CalendarPage() {
         </Panel>
       ) : (
         days.map((day) => (
-          <Panel key={day.day} title={day.label}>
+          // The heading has an id, so the month below can scroll to it. tabIndex -1 lets it take the
+          // focus, and the margin keeps it clear of the top bar, like InView.
+          <Panel key={day.day} title={<h2 id={dayId(day.day)} tabIndex={-1} style={{ scrollMarginTop: 160 }}>{day.label}</h2>}>
             <div className="row-list">
               {day.events.map((event) =>
                 changing === event.id ? (
@@ -119,8 +122,27 @@ export default function CalendarPage() {
           </Panel>
         ))
       )}
+      <MonthView events={events} loadedAt={loadedAt} onPickDay={goToDay} />
     </>
   )
+}
+
+/** The id of a day's heading in the list, for the month to go to. */
+const dayId = (day: string) => `calendar-day-${day}`
+
+/**
+ * Scroll up to a day in the list from the month. This scrolls by id, not with
+ * a #link: the part of the address after # says which page is open
+ * (src/core/router.ts), so a #link would leave the page.
+ */
+function goToDay(day: string) {
+  const heading = document.getElementById(dayId(day))
+  if (!heading) return
+  // A jump, not a glide, on devices set to reduce motion, like InView.
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  heading.scrollIntoView({ block: 'start', behavior: still ? 'auto' : 'smooth' })
+  // So keyboard and screen reader users carry on from that day.
+  heading.focus({ preventScroll: true })
 }
 
 /** One event: when and where, who's going, and its buttons. */

@@ -23,6 +23,9 @@
  *     kept in the calendar_signups table
  *     (supabase/migrations/..._calendar_signups.sql), one row per person
  *     per event.
+ *
+ * monthGrid() lays out a month for the calendar grid at the bottom of the
+ * page (#227).
  */
 import { useEffect } from 'react'
 import {
@@ -49,6 +52,8 @@ export const WEEKS_AHEAD = 8
 const DAY_MS = 24 * 60 * 60 * 1000
 /** Load again when the events on this device are older than this. */
 const STALE_MS = 10 * 60 * 1000
+/** How far ahead loadEvents() asks for events. The month's "aren't loaded" note uses it too, so they can't disagree. */
+const AHEAD_MS = WEEKS_AHEAD * 7 * DAY_MS
 
 export interface CalendarState {
   events: CalendarEvent[]
@@ -65,7 +70,7 @@ const loadingStore = createStore('calendar-loading', 1, () => false, { persist: 
 export async function loadEvents(now: Date = new Date()): Promise<void> {
   if (loadingStore.get()) return
   loadingStore.set(true)
-  const result = await getCalendarEvents(now, new Date(now.getTime() + WEEKS_AHEAD * 7 * DAY_MS))
+  const result = await getCalendarEvents(now, new Date(now.getTime() + AHEAD_MS))
   calendarStore.set((prev) => (result.ok ? { events: result.value, loadedAt: now.toISOString(), error: null } : { ...prev, error: result.error }))
   loadingStore.set(false)
 }
@@ -102,6 +107,28 @@ export function chicagoDay(date: Date): string {
 
 const addDays = (day: string, days: number) => new Date(Date.parse(`${day}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10)
 const startTime = (event: CalendarEvent) => Date.parse(event.allDay ? `${event.start}T00:00:00-06:00` : event.start)
+/** Sunday is 0 and Saturday 6, for a day like 2026-11-03, whatever the phone's time zone. */
+const weekday = (day: string) => new Date(`${day}T12:00:00Z`).getUTCDay()
+/** The day an event starts on, in Chicago. */
+const firstDay = (event: CalendarEvent) => (event.allDay ? event.start : chicagoDay(new Date(event.start)))
+
+/**
+ * The last day an event is on, in Chicago. An all-day event's end is already
+ * its last day (the server function takes a day off Google's end), so don't
+ * take another day off. A timed event that ends at midnight isn't on the next day.
+ */
+function lastDay(event: CalendarEvent): string {
+  if (event.allDay) return event.end
+  const first = firstDay(event)
+  const last = chicagoDay(new Date(Date.parse(event.end) - 1))
+  return last < first ? first : last
+}
+
+/** The day the list shows an event under: the day it starts, or today if it's already going. */
+function listedOn(event: CalendarEvent, today: string): string {
+  const first = firstDay(event)
+  return first < today ? today : first
+}
 
 /** Whether an event is over. */
 export function hasEnded(event: CalendarEvent, now: Date = new Date()): boolean {
@@ -138,8 +165,8 @@ export function eventsByDay(events: CalendarEvent[], now: Date = new Date()): Da
   const days = new Map<string, CalendarEvent[]>()
   for (const event of [...events].sort((a, b) => startTime(a) - startTime(b))) {
     if (hasEnded(event, now)) continue
-    const first = event.allDay ? event.start : chicagoDay(new Date(event.start))
-    const day = first < today ? today : first
+    // The month grid uses listedOn() too, so tapping an event there always finds its day here.
+    const day = listedOn(event, today)
     days.set(day, [...(days.get(day) ?? []), event])
   }
   return [...days.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, list]) => ({ day, label: dayLabel(day, today), events: list }))
@@ -157,6 +184,129 @@ export function timeOfDay(event: CalendarEvent): string {
   const [from, to] = [clock(start), clock(end)]
   // "6 – 9 PM" rather than "6 PM – 9 PM", but "11 AM – 2 PM" when it crosses noon.
   return from.slice(-2) === to.slice(-2) ? `${from.slice(0, -3)} – ${to}` : `${from} – ${to}`
+}
+
+// ---------------------------------------------------------------------------
+// The month at the bottom of the page (#227).
+
+/** The month it is in Chicago, like 2026-11. */
+export function thisMonth(now: Date = new Date()): string {
+  return chicagoDay(now).slice(0, 7)
+}
+
+/** A month like 2026-11 moved on, or back with a negative number: addMonths('2026-12', 1) is '2027-01'. */
+export function addMonths(month: string, months: number): string {
+  const [year, number] = month.split('-').map(Number)
+  return new Date(Date.UTC(year, number - 1 + months, 1)).toISOString().slice(0, 7)
+}
+
+/** One event on one day of the month. */
+export interface GridEvent {
+  event: CalendarEvent
+  /** "6 PM Build session". Just the title for all-day events, and on the later days of one that goes past midnight. */
+  label: string
+  /** The day the list shows it under, which tapping it goes to. */
+  listDay: string
+}
+
+/** One square of the month. */
+export interface GridDay {
+  /** Like 2026-11-03. */
+  day: string
+  /** The day of the month, like 3. */
+  date: number
+  /** Like "Tue, Nov 3", for screen readers. */
+  name: string
+  /** False for the greyed days from the months before and after. */
+  inMonth: boolean
+  isToday: boolean
+  /** Before today: it shows no events. */
+  past: boolean
+  /** All its events, all-day ones first, then by start time. A phone shows a dot for each. */
+  events: GridEvent[]
+  /** The titles to show: all of them, or the first 2 when there are more than 3. */
+  shown: GridEvent[]
+  /** How many aren't in `shown`, for "+2 more". */
+  more: number
+  /** The day in the list that tapping this day goes to, or null when nothing is on. */
+  listDay: string | null
+}
+
+export interface MonthGrid {
+  /** Like 2026-11. */
+  month: string
+  /** Like "November 2026". */
+  title: string
+  /** Sunday to Saturday, 4 to 6 weeks: as many as the month needs. */
+  weeks: GridDay[][]
+  /** "Events before today aren't shown.", "Events after Jan 13 aren't loaded.", both, or null. */
+  note: string | null
+}
+
+/** The most titles a day of the month shows. With more, it shows one fewer and "+2 more". */
+const GRID_TITLES = 3
+
+/**
+ * A month as a calendar grid: weeks from Sunday to Saturday, filled out with
+ * the days before and after the month, each with its events in Chicago time,
+ * like eventsByDay(). An event that lasts several days is on each of them.
+ * Past days show none, because the page only loads events from now on.
+ * `loadedAt` is when the events on this device were loaded (null: never).
+ */
+export function monthGrid(month: string, events: CalendarEvent[], loadedAt: string | null = null, now: Date = new Date()): MonthGrid {
+  const today = chicagoDay(now)
+  const first = `${month}-01`
+  const last = addDays(`${addMonths(month, 1)}-01`, -1)
+  // The Sunday on or before the 1st, and the Saturday on or after the last day.
+  const start = addDays(first, -weekday(first))
+  const end = addDays(last, 6 - weekday(last))
+  // Each event still to come, with its days worked out once (chicagoDay() is slow-ish on a cheap
+  // phone). Ended ones are dropped with hasEnded(), like the list. All-day events first, then by start.
+  const upcoming = events
+    .filter((event) => !hasEnded(event, now))
+    .sort((a, b) => Number(b.allDay) - Number(a.allDay) || startTime(a) - startTime(b))
+    .map((event) => ({ event, first: firstDay(event), last: lastDay(event), listDay: listedOn(event, today) }))
+
+  const weeks: GridDay[][] = []
+  for (let day = start; day <= end; day = addDays(day, 1)) {
+    if (weekday(day) === 0) weeks.push([])
+    const past = day < today
+    const on: GridEvent[] = past
+      ? []
+      : upcoming
+          .filter((e) => e.first <= day && day <= e.last)
+          .map((e) => ({
+            event: e.event,
+            // The start time only on the day it starts.
+            label: !e.event.allDay && e.first === day ? `${clock(new Date(e.event.start))} ${e.event.title}` : e.event.title,
+            listDay: e.listDay,
+          }))
+    const shown = on.length > GRID_TITLES ? on.slice(0, GRID_TITLES - 1) : on
+    weeks[weeks.length - 1].push({
+      day,
+      date: Number(day.slice(8)),
+      name: writeDay(day),
+      inMonth: day.startsWith(month),
+      isToday: day === today,
+      past,
+      events: on,
+      shown,
+      more: on.length - shown.length,
+      // Its own day in the list, or, when all its events started earlier (a competition's
+      // second day), the day the list shows them under.
+      listDay: on.some((e) => e.listDay === day) ? day : (on[0]?.listDay ?? null),
+    })
+  }
+
+  // loadEvents() asked for events from when it loaded to AHEAD_MS later. The day where that
+  // stops is only partly loaded, so the last whole day is the one before it.
+  const loadedFrom = loadedAt ? Date.parse(loadedAt) : now.getTime()
+  const lastLoaded = addDays(chicagoDay(new Date(loadedFrom + AHEAD_MS)), -1)
+  const notes = [
+    start < today && "Events before today aren't shown.",
+    end > lastLoaded && `Events after ${writeDay(lastLoaded, { month: 'short', day: 'numeric' })} aren't loaded.`,
+  ].filter(Boolean)
+  return { month, title: writeDay(first, { month: 'long', year: 'numeric' }), weeks, note: notes.length ? notes.join(' ') : null }
 }
 
 /** The event happening now, or the next one to come, or null. */

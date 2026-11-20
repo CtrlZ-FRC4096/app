@@ -1,0 +1,106 @@
+/* Calendar: the month at the bottom of the page (MonthView.tsx, #227).
+   Seven columns share the width, so it fits any screen without scrolling
+   sideways, and long titles end in "…". On a phone or tablet each day shows a
+   dot per event instead of titles. Only the app's colour variables (src/core/styles.css). */
+
+/* Previous, Today and Next: big enough to tap. */
+.calendar-nav .btn { min-height: 44px; }
+
+/* The note above the grid, with a line under it like the panel's heading. */
+.calendar-note { margin: 0; border-bottom: 1px solid var(--line); }
+
+/* The 1px gaps let the grid's colour show through as lines between the squares. */
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+  /* Keeps the panel's round bottom corners, like .table-wrap in styles.css. */
+  border-radius: 0 0 calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px);
+  overflow: hidden;
+}
+.calendar-weekday {
+  padding: 6px 2px;
+  background: var(--surface);
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* A block, not a flex box or grid: those can let a long title push the square wider. */
+.calendar-day { position: relative; min-width: 0; min-height: 112px; padding: 4px; background: var(--surface); }
+/* Days from the months before and after are greyed. */
+.calendar-day[data-out] { background: var(--surface-2); color: var(--muted); }
+.calendar-day[data-past] .calendar-date { color: var(--muted); }
+
+.calendar-date {
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+/* Today: a blue circle. */
+.calendar-day[aria-current='date'] .calendar-date { background: var(--blue); color: var(--on-blue); }
+
+/* A day with events: its date is a button that covers the whole square, so a
+   tap anywhere on it goes to the day. The titles sit above it (z-index), so
+   each one goes to its own event. */
+button.calendar-date { cursor: pointer; }
+button.calendar-date::after { content: ''; position: absolute; inset: 0; }
+.calendar-day:has(> button.calendar-date:hover) { box-shadow: inset 0 0 0 1px var(--blue); }
+/* The focus ring goes round the whole square, since that's the button. */
+button.calendar-date:focus-visible { outline: none; }
+button.calendar-date:focus-visible::after { outline: 2px solid var(--orange); outline-offset: -2px; }
+
+.calendar-events { list-style: none; margin: 2px 0 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.calendar-event {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  min-height: 24px;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 18px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.calendar-event:hover, .calendar-event[data-all-day]:hover { background: var(--blue-soft); }
+.calendar-event:focus-visible { outline-offset: -2px; }
+/* A dot before each title, and a dot per event on a phone: blue, or orange for all-day events like competitions. */
+.calendar-event::before, .calendar-dot { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--blue); }
+.calendar-event::before { margin-right: 5px; vertical-align: 1px; }
+.calendar-event[data-all-day] { background: var(--surface-2); font-weight: 600; }
+.calendar-event[data-all-day]::before, .calendar-dot[data-all-day] { background: var(--orange); }
+.calendar-more { color: var(--muted); }
+.calendar-more::before { display: none; }
+.calendar-dots { display: none; }
+
+/* A phone (the same width styles.css uses), or any touch screen like a tablet:
+   dots instead of titles, and the whole square is the day's button. The titles
+   are too small to tap (under 44px), and a tap that missed one would go to the
+   day's button underneath, which can be a different day in the list. */
+@media (max-width: 560px), (pointer: coarse) {
+  .calendar-day { min-height: 52px; padding: 3px 2px; text-align: center; }
+  .calendar-events { display: none; }
+  .calendar-dots { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; margin-top: 3px; }
+}

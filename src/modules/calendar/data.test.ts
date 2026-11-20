@@ -10,6 +10,7 @@ import { membersTable } from '../../core/members'
 import CalendarPage from './CalendarPage'
 import {
   addEvent,
+  addMonths,
   blankEventForm,
   calendarNow,
   canManageSignUps,
@@ -25,6 +26,7 @@ import {
   formFromEvent,
   hasEnded,
   loadEvents,
+  monthGrid,
   nextEvent,
   nextEventText,
   notSignedUp,
@@ -38,6 +40,7 @@ import {
   signUpLinks,
   signUpsFor,
   signUpsTable,
+  thisMonth,
   timeOfDay,
   updatedText,
   useCalendarSummary,
@@ -84,6 +87,99 @@ describe('eventsByDay', () => {
       ['Thu, Nov 5', ['thu']],
     ])
     expect(eventsByDay([morning], now)).toEqual([])
+  })
+})
+
+describe('monthGrid', () => {
+  // Every square of a month, Sunday to Saturday, with today being Tue, Nov 3.
+  const squares = (month: string, events: CalendarEvent[] = []) => monthGrid(month, events, null, now).weeks.flat()
+
+  it('lays out a month in weeks from Sunday, with each event on each of its days in Chicago, and 2 titles and "+2 more" on a busy day', () => {
+    // [month, its first square, its last square, weeks]
+    const shapes: [string, string, string, number][] = [
+      ['2026-11', '2026-11-01', '2026-12-05', 5], // starts on a Sunday
+      ['2026-12', '2026-11-29', '2027-01-02', 5], // starts on a Tuesday
+      ['2027-01', '2026-12-27', '2027-02-06', 6], // starts on a Friday
+      ['2026-02', '2026-02-01', '2026-02-28', 4], // 28 days from a Sunday
+    ]
+    for (const [month, first, last, weeks] of shapes) {
+      const grid = monthGrid(month, [], null, now)
+      const all = grid.weeks.flat()
+      expect([all[0].day, all.at(-1)?.day, grid.weeks.length, grid.weeks.every((w) => w.length === 7)], month).toEqual([first, last, weeks, true])
+    }
+    const nov = squares('2026-11', [
+      event('regional', { title: 'Example Regional', allDay: true, start: '2026-11-06', end: '2026-11-08' }),
+      // 11 PM in Chicago is 5 AM the next day in UTC, the time zone the checks run in on GitHub.
+      event('late', { title: 'Late build', start: '2026-11-05T23:00:00-06:00', end: '2026-11-06T00:00:00-06:00' }),
+      event('overnight', { title: 'Lock-in', start: '2026-11-13T22:00:00-06:00', end: '2026-11-14T02:00:00-06:00' }),
+      event('trip', { title: 'Team trip', allDay: true, start: '2026-11-01', end: '2026-11-04' }),
+      event('over', { title: 'Shop cleanup', start: '2026-11-03T08:00:00-06:00', end: '2026-11-03T09:00:00-06:00' }),
+      ...['09', '12', '15', '18'].map((hour, i) => event(`busy-${i}`, { title: `Meeting ${i + 1}`, start: `2026-11-10T${hour}:00:00-06:00`, end: `2026-11-10T${hour}:30:00-06:00` })),
+      ...['09', '12', '15'].map((hour, i) => event(`three-${i}`, { title: `Meeting ${'ABC'[i]}`, start: `2026-11-11T${hour}:00:00-06:00`, end: `2026-11-11T${hour}:30:00-06:00` })),
+    ])
+    const on = (day: string) => nov.find((d) => d.day === day)!
+    // [what, day, the titles it shows, how many more]
+    const cases: [string, string, string[], number][] = [
+      ['nothing on a past day, even a trip that was on', '2026-11-02', [], 0],
+      ['today: the trip still going, not the event that ended this morning', '2026-11-03', ['Team trip'], 0],
+      ['the last day of an all-day event is included', '2026-11-04', ['Team trip'], 0],
+      ['an 11 PM event on its day in Chicago', '2026-11-05', ['11 PM Late build'], 0],
+      ['and not the next day, though it ends at midnight', '2026-11-06', ['Example Regional'], 0],
+      ['a competition on each of its days', '2026-11-08', ['Example Regional'], 0],
+      ['a busy day', '2026-11-10', ['9 AM Meeting 1', '12 PM Meeting 2'], 2],
+      ['but 3 events all show', '2026-11-11', ['9 AM Meeting A', '12 PM Meeting B', '3 PM Meeting C'], 0],
+      ['an event past midnight, with its time on its first day', '2026-11-13', ['10 PM Lock-in'], 0],
+      ['and just its title on the next', '2026-11-14', ['Lock-in'], 0],
+    ]
+    for (const [what, day, titles, more] of cases) expect([on(day).shown.map((e) => plain(e.label)), on(day).more], what).toEqual([titles, more])
+    expect(on('2026-11-10').events).toHaveLength(4)
+    expect(nov.filter((d) => d.isToday).map((d) => d.day)).toEqual(['2026-11-03'])
+    expect([on('2026-11-30').inMonth, on('2026-12-01').inMonth]).toEqual([true, false])
+  })
+
+  it('goes to the day the list shows each event under', () => {
+    const nov = squares('2026-11', [
+      event('regional', { title: 'Example Regional', allDay: true, start: '2026-11-06', end: '2026-11-08' }),
+      event('sat', { title: 'Saturday build', start: '2026-11-07T10:00:00-06:00', end: '2026-11-07T16:00:00-06:00' }),
+      event('trip', { title: 'Team trip', allDay: true, start: '2026-11-01', end: '2026-11-04' }),
+    ])
+    const on = (day: string) => nov.find((d) => d.day === day)!
+    // [what, day, where tapping the day goes, where tapping each of its events goes]
+    const taps: [string, string, string | null, string[]][] = [
+      ['a trip that started before today, listed under today', '2026-11-04', '2026-11-03', ['2026-11-03']],
+      ['a day with its own event, and the competition that started the day before', '2026-11-07', '2026-11-07', ['2026-11-06', '2026-11-07']],
+      ["a competition's last day, listed under its first", '2026-11-08', '2026-11-06', ['2026-11-06']],
+      ['a day with nothing on', '2026-11-09', null, []],
+    ]
+    for (const [what, day, goesTo, eventsGoTo] of taps) expect([on(day).listDay, on(day).events.map((e) => e.listDay)], what).toEqual([goesTo, eventsGoTo])
+  })
+
+  it("moves a month at a time, and says when past days are empty or a month's events aren't all loaded", () => {
+    expect([addMonths('2026-12', 1), addMonths('2027-01', -1), addMonths('2026-11', -11)]).toEqual(['2027-01', '2026-12', '2025-12'])
+    // Loaded at 3 PM on Nov 3, 8 weeks ahead: every event through Dec 28.
+    const sunday = new Date('2026-11-01T18:00:00Z')
+    // [what, month, now, when the events were loaded, the note]
+    const notes: [string, string, Date, string | null, RegExp | null][] = [
+      ['this month, with past days', '2026-11', now, null, /^Events before today aren't shown\.$/],
+      ['a month that starts today, all loaded', '2026-11', sunday, null, null],
+      ['past the 8 weeks', '2026-12', now, null, /^Events after Dec 28 aren't loaded/],
+      ['loaded 2 days earlier', '2026-12', now, '2026-11-01T21:00:00Z', /^Events after Dec 26/],
+      ['loaded a month ago, so both', '2026-11', now, '2026-10-01T15:00:00Z', /before today.*after Nov 25/],
+      ['a past month', '2026-10', now, null, /before today/],
+    ]
+    for (const [what, month, at, loadedAt, note] of notes) {
+      const found = monthGrid(month, [], loadedAt, at).note
+      if (note) expect(found, what).toMatch(note)
+      else expect(found, what).toBeNull()
+    }
+  })
+
+  it('shows this month below the list, with today marked', async () => {
+    await loadEvents()
+    const page = renderToString(createElement(CalendarPage))
+    const { title } = monthGrid(thisMonth(), [])
+    expect(page.indexOf(`>${title}<`)).toBeGreaterThan(page.lastIndexOf('class="row-list"'))
+    expect(page).toContain('aria-current="date"')
   })
 })
 
