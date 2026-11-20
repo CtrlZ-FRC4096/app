@@ -38,6 +38,7 @@ import {
   orderCsv,
   orderTotalText,
   waitingByVendor,
+  carrierFor,
   changeItem,
   checkItem,
   orderFieldsShown,
@@ -53,6 +54,7 @@ import {
   isOrderChange,
   removeBuyer,
   setBuyer,
+  trackingLink,
   requestFromBomPart,
   requestFromInventoryItem,
   requestsByBomPart,
@@ -770,6 +772,34 @@ describe('estimated arrival', () => {
 })
 
 describe('date ordered and tracking number', () => {
+  it("works out the carrier from a tracking number's shape", () => {
+    const cases: [string, string, ReturnType<typeof carrierFor>][] = [
+      ['UPS: 1Z and 16 more', '1ZEXAMPLE000000002', 'UPS'],
+      ['UPS with spaces and small letters', ' 1z exa mple 0000 0000 2 ', 'UPS'],
+      ['UPS one character short', '1ZEXAMPLE00000002', null],
+      ['USPS: 22 digits starting with 9', '9400100000000000000000', 'USPS'],
+      ['USPS with spaces, as the label prints it', '9400 1000 0000 0000 0000 00', 'USPS'],
+      ['USPS: 20 digits starting with 9, not FedEx', '94001000000000000000', 'USPS'],
+      ['USPS: 2 letters, 9 digits and US', 'EX000000000US', 'USPS'],
+      ['FedEx: 12 digits', '000000000012', 'FedEx'],
+      ['FedEx: 12 digits starting with 9', '900000000012', 'FedEx'],
+      ['FedEx: 15 digits', '000000000000015', 'FedEx'],
+      ['FedEx: 20 digits not starting with 9', '10000000000000000020', 'FedEx'],
+      ['13 digits', '0000000000013', null],
+      ['a made-up number', 'EXAMPLE-TRACK-0001', null],
+      ['nothing', '', null],
+    ]
+    for (const [what, number, carrier] of cases) expect(carrierFor(number), what).toBe(carrier)
+  })
+
+  it("links to the carrier's tracking page, or nothing when it can't tell the carrier", () => {
+    expect(trackingLink('1z exa-mple 0000 0000 2')).toEqual({ label: 'Track on UPS', url: 'https://www.ups.com/track?tracknum=1ZEXAMPLE000000002' })
+    expect(trackingLink('9400100000000000000000')).toMatchObject({ label: 'Track on USPS', url: expect.stringMatching(/^https:\/\/tools\.usps\.com\/.*9400100000000000000000$/) })
+    expect(trackingLink('000000000012')).toMatchObject({ label: 'Track on FedEx', url: expect.stringMatching(/^https:\/\/www\.fedex\.com\/.*000000000012$/) })
+    expect(trackingLink('EXAMPLE-TRACK-0001')).toBeNull()
+    expect(trackingLink(null)).toBeNull()
+  })
+
   it('says when it was ordered, or nothing without a date', () => {
     expect(orderedText({ ordered_on: '2026-11-10' })).toBe('Ordered Nov 10')
     expect(orderedText({ ordered_on: null })).toBeNull()

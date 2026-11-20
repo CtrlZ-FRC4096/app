@@ -35,6 +35,7 @@ import {
   type InventoryPlan,
   itemToForm,
   priceText,
+  trackingLink,
   receiptCountText,
   receiptAddingShown,
   removeItem,
@@ -285,12 +286,23 @@ function ItemRow(props: { item: PurchaseItem; showStatus: boolean; onOpen: () =>
       <span className="toolbar">
         <button type="button" className="btn btn-sm" onClick={props.onDuplicate}>Duplicate</button>
         {item.tracking && <button type="button" className="btn btn-sm" onClick={() => void copyTracking()}>Copy tracking</button>}
+        <TrackLink number={item.tracking} />
         {item.link && (
           <a className="btn btn-sm" href={item.link} target="_blank" rel="noopener noreferrer">Open link</a>
         )}
       </span>
     </div>
   )
+}
+
+/**
+ * "Track on UPS ↗" (or USPS, FedEx): a link to the carrier's own tracking
+ * page. Shows nothing when we can't tell whose number it is (#225).
+ */
+function TrackLink(props: { number: string | null }) {
+  const link = trackingLink(props.number)
+  if (!link) return null
+  return <a className="btn btn-sm" href={link.url} target="_blank" rel="noopener noreferrer">{link.label} ↗</a>
 }
 
 /**
@@ -575,7 +587,10 @@ function OrderDetails(props: {
     <div style={{ display: 'grid', gap: 14, minWidth: 0, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
       <strong>Order details</strong>
       {!props.canOrder ? (
-        <p className="note" style={{ margin: 0, overflowWrap: 'anywhere' }}>{known.join(' · ')}</p>
+        <>
+          <p className="note" style={{ margin: 0, overflowWrap: 'anywhere' }}>{known.join(' · ')}</p>
+          <span><TrackLink number={item.tracking} /></span>
+        </>
       ) : (
         <>
           {shown.ordered_by && (
@@ -624,6 +639,7 @@ function OrderDetails(props: {
               <input id={id('tracking')} className="input" style={BOX} value={form.tracking} onChange={(e) => set({ tracking: e.target.value })} />
             </label>
           )}
+          {shown.tracking && <span><TrackLink number={form.tracking} /></span>}
         </>
       )}
     </div>
