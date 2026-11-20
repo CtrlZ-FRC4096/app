@@ -22,6 +22,7 @@ import { batteries } from './batteries'
 import { robotLogs } from './robot-logs'
 import { status } from './status'
 import { calendar } from './calendar'
+import { tasks } from './tasks'
 import { attendance } from './attendance'
 import { members } from './members'
 import { roster } from './roster'
@@ -30,4 +31,4 @@ import { feedback } from './feedback'
 import { leaderboard } from './leaderboard'
 import { example } from './example'
 
-export const modules: ModuleDefinition[] = [inventory, bom, purchasing, cnc, progress, prescouting, scouting, batteries, robotLogs, status, calendar, attendance, members, roster, training, feedback, leaderboard, example]
+export const modules: ModuleDefinition[] = [inventory, bom, purchasing, cnc, progress, prescouting, scouting, batteries, robotLogs, status, calendar, tasks, attendance, members, roster, training, feedback, leaderboard, example]
