@@ -31,12 +31,15 @@ why above its buttons, until you save again.
   turns them off again. Whoever had signed up stays on the list, hidden,
   and comes back if sign-ups are taken again. Take sign-ups doesn't show on
   an event with a sign-up link, so it never gets two Sign up buttons.
-- **With links,** to Google Forms or Slack posts. An event can have up to 5,
-  each with an optional name, like one form for travel and one for the
-  hotel. The event gets a button for each: **Sign up: Travel ↗**, **Sign
-  up: Hotel ↗**, or just **Sign up ↗** for a link with no name. In the
-  Add event form, each link is a row with a Name box and a Link box, with
-  **Add another link** and **Remove**.
+- **With links,** to Google Forms or Slack posts (#226). An event can have
+  several, each with an optional name, like one form for travel and one
+  for the hotel. The event gets a button for each: **Sign up: Travel ↗**,
+  **Sign up: Hotel ↗**, or just **Sign up ↗** for a link with no name. The
+  Add event form takes up to 5: each link is a row with a Name box and a
+  Link box, with **Add another link** and **Remove**. Put links there, not
+  in Details: the form says so if a `Sign up:` line is typed into Details.
+  If an event with a link is changed to **In the app**, the form warns that
+  saving removes the link, since an event never gets both kinds of button.
 
   For an event made in Google Calendar, add a line to its description for
   each link:
@@ -47,7 +50,8 @@ why above its buttons, until you save again.
   ```
 
   The name in brackets is optional, so `Sign up: https://forms.gle/abc123`
-  works too, as a plain **Sign up** button. Each link has to be `https://`;
+  works too, as a plain **Sign up** button. The lines can also be a
+  bulleted or numbered list. Each link has to be `https://`;
   a line with any other kind of link is left in the description and gets
   no button. The page shows the buttons instead of those lines.
   `signUpLinks()` in `data.ts` finds them.
