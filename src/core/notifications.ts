@@ -11,7 +11,8 @@
  * themselves ("Send me a test"). Notifications for someone else are added
  * by the database itself: "Your request was ordered" and "Your request
  * arrived" come from supabase/migrations/..._purchase_notifications.sql.
- * Those are only in the app for now, not on phones.
+ * The database also sends those saved rows to the requester's devices when
+ * phone notifications are configured (supabase/functions/push-notification/).
  *
  * People choose which kinds they get under "What to notify me about"
  * (#155). Each module lists its kinds in its index.ts (`notifications`),
@@ -36,6 +37,8 @@ export interface AppNotification extends Row {
   read_at: string | null
   /** Which kind it is, like 'purchasing.request_updates' (see NotificationKind), or null for a test. */
   topic: string | null
+  /** When phone delivery was claimed, or null when it has not been pushed. */
+  pushed_at: string | null
 }
 
 // Made up, for demo mode: one for each of the people you can view as.
@@ -48,6 +51,7 @@ const welcome = (n: number, member_id: string, created_at: string, read_at: stri
   created_at,
   read_at,
   topic: null,
+  pushed_at: null,
 })
 
 const EXAMPLE_NOTIFICATIONS: AppNotification[] = [
@@ -56,8 +60,8 @@ const EXAMPLE_NOTIFICATIONS: AppNotification[] = [
   welcome(3, DEMO_PEOPLE.morgan, '2026-11-07T18:00:00Z', '2026-11-07T18:05:00Z'),
 ]
 
-// Version 2 added `topic`.
-export const notificationsTable = createTable<AppNotification>('notifications', { demo: EXAMPLE_NOTIFICATIONS, sort: newestFirst, version: 2 })
+// Version 2 added `topic`; version 3 added `pushed_at`.
+export const notificationsTable = createTable<AppNotification>('notifications', { demo: EXAMPLE_NOTIFICATIONS, sort: newestFirst, version: 3 })
 
 /** How many the page shows. Older ones stay until they're deleted. */
 export const SHOWN_NOTIFICATIONS = 50
@@ -128,7 +132,7 @@ export function testNotificationText(name: string): { title: string; body: strin
 export async function addTestNotification(): Promise<Result<AppNotification>> {
   const me = currentUser()
   if (!me) return fail('Sign in first.')
-  return notificationsTable.insert({ member_id: me.id, ...testNotificationText(me.name), read_at: null, topic: null })
+  return notificationsTable.insert({ member_id: me.id, ...testNotificationText(me.name), read_at: null, topic: null, pushed_at: null })
 }
 
 // ---------------------------------------------------------------------------

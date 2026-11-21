@@ -96,7 +96,7 @@ export class TestDatabase {
    */
   private async makeEmptySql(): Promise<string> {
     const app = await this.sql<{ name: string }>("select format('%I.%I', schemaname, tablename) as name from pg_tables where schemaname = 'public'")
-    const tables = new Set(['auth.users', 'private.settings', ...app.map((t) => t.name)])
+    const tables = new Set(['auth.users', 'private.settings', 'net.http_requests', 'vault.decrypted_secrets', ...app.map((t) => t.name)])
     for (;;) {
       const pointing = await this.sql<{ name: string }>(
         `select distinct format('%I.%I', n.nspname, c.relname) as name

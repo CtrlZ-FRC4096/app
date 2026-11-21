@@ -17,8 +17,9 @@
 -- notifications for other people: it only ever adds these two, for the
 -- item's requester, when its status really changes.
 --
--- These are in the app only for now. Sending them to phones too comes in a
--- later step, because the push function only sends to your own devices.
+-- These rows are kept in the app and are also sent to the requester's
+-- devices by the protected webhook in
+-- ..._purchase_push_notifications.sql.
 
 create function private.notify_purchase_requester()
 returns trigger

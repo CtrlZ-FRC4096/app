@@ -1,0 +1,4 @@
+project_id = "ctrlz-app"
+
+[functions.push-notification]
+verify_jwt = false

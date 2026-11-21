@@ -204,17 +204,21 @@ the functions can read.
 | `onshape` | Onshape for the BOM: a system's parts from its assembly (sub-assemblies flattened) or Part Studio, a part's STEP or STL for its machine, and writing team part numbers into custom parts' Part number property (student leaders, mentors and admins, workspaces only: `numbers.ts`). For the CNC module: parts' sizes and outlines, and where parts sit in a sheet's layout assembly |
 | `slack` | Slack messages from the team's bot: to yourself (anyone), or to people and a channel (mentors). Used through `src/core/slack.ts` |
 | `calendar` | The team's Google Calendar: everyone sees its events; student leaders, mentors and admins add events, change or remove the ones the app added, and turn sign-ups in the app on or off for any event. Used through `src/core/calendar.ts` |
-| `push` | Phone notifications (Web Push): the public key browsers need to turn them on, and a test to your own devices. Uses the `web-push` package (a mentor approved it). Used through `src/core/push.ts`. The same notifications are kept in the app too, in the `notifications` table behind the bell (`src/core/notifications.ts`) |
+| `push` | Phone notifications (Web Push): the public key browsers need to turn them on, and a test to your own devices. Uses the `web-push` package (a mentor approved it). Used through `src/core/push.ts`. |
+| `push-notification` | Sends a saved purchase notification to its requester's devices. It accepts a notification ID only, checks a shared secret before reading that row, and uses the Edge Function's `SUPABASE_SERVICE_ROLE_KEY` only to access that notification and its requester's devices. The database keeps the same notification in the app's bell (`src/core/notifications.ts`). |
 
 Slack reminders that go out by themselves on a schedule don't use a server
 function: see [Slack reminders on a schedule](#slack-reminders-on-a-schedule).
 
 How they fit together:
 
-- **Only team members can call them.** Supabase checks the caller is
-  signed in, then `forMembers()` in `functions/_shared/members.ts` looks
+- **App-facing functions are for team members.** Supabase checks the caller
+  is signed in, then `forMembers()` in `functions/_shared/members.ts` looks
   them up in `members` with their own sign-in, so the database's rules
-  decide. People whose access is off are turned away.
+  decide. People whose access is off are turned away. The
+  `push-notification` webhook is the exception: JWT checking is off so the
+  database can call it, but it checks a secret before reading anything and
+  only accepts an ID for a saved purchase notification.
 - **The app calls them from a module's `data.ts`** with `callFunction()`
   from `src/core/functions.ts`. In demo mode it returns the example data
   you give it instead, so students can build without keys.
@@ -240,6 +244,7 @@ paste a key anywhere else, including chat.
 | Google service account key (a JSON file) | `GOOGLE_SERVICE_ACCOUNT_KEY` | Supabase |
 | The team calendar's ID | `GOOGLE_CALENDAR_ID` | Supabase |
 | Phone notification keys (VAPID) | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Supabase |
+| Purchase notification webhook secret | `PUSH_WEBHOOK_SECRET` | Supabase Edge Functions and Supabase Vault |
 
 1. **Let GitHub deploy functions.** Sign in to
    [supabase.com](https://supabase.com) with the coaches' shared account,
@@ -330,6 +335,25 @@ paste a key anywhere else, including chat.
    3. Only change them if the private key leaks. Everyone would have to
       turn notifications on again, because devices only accept the key
       they signed up with.
+   4. **Set up purchase pushes.** Enable `pg_net` and Vault in **Database >
+      Extensions**. Make a random secret and save it in Bitwarden. Add it as
+      `PUSH_WEBHOOK_SECRET` under **Edge Functions > Secrets**. In the SQL
+      Editor, save the same secret in Vault and set the webhook URL (replace
+      `<project-ref>` with the part before `.supabase.co`):
+
+      ```sql
+      select vault.create_secret('<same random secret>', 'purchase_push_webhook_secret', 'Purchase notification webhook');
+
+      insert into private.settings (key, value)
+      values ('purchase_push_function_url', 'https://<project-ref>.supabase.co/functions/v1/push-notification')
+      on conflict (key) do update set value = excluded.value;
+      ```
+
+      Don't commit or share the secret. The `push-notification` function is
+      deployed with JWT checking off so `pg_net` can call it; its handler
+      rejects requests without that secret. A notification is claimed before
+      delivery to prevent duplicates, so a temporary push-service failure
+      isn't retried.
 7. **Add Match 13's key.** Sign in at
    [match13.com/account](https://www.match13.com/account) and make a key
    described as `Ctrl-Z team app`. Match 13 shows it once, so copy it
