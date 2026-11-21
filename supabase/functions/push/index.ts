@@ -1,5 +1,6 @@
 // Phone notifications (Web Push): gives browsers the public key to turn
-// notifications on, and sends a test to your own devices. Needs the
+// notifications on, and sends a test to your own devices. Purchase updates
+// come from the separate database-only push-notification function. Needs the
 // VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY secrets; see "Server functions" in
 // supabase/README.md. The app calls this through src/core/push.ts.
 //
