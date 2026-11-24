@@ -175,11 +175,13 @@ describe('monthGrid', () => {
     }
   })
 
-  it('shows this month below the list, with today marked', async () => {
+  it('shows this month above the list, with today marked', async () => {
     await loadEvents()
     const page = renderToString(createElement(CalendarPage))
     const { title } = monthGrid(thisMonth(), [])
-    expect(page.indexOf(`>${title}<`)).toBeGreaterThan(page.lastIndexOf('class="row-list"'))
+    const month = page.indexOf(`>${title}<`)
+    expect(month).toBeGreaterThan(-1)
+    expect(month).toBeLessThan(page.indexOf('class="row-list"'))
     expect(page).toContain('aria-current="date"')
   })
 })

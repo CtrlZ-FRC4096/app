@@ -8,9 +8,9 @@ import './calendar.css'
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 /**
- * The month at the bottom of the Calendar page (#227): a square for each day,
+ * The month at the top of the Calendar page (#227): a square for each day,
  * Sunday to Saturday, with its events. Tapping a day or an event calls
- * onPickDay with the day in the list above that shows it. On a phone or
+ * onPickDay with the day in the list below that shows it. On a phone or
  * tablet the squares show dots instead of titles (calendar.css). monthGrid() in data.ts
  * works out what goes in each square; this only draws them.
  */

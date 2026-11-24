@@ -92,6 +92,7 @@ export default function CalendarPage() {
           </span>
         </Callout>
       )}
+      <MonthView events={events} loadedAt={loadedAt} onPickDay={goToDay} />
       {days.length === 0 ? (
         <Panel>
           <p className="panel-body muted">
@@ -100,7 +101,7 @@ export default function CalendarPage() {
         </Panel>
       ) : (
         days.map((day) => (
-          // The heading has an id, so the month below can scroll to it. tabIndex -1 lets it take the
+          // The heading has an id, so the month above can scroll to it. tabIndex -1 lets it take the
           // focus, and the margin keeps it clear of the top bar, like InView.
           <Panel key={day.day} title={<h2 id={dayId(day.day)} tabIndex={-1} style={{ scrollMarginTop: 160 }}>{day.label}</h2>}>
             <div className="row-list">
@@ -125,7 +126,6 @@ export default function CalendarPage() {
           </Panel>
         ))
       )}
-      <MonthView events={events} loadedAt={loadedAt} onPickDay={goToDay} />
     </>
   )
 }
@@ -134,7 +134,7 @@ export default function CalendarPage() {
 const dayId = (day: string) => `calendar-day-${day}`
 
 /**
- * Scroll up to a day in the list from the month. This scrolls by id, not with
+ * Scroll down to a day in the list from the month. This scrolls by id, not with
  * a #link: the part of the address after # says which page is open
  * (src/core/router.ts), so a #link would leave the page.
  */
