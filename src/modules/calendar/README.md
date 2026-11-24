@@ -3,7 +3,7 @@
 What's coming up on the team's Google Calendar: build sessions, outreach
 and competitions, for the next 8 weeks. The home page tile shows the next
 event, like "Next: Build session, Tue 6 PM". This is #12 and #95.
-Below the list is the month (#227).
+The month is at the top, above the list (#227).
 
 The events live in Google Calendar, not in the app's database. The page
 loads them when it opens, at most every 10 minutes, or when someone clicks
@@ -59,7 +59,7 @@ why above its buttons, until you save again.
 
 The home page tile says "Sign-up open" when the next event has either.
 
-**The month.** At the bottom of the page, below the list, is a month
+**The month.** At the top of the page, above the list, is a month
 calendar: a square for each day, Sunday to Saturday, starting on this
 month, with today circled in blue. Days from the months before and after
 are greyed. Each day shows its events: timed ones with their start time,
@@ -69,7 +69,7 @@ both days, with its time only on the first. Days and times are Chicago's,
 so an 11 PM event stays on its day on any phone. A day with more than 3
 events shows 2 and "+2 more".
 
-Tap a day or an event to scroll up to that day in the list, where its
+Tap a day or an event to scroll down to that day in the list, where its
 details and buttons are. A day whose only event started earlier, like a
 competition's second day, goes to the day the list shows that event under.
 Days with nothing on aren't buttons. The month scrolls to the day by its
@@ -92,8 +92,8 @@ draws them, and `calendar.css` is how they look.
 | `index.ts` | Tells the app about the module, and gives the home page tile the next event. |
 | `data.ts` | Loads the events and works out what to show: by day, by month (`monthGrid()`), times, the next event, sign-up links. Adds, changes and removes events, and keeps the sign-ups. |
 | `data.test.ts` | Tests for `data.ts`, and for the page in demo mode. |
-| `CalendarPage.tsx` | The page: the events by day with their buttons, who's going, and the form for adding or changing an event, and the month at the bottom. |
-| `MonthView.tsx` | The month at the bottom of the page: a square per day with its events. Tapping one scrolls up to that day. |
+| `CalendarPage.tsx` | The page: the month at the top, the events by day with their buttons, who's going, and the form for adding or changing an event. |
+| `MonthView.tsx` | The month at the top of the page: a square per day with its events. Tapping one scrolls down to that day. |
 | `calendar.css` | How the month looks, and dots instead of titles on a phone or tablet. |
 
 ## How it gets the events
