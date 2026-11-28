@@ -46,15 +46,22 @@ begin
     return null;
   end if;
 
-  perform net.http_post(
-    url := function_url,
-    body := jsonb_build_object('id', new.id),
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'x-push-webhook-secret', webhook_secret
-    ),
-    timeout_milliseconds := 5000
-  );
+  -- A phone push is extra: if pg_net is missing or the request can't be
+  -- queued, keep the notification in the app rather than failing the
+  -- purchase status change that added it.
+  begin
+    perform net.http_post(
+      url := function_url,
+      body := jsonb_build_object('id', new.id),
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'x-push-webhook-secret', webhook_secret
+      ),
+      timeout_milliseconds := 5000
+    );
+  exception when others then
+    raise warning 'Could not queue the phone push for notification %: %', new.id, sqlerrm;
+  end;
   return null;
 end;
 $$;

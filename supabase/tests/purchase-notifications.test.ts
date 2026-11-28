@@ -122,6 +122,18 @@ describe('purchase request notifications', () => {
     ])
   })
 
+  it('still saves the status change and the bell notification when the phone push fails', async () => {
+    await db.sql("insert into private.settings (key, value) values ('purchase_push_function_url', 'https://project.supabase.co/functions/v1/push-notification')")
+    await db.sql("insert into vault.decrypted_secrets (name, decrypted_secret) values ('purchase_push_webhook_secret', 'test-secret')")
+    // Like pg_net not being turned on.
+    await db.sql('drop function net.http_post')
+    const item = await ask(student)
+    await setStatus(buyer, item, 'placed')
+
+    expect(await db.sql('select status from public.purchase_items')).toEqual([{ status: 'placed' }])
+    expect(await bell(student)).toMatchObject([{ title: 'Your request was ordered' }])
+  })
+
   it('skip people who switched off Purchasing -> My requests, and only them', async () => {
     const choose = (person: string, enabled: boolean) =>
       db.as(person, "insert into public.notification_settings (key, enabled) values ('purchasing.request_updates', $1) on conflict (member_id, key) do update set enabled = excluded.enabled", [enabled])
