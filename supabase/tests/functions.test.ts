@@ -5,7 +5,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import { tokenSubject } from '../functions/_shared/token.ts'
 import { createTba, tbaPath, TBA_API } from '../functions/tba/tba.ts'
-import { isGone, pushRequest, testMessage } from '../functions/push/push.ts'
+import {
+  isGone,
+  purchasePush,
+  pushNotificationId,
+  pushRequest,
+  pushWebhookAuthorized,
+  testMessage,
+  type PurchaseNotification,
+} from '../functions/push/push.ts'
 
 const ID = '00000000-0000-4000-8000-000000000001'
 const base64url = (value: object) => btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -33,8 +41,49 @@ describe('pushRequest', () => {
 
   it("refuses anything else, so it can't send other messages yet", () => {
     expect(pushRequest({ kind: 'send', text: 'Hi everyone' })).toHaveProperty('status', 400)
+    expect(pushRequest({ kind: 'notification', id: ID })).toHaveProperty('status', 400)
     expect(pushRequest(null)).toHaveProperty('error')
     expect(pushRequest('test')).toHaveProperty('error')
+  })
+})
+
+describe('push notification webhook', () => {
+  it('accepts only a notification ID, not caller-provided message text', () => {
+    expect(pushNotificationId({ id: ID })).toBe(ID)
+    expect(pushNotificationId({ id: ID, title: 'Send this instead', body: 'Hello' })).toBe(ID)
+    expect(pushNotificationId({ title: 'Send this instead' })).toBeNull()
+    expect(pushNotificationId({ id: 'not-an-id', title: 'Send this instead' })).toBeNull()
+    expect(pushNotificationId(null)).toBeNull()
+  })
+
+  it('requires the configured shared secret', () => {
+    expect(pushWebhookAuthorized('secret-value', 'secret-value')).toBe(true)
+    expect(pushWebhookAuthorized(null, 'secret-value')).toBe(false)
+    expect(pushWebhookAuthorized('wrong', 'secret-value')).toBe(false)
+    expect(pushWebhookAuthorized('secret-value', '')).toBe(false)
+  })
+
+  it('builds a short-lived push only for a recent, unpushed purchase notification', () => {
+    const now = Date.parse('2026-11-21T12:00:00Z')
+    const notification: PurchaseNotification = {
+      id: ID,
+      member_id: '00000000-0000-4000-8000-000000000002',
+      title: 'Your request was ordered',
+      body: 'Belt',
+      url: './#/purchasing/item/00000000-0000-4000-8000-000000000003',
+      topic: 'purchasing.request_updates',
+      created_at: '2026-11-21T11:00:00Z',
+      pushed_at: null,
+    }
+
+    expect(purchasePush(notification, now)).toEqual({
+      message: { title: notification.title, body: notification.body, url: notification.url },
+      ttl: 23 * 60 * 60,
+    })
+    expect(purchasePush({ ...notification, pushed_at: '2026-11-21T11:30:00Z' }, now)).toBeNull()
+    expect(purchasePush({ ...notification, topic: null }, now)).toBeNull()
+    expect(purchasePush({ ...notification, url: 'https://example.com' }, now)).toBeNull()
+    expect(purchasePush({ ...notification, created_at: '2026-11-20T11:00:00Z' }, now)).toBeNull()
   })
 })
 

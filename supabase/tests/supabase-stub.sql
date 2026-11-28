@@ -71,6 +71,45 @@ grant execute on function auth.uid(), auth.role(), auth.jwt() to anon, authentic
 -- Supabase's live updates read changes from this publication.
 create publication supabase_realtime;
 
+-- A small pg_net stand-in: record queued webhooks without making a network
+-- request. Supabase provides pg_net; PGlite does not.
+create schema net;
+create table net.http_requests (
+  id bigint generated always as identity primary key,
+  url text not null,
+  body jsonb not null,
+  headers jsonb not null,
+  timeout_milliseconds integer not null
+);
+
+create function net.http_post(
+  url text,
+  body jsonb default '{}'::jsonb,
+  params jsonb default '{}'::jsonb,
+  headers jsonb default '{"Content-Type":"application/json"}'::jsonb,
+  timeout_milliseconds integer default 5000
+)
+returns bigint
+language plpgsql
+as $$
+declare
+  request_id bigint;
+begin
+  insert into net.http_requests (url, body, headers, timeout_milliseconds)
+  values (url, body, headers, timeout_milliseconds)
+  returning id into request_id;
+  return request_id;
+end;
+$$;
+
+-- Supabase Vault stand-in. Tests use plaintext only in this isolated
+-- in-memory database; production stores the secret encrypted in Vault.
+create schema vault;
+create table vault.decrypted_secrets (
+  name text primary key,
+  decrypted_secret text not null
+);
+
 -- File storage. Supabase keeps a row in storage.objects for each file, and
 -- checks the rules on that table before it hands over, adds or deletes one.
 -- Like in Supabase, signed-in people have access to the table itself, so

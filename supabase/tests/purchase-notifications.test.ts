@@ -107,6 +107,33 @@ describe('purchase request notifications', () => {
     expect(await db.sql('select topic from public.notifications')).toEqual([{ topic: 'purchasing.request_updates' }])
   })
 
+  it('queues the saved notification ID for the protected phone-push function', async () => {
+    await db.sql("insert into private.settings (key, value) values ('purchase_push_function_url', 'https://project.supabase.co/functions/v1/push-notification')")
+    await db.sql("insert into vault.decrypted_secrets (name, decrypted_secret) values ('purchase_push_webhook_secret', 'test-secret')")
+    const item = await ask(student)
+    await setStatus(buyer, item, 'placed')
+
+    expect(await db.sql('select url, body, headers from net.http_requests')).toEqual([
+      {
+        url: 'https://project.supabase.co/functions/v1/push-notification',
+        body: { id: (await bell(student))[0].id },
+        headers: { 'Content-Type': 'application/json', 'x-push-webhook-secret': 'test-secret' },
+      },
+    ])
+  })
+
+  it('still saves the status change and the bell notification when the phone push fails', async () => {
+    await db.sql("insert into private.settings (key, value) values ('purchase_push_function_url', 'https://project.supabase.co/functions/v1/push-notification')")
+    await db.sql("insert into vault.decrypted_secrets (name, decrypted_secret) values ('purchase_push_webhook_secret', 'test-secret')")
+    // Like pg_net not being turned on.
+    await db.sql('drop function net.http_post')
+    const item = await ask(student)
+    await setStatus(buyer, item, 'placed')
+
+    expect(await db.sql('select status from public.purchase_items')).toEqual([{ status: 'placed' }])
+    expect(await bell(student)).toMatchObject([{ title: 'Your request was ordered' }])
+  })
+
   it('skip people who switched off Purchasing -> My requests, and only them', async () => {
     const choose = (person: string, enabled: boolean) =>
       db.as(person, "insert into public.notification_settings (key, enabled) values ('purchasing.request_updates', $1) on conflict (member_id, key) do update set enabled = excluded.enabled", [enabled])
@@ -142,10 +169,36 @@ describe('notifications for other people', () => {
   it("still can't be added by anyone directly, not even a purchaser", async () => {
     for (const [person, someoneElse] of [[other, student], [buyer, student], [mentor, student]]) {
       await expect(
-        db.as(person, "insert into public.notifications (member_id, title, url) values ($1, 'Your request was ordered', './#/purchasing')", [someoneElse]),
+        db.as(
+          person,
+          "insert into public.notifications (member_id, title, url, topic) values ($1, 'Your request was ordered', './#/purchasing', 'purchasing.request_updates')",
+          [someoneElse],
+        ),
       ).rejects.toThrow(PERMISSION_DENIED)
     }
     expect(await allNotifications()).toEqual([])
+  })
+
+  it("can't be created with a purchase topic by its own requester", async () => {
+    await expect(
+      db.as(
+        student,
+        "insert into public.notifications (member_id, title, url, topic) values ($1, 'Your request was ordered', './#/purchasing', 'purchasing.request_updates')",
+        [student],
+      ),
+    ).rejects.toThrow(PERMISSION_DENIED)
+    expect(await allNotifications()).toEqual([])
+    expect(await db.sql('select id from net.http_requests')).toEqual([])
+  })
+
+  it("can't be marked as pushed by someone using the app", async () => {
+    const item = await ask(student)
+    await setStatus(buyer, item, 'placed')
+    const [notification] = await bell(student)
+    await expect(
+      db.as(student, 'update public.notifications set pushed_at = now() where id = $1', [notification.id]),
+    ).rejects.toThrow(PERMISSION_DENIED)
+    expect(await db.sql('select pushed_at from public.notifications')).toEqual([{ pushed_at: null }])
   })
 
   it("can't be added by running the database's own function", async () => {
